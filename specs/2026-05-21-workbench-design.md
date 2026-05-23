@@ -13,13 +13,13 @@ Meeting notes, emails, social feed posts, tasks, and code review comments genera
 ## Architecture
 
 ```
-┌──────────────────┐  ┌──────────────┐  ┌──────────────┐
-│ Claude Code      │  │ MCP Client   │  │ Webapp        │
-│ Plugin (thin)    │  │ (any client) │  │ (Phase 2)     │
-└────────┬─────────┘  └──────┬───────┘  └──────┬───────┘
-         │                   │                  │
-         └───────────┬───────┘──────────────────┘
-                     │ HTTP / MCP protocol
+┌──────────────┐ ┌────────────┐ ┌───────────┐ ┌──────────────┐
+│ Claude Code  │ │ MCP Client │ │ Webapp    │ │ Mobile Apps  │
+│ Plugin       │ │            │ │ (Phase 2) │ │ (Phase 3)    │
+└──────┬───────┘ └─────┬──────┘ └─────┬─────┘ └──────┬───────┘
+       │               │              │               │
+       └───────┬───────┘──────────────┘───────────────┘
+               │ HTTP / MCP protocol
               ┌──────▼──────────┐
               │  Workbench      │
               │  Server         │
@@ -41,7 +41,12 @@ Meeting notes, emails, social feed posts, tasks, and code review comments genera
               └─────────────────┘
 ```
 
-The server does all heavy lifting: source polling, LLM calls for extraction/filtering/triage, enrichment, preference synthesis, and Messenger communication. Clients (Claude Code plugin, MCP, webapp, mobile) are thin interfaces to the API.
+The server does all heavy lifting: source polling, LLM calls for extraction/filtering/triage, enrichment, preference synthesis, and Messenger communication. Clients are thin interfaces to the API:
+
+- **Claude Code plugin** (Phase 1) — slash commands wrapping API calls
+- **MCP server** (Phase 1) — native tool access from any MCP-compatible client
+- **Webapp** (Phase 2) — interactive dashboard in the browser
+- **Mobile apps** (Phase 3) — iOS (Swift) and Android (Kotlin) apps for on-the-go triage, reviewing action items, and responding to triage cards via push notifications
 
 ## Deployment
 
