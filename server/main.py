@@ -8,6 +8,8 @@ from server.memory.noop import NoopMemoryLayer
 from server.providers.llm.claude import ClaudeProvider
 from server.providers.enrichment.stub import StubEnricher
 from server.pipeline.engine import PipelineEngine
+from server.pipeline.scheduler import WorkbenchScheduler
+from server.providers.messenger.google_chat import GoogleChatMessenger
 from server.api import items, triage, process, filter_rules, sources, config, memory, jobs
 
 settings = Settings()
@@ -24,6 +26,13 @@ async def lifespan(app: FastAPI):
     app.state.pipeline = PipelineEngine(
         app.state.stores, app.state.memory, app.state.llm, app.state.enricher
     )
+    messenger = None
+    if settings.gchat_space_id:
+        messenger = GoogleChatMessenger(settings.gchat_space_id, settings.google_api_script)
+    app.state.scheduler = WorkbenchScheduler(
+        app.state.stores, app.state.memory, app.state.pipeline, messenger, settings
+    )
+    app.state.scheduler.start()
     yield
 
 
