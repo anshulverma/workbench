@@ -4,68 +4,75 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Workbench is an open-source personal intelligence feed. It ingests from multiple sources (email, meeting notes, tasks, code reviews, social feeds), filters noise adaptively via a preference learning system, and triages items through rich interactive cards sent via Messenger (WhatsApp/Discord/Google Chat).
+Workbench is a Meta-internal personal intelligence feed. It ingests from internal sources (Phabricator diffs, Tasks, Workplace, calendar, SEVs, oncall, email), filters noise adaptively via a preference learning system, and triages items through rich interactive cards sent via Google Chat.
+
+Single-user tool for personal work use. Not open source.
 
 **Current state**: Pre-implementation. Specs and plans exist; no source code yet.
 
 ## Architecture
 
-FastAPI server (Python) + PostgreSQL, deployed via docker-compose. Three containers: `workbench-server` (API + MCP + pipeline + scheduler), `workbench-db` (PostgreSQL), and optionally `workbench-worker` (background tasks).
+FastAPI server (Python) with pluggable storage (XDB / SQLite / PostgreSQL). Runs as a process on the devgpu. OnDemands connect to it over the network.
 
-The server does all heavy lifting. Clients are thin:
-- **Claude Code plugin** — slash commands wrapping API calls
+The server does all heavy lifting. Clients are thin HTTP interfaces:
+- **Claude Code plugin** — slash commands wrapping API calls (no direct storage access)
 - **MCP server** — tool access from any MCP-compatible client
-- **Webapp** (Phase 2) and **Mobile apps** (Phase 3) planned later
+- **Google Chat** — primary user-facing surface for triage cards and responses
 
 ### Processing Pipeline
 
 ```
-Source adapter (raw data) → LLM extraction → Adaptive noise filter → Context enrichment → Rich triage card → Messenger → User response → Database
+Source adapter (raw data) → LLM extraction (Claude API) → Adaptive noise filter → Context enrichment → Rich triage card → Google Chat → User response → Storage
 ```
 
 ### Provider Interfaces
 
-All external integrations are behind pluggable interfaces, configured per-workspace: LLM (Claude/OpenAI/Ollama), DocReader, WorkbenchStore (export), Messenger, SourceAdapter, ContextEnricher.
+All external integrations are behind pluggable interfaces: LLM (Claude API), DocReader, Messenger (Google Chat), SourceAdapter, ContextEnricher.
 
-### Multi-Tenant Data Model
+### Storage Layer
 
-Users ↔ Workspaces (many-to-many with roles). Each workspace has isolated sources, filters, preferences, items, plans, and enrichment settings. Token-based auth.
+Repository pattern — one interface per domain entity (ItemStore, TriageStore, PreferenceStore, etc.). Implementations for XDB (default), SQLite, and PostgreSQL. Backend selected via config.
+
+### Data Model
+
+Single-user, no multi-tenant complexity. All data belongs to one user.
 
 ## Key Files
 
-- `specs/2026-05-21-workbench-design.md` — full design spec (architecture, data model, API endpoints, DB schema, pipeline stages, triage card formats)
+- `specs/2026-05-21-workbench-design.md` — full design spec (architecture, storage layer, API endpoints, pipeline stages, triage card formats)
 - `plans/phase-1-plan.md` — Phase 1 implementation sequence
 
 ## Development Commands
 
 ```bash
-# Start the stack
-docker-compose up
+# Start the server on devgpu
+python server/main.py
 
-# Run the server (once implemented)
-# FastAPI app entrypoint: server/main.py
-
-# Database migrations (Alembic)
-# alembic upgrade head
+# Or with uvicorn for reload during development
+uvicorn server.main:app --host 0.0.0.0 --port 8421 --reload
 ```
 
 ## Planned Project Structure
 
 ```
-server/          — FastAPI app, models, migrations, API routes
+server/          — FastAPI app, API routes
+server/storage/  — pluggable storage layer (base interfaces + xdb/sqlite/postgres implementations)
 server/pipeline/ — processing pipeline (extraction, filter, enrichment, triage, preferences, scheduler)
 server/providers/— pluggable provider implementations (llm/, doc_reader/, messenger/, source/, enrichment/)
 server/mcp/      — MCP server and tool definitions
 server/api/      — REST API route modules
-plugin/          — Claude Code plugin (thin API client with slash commands)
+plugin/          — Claude Code plugin (thin HTTP client with slash commands)
 tests/           — test suite
 ```
 
 ## Design Decisions
 
-- PostgreSQL from day one (no flat file storage for state).
+- Pluggable storage via repository pattern. XDB (MySQL) as default for shared state across devservers/ODs. SQLite for dev/testing. PostgreSQL as option.
+- No auth layer — single-user tool on a devserver, server trusts all requests.
+- Plugin is a pure HTTP client — all reads/writes go through the server API, never direct to storage.
 - Adaptive noise filter uses LLM judgment against natural language patterns, not regex.
 - Preference learning has three layers: interaction log (append-only) → synthesized preference summary → informed pipeline decisions.
-- Enrichment has configurable depth (shallow/deep) with per-workspace budget controls and trace logging.
+- Enrichment has configurable depth (shallow/deep) with budget controls and trace logging.
 - Triage cards are source-type-specific with actionable options, not simple yes/no.
-- Docker-compose compatible with Podman.
+- Claude API (Anthropic) as the LLM provider.
+- Google Chat as the messenger.

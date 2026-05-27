@@ -2,161 +2,280 @@
 
 ## Context
 
-Meeting notes, emails, social feed posts, tasks, and code review comments generate a constant stream of information that requires manual triage. Workbench is an open-source system that ingests from multiple sources, filters noise adaptively, and maintains a prioritized dashboard of action items, draft plans, and meetings to schedule — so that opening one view gives a clear picture of what needs attention.
+Meeting notes, emails, Workplace posts, tasks, diffs, and oncall alerts generate a constant stream of information that requires manual triage. Workbench is a Meta-internal tool that ingests from internal sources, filters noise adaptively, and maintains a prioritized dashboard of action items, draft plans, and meetings to schedule — so that opening one view gives a clear picture of what needs attention.
 
-## Phased Delivery
+Single-user tool, running on a devserver, accessible from any OnDemand.
 
-- **Phase 1** (this spec): Server + database + Claude Code plugin + MCP server. Triage via Messenger. Containerized deployment.
-- **Phase 2**: Webapp — interactive dashboard.
-- **Phase 3**: Mobile apps (iOS/Android).
+## Scope
+
+Server + storage + Claude Code plugin + MCP server. Two user-facing surfaces:
+
+1. **Google Chat** — triage cards, responses, daily morning briefing
+2. **Claude Code plugin / MCP** — on-demand queries and dashboard view from the terminal
+
+No webapp for now. If a richer visual dashboard is needed later, build a Nest app (not Unidash — Unidash is for analytics data sources, not custom APIs).
 
 ## Architecture
 
 ```
-┌──────────────┐ ┌────────────┐ ┌───────────┐ ┌──────────────┐
-│ Claude Code  │ │ MCP Client │ │ Webapp    │ │ Mobile Apps  │
-│ Plugin       │ │            │ │ (Phase 2) │ │ (Phase 3)    │
-└──────┬───────┘ └─────┬──────┘ └─────┬─────┘ └──────┬───────┘
-       │               │              │               │
-       └───────┬───────┘──────────────┘───────────────┘
+┌──────────────┐ ┌────────────┐
+│ Claude Code  │ │ MCP Client │
+│ Plugin       │ │            │
+└──────┬───────┘ └─────┬──────┘
+       │               │
+       └───────┬───────┘
                │ HTTP / MCP protocol
-              ┌──────▼──────────┐
-              │  Workbench      │
-              │  Server         │
-              │  (FastAPI)      │
-              ├─────────────────┤
-              │  Pipeline       │  ← Source polling, LLM extraction,
-              │  Engine         │    filtering, triage, enrichment
-              ├─────────────────┤
-              │  LLM Provider   │  ← Configurable: Claude / OpenAI / Ollama / etc.
-              ├─────────────────┤
-              │  Messenger      │  ← WhatsApp / Discord / Google Chat
-              ├─────────────────┤
-              │  Source Adapters │  ← Gmail, stubs for meetings/tasks/etc.
-              └────────┬────────┘
+              ┌▼─────────────────┐
+              │  Workbench       │
+              │  Server          │
+              │  (FastAPI)       │
+              ├──────────────────┤
+              │  Pipeline        │  ← Source polling, LLM extraction,
+              │  Engine          │    filtering, triage, enrichment
+              ├──────────────────┤
+              │  LLM Provider    │  ← Claude API (Anthropic)
+              ├──────────────────┤
+              │  Messenger       │  ← Google Chat
+              ├──────────────────┤
+              │  Source Adapters  │  ← Phabricator, Tasks, Workplace,
+              │                  │    Calendar, SEVs, Oncall, Email
+              └────────┬─────────┘
                        │
-              ┌────────▼────────┐
-              │  PostgreSQL     │
-              │  (multi-tenant) │
-              └─────────────────┘
+              ┌────────▼─────────┐
+              │  Storage Layer   │
+              │  (pluggable)     │
+              │                  │
+              │  XDB / SQLite /  │
+              │  PostgreSQL      │
+              └──────────────────┘
 ```
 
-The server does all heavy lifting: source polling, LLM calls for extraction/filtering/triage, enrichment, preference synthesis, and Messenger communication. Clients are thin interfaces to the API:
+The server does all heavy lifting: source polling, LLM calls for extraction/filtering/triage, enrichment, preference synthesis, and Google Chat communication. Clients are thin HTTP interfaces to the API:
 
-- **Claude Code plugin** (Phase 1) — slash commands wrapping API calls
-- **MCP server** (Phase 1) — native tool access from any MCP-compatible client
-- **Webapp** (Phase 2) — interactive dashboard in the browser
-- **Mobile apps** (Phase 3) — iOS (Swift) and Android (Kotlin) apps for on-the-go triage, reviewing action items, and responding to triage cards via push notifications
+- **Claude Code plugin** (Phase 1) — slash commands wrapping API calls. All reads and writes go through the server. No direct storage access.
+- **MCP server** (Phase 1) — tool access from any MCP-compatible client
 
 ## Deployment
 
-Docker + docker-compose with three containers:
-1. **workbench-server**: FastAPI application (API + MCP server + pipeline engine + scheduler)
-2. **workbench-db**: PostgreSQL
-3. **workbench-worker** (optional): Background task worker for long-running pipeline jobs (can start as part of the server process and split out later if needed)
+FastAPI server runs as a process on the devgpu. OnDemands connect to it over the network.
 
-Compatible with Podman for environments where Docker is unavailable.
+- **Server process**: FastAPI app (API + MCP server + pipeline engine + scheduler)
+- **Storage**: SQLite initially (local file, fast iteration). XDB later for shared state across devservers/ODs. PostgreSQL as another option.
+- **Process management**: systemd user service (`systemctl --user`). Survives logout, auto-restarts on crash, starts on boot.
+- No Docker or docker-compose required.
 
-## Multi-Tenant Data Model
+```bash
+# Start the server on devgpu (development)
+uvicorn server.main:app --host 0.0.0.0 --port 8421 --reload
 
-### Users and Workspaces
+# Production: managed by systemd
+systemctl --user start workbench
+systemctl --user enable workbench   # auto-start on boot
+journalctl --user -u workbench -f   # tail logs
+```
 
-- A **user** is a person with login credentials.
-- A **workspace** is an isolated context with its own feeds, filters, preferences, items, and plans.
-- Users can have multiple workspaces (e.g., "Work", "Side Project", "Open Source").
-- A workspace can have multiple users (e.g., a team workspace).
-- The relationship is many-to-many with a role (owner, member).
+```ini
+# ~/.config/systemd/user/workbench.service
+[Unit]
+Description=Workbench Intelligence Feed Server
+After=network.target
 
-### Per-Workspace Isolation
+[Service]
+Type=simple
+WorkingDirectory=/home/anshulverma/workspace/workbench
+ExecStart=/usr/bin/python3 server/main.py
+Restart=on-failure
+RestartSec=5
+Environment=WORKBENCH_STORAGE_BACKEND=sqlite
+Environment=WORKBENCH_PORT=8421
 
-Each workspace has its own:
-- Source adapter configurations and credentials (Gmail accounts, etc.)
+[Install]
+WantedBy=default.target
+```
+
+## Data Model
+
+Single-user tool. No multi-tenant user/workspace management. All data belongs to the one user.
+
+Configuration is stored alongside the data in the storage layer:
+- Source adapter configurations
 - Feed polling schedules
-- Filter rules (global + per-email-account)
+- Filter rules
 - Preference summary and interaction log
 - Items, plans, triage cards
 - Enrichment settings and trace log
-- Messenger configuration
+- Google Chat configuration
 
-### Auth
+## Storage Layer
 
-Token-based authentication for API access. Each user gets an API token. The Claude Code plugin and MCP server store the token in their config. OAuth support can be added for the webapp in Phase 2.
+All persistence is behind a **repository pattern** — one interface per domain entity. The server code never touches SQL or storage-specific APIs directly.
+
+### Repository Interfaces
+
+```python
+class ItemStore(ABC):
+    async def get_items(self, filters: ItemFilters) -> list[Item]: ...
+    async def get_item(self, item_id: str) -> Item | None: ...
+    async def save_item(self, item: Item) -> Item: ...
+    async def update_item(self, item_id: str, updates: ItemUpdate) -> Item: ...
+    async def archive_item(self, item_id: str) -> None: ...
+
+class TriageStore(ABC):
+    async def get_pending(self) -> list[TriageCard]: ...
+    async def save_card(self, card: TriageCard) -> TriageCard: ...
+    async def record_response(self, card_id: str, response: TriageResponse) -> None: ...
+
+class PlanStore(ABC):
+    async def get_plans(self, filters: PlanFilters) -> list[Plan]: ...
+    async def save_plan(self, plan: Plan) -> Plan: ...
+    async def update_plan(self, plan_id: str, updates: PlanUpdate) -> Plan: ...
+
+class PreferenceStore(ABC):
+    async def get_summary(self) -> PreferenceSummary | None: ...
+    async def save_summary(self, summary: PreferenceSummary) -> None: ...
+    async def get_cursor(self) -> int: ...
+
+class InteractionStore(ABC):
+    async def append(self, entry: InteractionEntry) -> None: ...
+    async def get_since(self, cursor: int, limit: int) -> list[InteractionEntry]: ...
+    async def count(self) -> int: ...
+
+class FilterRuleStore(ABC):
+    async def get_rules(self) -> list[FilterRule]: ...
+    async def add_rule(self, rule: FilterRule) -> FilterRule: ...
+    async def get_source_rules(self, source_type: str) -> list[FilterRule]: ...
+
+class EnrichmentTraceStore(ABC):
+    async def log_trace(self, trace: EnrichmentTrace) -> None: ...
+    async def get_traces(self, filters: TraceFilters) -> list[EnrichmentTrace]: ...
+
+class SourceConfigStore(ABC):
+    async def get_sources(self) -> list[SourceConfig]: ...
+    async def save_source(self, source: SourceConfig) -> SourceConfig: ...
+    async def update_source(self, source_id: str, updates: SourceConfigUpdate) -> SourceConfig: ...
+    async def delete_source(self, source_id: str) -> None: ...
+
+class ProcessedStore(ABC):
+    async def is_processed(self, source_type: str, source_id: str) -> bool: ...
+    async def mark_processed(self, source_type: str, source_id: str) -> None: ...
+
+class ConfigStore(ABC):
+    async def get(self, key: str) -> str | None: ...
+    async def set(self, key: str, value: str) -> None: ...
+    async def get_all(self) -> dict[str, str]: ...
+```
+
+### Implementations
+
+| Backend | Module | Notes | Phase |
+|---------|--------|-------|-------|
+| SQLite | `server/storage/sqlite/` | Local file. Fast iteration, no provisioning. | **Phase 1** |
+| XDB | `server/storage/xdb/` | MySQL via `db_locator`. Shared across devservers/ODs. | Phase 2 |
+| PostgreSQL | `server/storage/postgres/` | Standard relational. If running alongside existing PG. | Phase 2 |
+
+The active backend is selected via server config (`WORKBENCH_STORAGE_BACKEND=sqlite|xdb|postgres`, default `sqlite`).
+
+### Schema
+
+The logical schema is the same regardless of backend. Tables:
+
+- `items` (id, source_type, source_id, summary, category, origin, priority, status, raw_data JSON, created_at, updated_at)
+  - `category`: `action_item`, `meeting`, `informational` — groups items in the dashboard
+  - `origin`: `auto_included`, `triaged`, `manual` — how the item entered the system
+  - `status`: `active`, `done`, `archived`
+- `plans` (id, title, status, content, sources JSON, created_at)
+- `triage_cards` (id, item_id, card_content JSON, options JSON, sent_at, responded_at, response)
+- `interaction_log` (id, timestamp, source_type, item_id, item_summary, triage_card_full JSON, enrichment_context JSON, options_presented JSON, option_chosen, todo_created JSON, enrichment_depth, enrichment_calls, enrichment_time_ms)
+- `filter_rules` (id, source_type, pattern, action, priority, created_from_interaction_id)
+- `preferences` (id, content, cursor_position, updated_at)
+- `enrichment_trace` (id, item_id, depth, calls_made, time_ms, context_retrieved JSON, timestamp)
+- `processed` (source_type, source_id, processed_at)
+  - For poll-based sources, `source_id` is a composite key that includes modification state (e.g., `D12345_1748372400` for diffs). Each modification creates a new raw item so updates are surfaced. The raw item includes the original entity ID so the LLM has context about prior triage decisions.
+- `source_configs` (id, adapter_type, config JSON, schedule, enabled, created_at)
+- `jobs` (id, trigger, status, input_hash, items_extracted, items_included, items_triaged, items_dropped, items_failed, error, created_at, completed_at)
+- `config` (key, value)
 
 ## Provider Interfaces
 
-All external integrations are behind pluggable interfaces, configured per-workspace.
+All external integrations are behind pluggable interfaces.
 
 ### LLM Provider
 
-Configurable LLM for extraction, filtering, triage card generation, and preference synthesis.
+Claude API (Anthropic) for extraction, filtering, triage card generation, and preference synthesis. Accessed via Meta's Plugboard proxy using the standard `anthropic` Python SDK.
+
+**Auth setup:**
+- Base URL: `https://plugboard.x2p.facebook.net`
+- mTLS cert: `/var/facebook/credentials/$USER/agent_x509/claude_code_$USER.pem`
+- CA cert: `/var/facebook/rootcanal/ca.pem`
+- API key: obtained via `/usr/local/bin/claude_code/api-key-helper` (rotated automatically)
+- Uses Claude Code quota allocation
+
+**Model:** Single model (Sonnet) for all stages to start. Model-per-stage configuration (e.g., Haiku for scoring, Sonnet for extraction) can be added later if cost is a concern.
 
 | Implementation | Notes |
 |---------------|-------|
-| ClaudeProvider | Anthropic API |
-| OpenAIProvider | OpenAI API |
-| OllamaProvider | Local Ollama instance |
+| ClaudeProvider | Anthropic Python SDK via Plugboard proxy |
 
 Each provider implements: `extract(raw_text) → structured items`, `score_relevance(item, preferences, rules) → (relevance, confidence)`, `generate_triage_card(item, enrichment) → card`, `synthesize_preferences(digest) → summary`.
 
 ### DocReader
 
-Read content from a document link. Multiple implementations active simultaneously.
+Read content from Google Doc links submitted via `/api/process`.
 
 | Implementation | Reads from |
 |---------------|-----------|
-| GoogleDocsReader | Google Docs URLs (via Google Docs API) |
-| NotionReader | Notion page URLs (via Notion API) |
-| RawURLReader | Any URL (fetch + extract text) |
-
-### WorkbenchStore (Export Target)
-
-Optional export of Dashboard to external doc systems. The database is the source of truth.
-
-| Implementation | Notes |
-|---------------|-------|
-| GoogleDocsExporter | via Google Docs API |
-| NotionExporter | via Notion API |
+| GoogleDocsReader | Google Docs URLs via Google API proxy |
 
 ### Messenger
 
-Send triage cards and receive user responses. Bidirectional. Configured per-workspace.
+Google Chat, bidirectional. The bot sends triage cards and polls for text responses. Uses `google_api.py` (from `fbcode/claude-templates`) with DCAT token auth — runs on a devserver with no fbcode deployment needed.
+
+**Interaction model:**
+- Bot sends a rich Card V2 with numbered options and openLink fallback buttons
+- **Primary:** User types a number ("1", "2", "3") in the chat — bot polls via `list_messages()` and matches the reply to the current pending card
+- **Fallback:** Each option is also an openLink button (URL hits `http://devgpu:8421/api/triage/respond?card_id=X&choice=N`) for click-to-respond
+- Cards are sent **one at a time, sequentially** — no ambiguity about which card a reply targets
+- "5 items to triage. Here's #1 of 5:" prefix for batch awareness
+- User can type "skip all" or "skip remaining" to bail out of a sequence
+
+**Why not interactive card buttons (postback)?** Postback callbacks require the PHP/WIB pipeline in WWW (Google Chat → Apps Script → Graph API → Iris queue → PHP handler). This conflicts with keeping all code outside fbcode.
 
 | Implementation | Notes |
 |---------------|-------|
-| WhatsAppMessenger | via WhatsApp Business API |
-| DiscordMessenger | via Discord Bot API |
-| GoogleChatMessenger | via Google Chat API |
-| SlackMessenger | via Slack Bot API (community contribution welcome) |
+| GoogleChatMessenger | `google_api.py` — send cards, poll responses via `list_messages()` |
 
 ### SourceAdapter
 
-Poll for new items, output raw data. Configured per-workspace with per-adapter credentials.
+Poll internal Meta sources for new items, output raw data.
 
-| Adapter | Notes |
-|---------|-------|
-| EmailAdapter (Gmail) | Gmail API — works everywhere |
-| MeetingNotesAdapter | Stub — implement for your calendar system |
-| SocialFeedAdapter | Stub — implement for your corporate social feed |
-| TasksAdapter | Stub — implement for your task system (Jira, Linear, Asana, etc.) |
-| CodeReviewAdapter | Stub — implement for your code review system (GitHub PRs, GitLab MRs, etc.) |
+| Adapter | Notes | Phase |
+|---------|-------|-------|
+| PhabricatorAdapter | Via Conduit API (`differential.revision.search`). Fetches: (1) diffs authored by you — new comments, status changes, land notifications; (2) diffs where you're a direct reviewer; (3) diffs where you're a reviewer via project membership. Polls by `dateModified` to catch updates. | **Phase 1** |
+| EmailAdapter | Gmail via Google API proxy / `google_api.py`. Polls entire inbox (no pre-filtering). The adaptive noise filter and preference learning system learn what matters over time and construct filter rules from triage responses. | **Phase 1** |
+| TasksAdapter | Tasks assigned to you, tasks you're subscribed to | Phase 2 |
+| WorkplaceAdapter | Workplace group posts, mentions, comments | Phase 2 |
+| CalendarAdapter | Meeting notes, upcoming meetings needing prep | Phase 2 |
+| SEVAdapter | SEVs you're involved in, SEV updates | Phase 2 |
+| OncallAdapter | Oncall alerts, escalations during your rotation | Phase 2 |
 
 Source adapters fetch **raw data only**. The LLM Provider does semantic extraction.
 
+Note: The DocReader (GoogleDocsReader) handles Google Docs content in Phase 1 — it reads doc links submitted via `/api/process`, not by polling. It is a provider, not a source adapter, because docs don't have a polling model.
+
 ### ContextEnricher
 
-Fetch additional context about referenced entities before triage. Configured per-workspace.
+Fetch additional context about referenced entities before triage. Uses internal Meta tools and APIs.
 
 | Implementation | Notes |
 |---------------|-------|
-| StubEnricher | Default — returns empty context |
+| MetaEnricher | Looks up people (org chart), tasks (parent/subtasks), diffs (related diffs, test results), SEVs (timeline, related SEVs) |
+| StubEnricher | Default — returns empty context (for development/testing) |
 
-Implement custom enrichers to look up referenced entities in wikis, task systems, people directories, etc.
-
-**Depth setting** (per-workspace config):
+**Depth setting** (config):
 - `shallow` (default): Fetch only the directly referenced entity
 - `deep`: Follow reference chains (task → parent → project → team → recent activity)
 
-**Budget settings** (per-workspace config):
+**Budget settings** (config):
 - `max_api_calls_per_item`: default 3 (shallow), 15 (deep)
 - `max_seconds_per_item`: default 10s (shallow), 60s (deep)
 - `max_deep_items_per_run`: default 50
@@ -166,29 +285,31 @@ Implement custom enrichers to look up referenced entities in wikis, task systems
 ## Processing Pipeline
 
 All processing runs on the server. The pipeline is triggered by:
-- **Server-side scheduler**: Periodic source polling (replaces Claude Code crons)
-- **API call**: Manual processing via `/api/workspaces/{id}/process`
+- **Server-side scheduler**: Periodic source polling
+- **API call**: Manual processing via `/api/process`
 
 ```
-Source adapter (raw data) → LLM extraction → Relevance filter → Context enrichment → Rich triage card → Messenger → User response → Store in database
+Source adapter (raw data) → LLM extraction → Relevance filter → Context enrichment → Rich triage card → Google Chat → User response → Store
 ```
 
 ### Stage 1: Source Adapter
 
-Server-side adapters poll configured sources and produce raw items:
+Server-side adapters poll configured internal sources and produce raw items. Default polling interval: **15 minutes**, configurable per source adapter.
 
 ```json
 {
   "id": "source-specific-unique-id",
-  "source_type": "meeting|email|social|task|code_review",
-  "source_label": "Weekly Sync 2026-05-21",
+  "source_type": "diff|task|workplace|calendar|sev|oncall|email",
+  "source_label": "D12345678 — Refactor auth middleware",
   "raw_text": "Full content from the source"
 }
 ```
 
 ### Stage 2: LLM Extraction
 
-The configured LLM Provider reads raw text and extracts structured items: summary, action items, plan seeds, meetings to schedule.
+Claude API reads raw text and extracts structured items: summary, action items, plan seeds, meetings to schedule.
+
+**Error handling:** Each item is retried up to 3 times with exponential backoff (1s, 2s, 4s) on LLM failures (rate limits, timeouts, malformed responses). If still failing, the item is marked as failed and the pipeline continues with remaining items. The job's `items_failed` counter tracks failures. Failed items are retried on the next poll run.
 
 ### Stage 3: Adaptive Noise Filter
 
@@ -196,23 +317,24 @@ Every item gets two scores (0-100):
 - **Relevance**: How likely this requires the user's action or attention.
 - **Confidence**: How sure the system is about the relevance score.
 
-**Thresholds** (configurable per-workspace):
+**Thresholds** (configurable):
 - Relevance >= 70 AND confidence >= 70 → auto-include
 - Relevance < 30 AND confidence >= 70 → auto-drop (still logged)
-- Everything else → send triage card via Messenger
+- Everything else → send triage card via Google Chat
 
-The filter reads workspace-specific `preferences` and `filter_rules` before scoring.
+The filter reads `preferences` and `filter_rules` before scoring.
 
 **Filter rules** are natural language patterns:
 
 ```json
-{"pattern": "posts from group 'Infrastructure Announcements'", "action": "include", "priority": "P3"}
-{"pattern": "CI bot comments on code reviews", "action": "drop"}
+{"pattern": "posts from Workplace group 'Infrastructure Announcements'", "action": "include", "priority": "P3"}
+{"pattern": "CI bot comments on diffs", "action": "drop"}
+{"pattern": "SEVs where I'm not oncall or directly involved", "action": "drop"}
 ```
 
 The LLM matches incoming items against rules using judgment, not regex.
 
-**Email-specific pre-filter**: Each email account (within a workspace) has its own filter rules table. Starts empty. Learns from triage responses.
+**Source-specific pre-filter**: Each source type can have its own filter rules table. Starts empty. Learns from triage responses.
 
 ### Stage 4: Context Enrichment
 
@@ -220,45 +342,26 @@ The ContextEnricher gathers additional information about referenced entities. Re
 
 ### Stage 5: Rich Triage Card
 
-Every item gets a context-rich triage card sent via Messenger. The card includes:
-- Source-specific summary and context
+Every item gets a context-rich triage card sent via Google Chat. The card includes:
+- Source-specific summary and context (LLM-generated)
 - Enrichment results (who else is involved, related items, background)
-- Actionable options tailored to the source type
+- **Template-based options per source type** — fixed option structure, deterministic response mapping. The LLM generates the card summary and fills in context-sensitive details (e.g., the pattern for "never surface"), but the option set is hardcoded per source type. This makes response processing reliable — "1" always means the same action for a given source type.
 
-**Email triage card example:**
-> **Email from @alice — "Q3 planning doc needs your input"**
-> Received 2h ago, you're in TO (not CC)
->
-> **Summary:** Alice shared a Q3 planning doc and is asking each TL to add their team's priorities by Friday.
+**Diff triage card example:**
+> **D12345678 needs your review — "Refactor auth middleware"**
+> Author: @alice, 450 lines changed in fbcode/auth/middleware/
+> [Enriched: related to T98765, 2 other reviewers assigned, all tests passing]
 >
 > **What do you want to do?**
-> 1. Add todo: "Add team priorities to Q3 planning doc" (P1, due Friday)
-> 2. Add todo: "Reply to Alice about Q3 planning"
-> 3. Add todo: "Review Q3 planning doc"
-> 4. Skip this email
-> 5. Never surface emails from this sender
-> 6. Never surface emails with this pattern
-
-**Meeting notes triage card:**
-> **Meeting: Weekly Sync with Team Foo (2026-05-21)**
-> Attendees: you, @alice, @bob, @charlie
->
-> **Summary:** Discussed Project X migration timeline. You volunteered to own the design doc.
->
-> **Action items found:**
-> - Write Project X design doc (due: next Friday)
-> - Schedule follow-up with @alice on data migration
->
-> **What do you want to do?**
-> 1. Accept all action items as P1
-> 2. Accept with adjusted priorities
-> 3. Skip all
-> 4. Add a draft plan for "Project X Migration"
+> 1. Add review todo (P1)
+> 2. Add review todo (P2)
+> 3. Skip
+> 4. Never surface diffs in auth/middleware/
 
 **Task triage card:**
-> **Task #12345 assigned to you — "Fix auth token expiry"**
+> **T98765 assigned to you — "Fix auth token expiry"**
 > Assigned by @bob, priority P1, tagged: backend, auth
-> [Enriched: parent task #12340 "Auth hardening Q3", 3 other subtasks]
+> [Enriched: parent task T98760 "Auth hardening Q3", 3 other subtasks]
 >
 > **What do you want to do?**
 > 1. Add to Dashboard as P1
@@ -266,20 +369,32 @@ Every item gets a context-rich triage card sent via Messenger. The card includes
 > 3. Skip
 > 4. Never surface tasks tagged "auth"
 
-**Code review triage card:**
-> **PR #456 needs your review — "Refactor auth middleware"**
-> Author: @bob, 450 lines changed in auth/middleware/
-> [Enriched: related to task #12345, 2 other reviewers assigned]
+**Workplace triage card:**
+> **@charlie mentioned you in "Infrastructure Migration Update"**
+> Posted in Infrastructure Engineering group, 2h ago
+>
+> **Summary:** Charlie is asking TLs to review the migration timeline and flag blockers by EOW.
 >
 > **What do you want to do?**
-> 1. Add review todo (P1)
-> 2. Add review todo (P2)
+> 1. Add todo: "Review migration timeline" (P1, due Friday)
+> 2. Add todo: "Reply to Charlie"
 > 3. Skip
-> 4. Never surface code reviews in auth/middleware/
+> 4. Mute this Workplace group
+
+**SEV triage card:**
+> **SEV 54321 — "Auth service latency spike in PRN"**
+> Status: Investigating, oncall: @dave, started 30min ago
+> [Enriched: your team owns auth service, 3 related SEVs in past month]
+>
+> **What do you want to do?**
+> 1. Track this SEV (P0)
+> 2. Track this SEV (P1)
+> 3. Skip — I'm not involved
+> 4. Never surface SEVs for auth service unless I'm oncall
 
 ### Stage 6: Response Processing
 
-When the user responds via Messenger:
+When the user responds via Google Chat:
 - The chosen action is executed (create todo, update priority, add plan, etc.)
 - The full triage card + response is logged to the interaction log
 - "Never"/"always" responses create filter rules
@@ -287,7 +402,7 @@ When the user responds via Messenger:
 
 ## Preference Learning System
 
-Three layers, all stored in the database per-workspace:
+Three layers, all stored via the storage layer:
 
 ### Layer 1: Interaction Log
 
@@ -295,9 +410,9 @@ Every triage card and user response stored in full:
 
 ```
 interaction_log:
-  id, workspace_id, timestamp, source_type, item_id, item_summary,
-  triage_card_full (JSON),        -- full triage card as presented
-  enrichment_context (JSON),      -- context gathered before triage
+  id, timestamp, source_type, item_id, item_summary,
+  triage_card_full (JSON),
+  enrichment_context (JSON),
   options_presented (JSON array),
   option_chosen (text),
   todo_created (JSON, nullable),
@@ -310,7 +425,7 @@ Append-only, never pruned.
 
 ### Layer 2: Preference Summary
 
-A single record per workspace synthesized from the interaction log:
+A single record synthesized from the interaction log:
 
 ```markdown
 # Preferences
@@ -319,22 +434,25 @@ Last updated: 2026-05-22
 ## What I care about
 - Anything where someone is blocked on me
 - Tasks assigned to me that are P0/P1
+- Diffs where I'm the only reviewer
+- SEVs for services my team owns
 ...
 
 ## What I don't care about
-- FYI posts from large groups unless they mention my project by name
+- FYI posts from large Workplace groups unless they mention my project
+- CI bot comments on diffs
+- Tasks in "backlog" status unless priority changes
 ...
 
 ## Priority tendencies
 - I tend to bump things up when people are waiting on me
-...
-
-## Communication style
-- I prefer short messages, not paragraphs
+- I treat SEVs as P0 if my team owns the service
 ...
 ```
 
-**Incremental updates**: The server reads only new interaction log entries since the last cursor position, computes statistics, and uses the LLM to synthesize the updated preference summary.
+**Seed preferences (cold start):** On first run, the preference summary is empty and the noise filter has no signal — every item would generate a triage card. To avoid flooding, the setup flow (`/workbench:setup` or `POST /api/preferences/seed`) prompts for a short seed: "What do you care about? What don't you care about?" The LLM formats the answers into an initial preference summary. This is a one-time bootstrap — subsequent updates are incremental from the interaction log.
+
+**Incremental updates**: The server reads only new interaction log entries since the last cursor position, computes statistics, and uses Claude to synthesize the updated preference summary.
 
 ### Layer 3: Preference-Informed Decisions
 
@@ -344,15 +462,25 @@ The preference summary is loaded as context for every pipeline run. It informs n
 
 | Priority | Criteria |
 |----------|----------|
-| P0 — Today | Explicit deadline within 24h, "urgent"/"blocker"/"critical", from your manager |
-| P1 — This Week | Deadline this week, blocking others, review requests on active code reviews |
+| P0 — Today | Explicit deadline within 24h, "urgent"/"blocker"/"critical", from your manager, active SEV for your service |
+| P1 — This Week | Deadline this week, blocking others, review requests on active diffs, oncall alerts |
 | P2 — This Month | Deadline this month, standard follow-ups |
 | P3 — Someday | No deadline, nice-to-do |
-| Pending | Insufficient context → triage card via Messenger |
+| Pending | Insufficient context → triage card via Google Chat |
 
-## Dashboard Format
+## Dashboard
 
-Stored in the database, served via API, optionally exported to Google Docs or Notion:
+The dashboard is not a separate UI — it's data served via the API and rendered by whichever surface requests it.
+
+### Surfaces
+
+**Google Chat — Morning Briefing**: A daily automated message (configurable time) summarizing P0/P1 items, pending triage, and anything new since yesterday. Sent proactively.
+
+**Claude Code plugin — `/workbench:status`**: On-demand formatted dashboard in the terminal. Shows priorities, pending triage count, stale items, and active plans.
+
+**MCP — `workbench_status`**: Same data, accessible from any MCP client.
+
+### Dashboard Content
 
 ```markdown
 # Workbench
@@ -361,18 +489,18 @@ Last updated: 2026-05-21 15:30 UTC
 ## Action Items
 
 ### P0 — Today
-- [ ] Review design doc for Project X (due: 2026-05-22) [meeting/Weekly Sync]
-- [ ] Respond to PR #456 comment from @alice [code_review]
+- [ ] Review D12345678 — auth middleware refactor (due: today) [diff]
+- [ ] Respond to SEV 54321 — auth latency spike [sev]
 
 ### P1 — This Week
-- [ ] Set up integration test environment [meeting/1:1]
-- [ ] Review task #98765 — infra migration [task]
+- [ ] Fix T98765 — auth token expiry [task]
+- [ ] Review D12345679 — logging changes [diff]
 
 ### P2 — This Month
-- [ ] Meet with XYZ about infrastructure migration [meeting]
+- [ ] Meet with XYZ about infrastructure migration [workplace]
 
 ### P3 — Someday
-- [ ] Look into refactoring the auth middleware [social]
+- [ ] Look into refactoring the auth middleware [workplace]
 
 ### Pending Clarification
 - [ ] "Sync with PM about launch readiness" — asked 2026-05-21
@@ -384,80 +512,65 @@ Last updated: 2026-05-21 15:30 UTC
 ## Plans
 | Plan | Status | Link |
 |------|--------|------|
-| Project X Migration | draft | [link] |
-| Auth Middleware Refactor | reviewed | [link] |
+| Auth Hardening Q3 | draft | [link] |
+| Infrastructure Migration | reviewed | [link] |
 ```
 
-## Draft Plan Creation
+## Draft Plan Creation (Phase 2)
 
-A "plan seed" is detected when 3+ action items from different sources converge on the same topic within a 7-day window. When detected:
+Deferred to Phase 2. The `plans` table and API endpoints remain in the schema but are not actively used in Phase 1. Focus is on the triage loop being rock solid first.
 
-1. Gather all related context from the database
-2. Use LLM Provider to synthesize a structured plan
-3. Store the plan in the database, optionally export to Google Docs/Notion
-4. Status lifecycle: draft → reviewed → finalized
+When implemented: a "plan seed" is detected when 3+ action items from different sources converge on the same topic within a 7-day window. The system gathers related context, uses Claude to synthesize a structured plan, stores it, and links related items. Status lifecycle: draft → reviewed → finalized.
 
 ## Server Components
 
 ### API Endpoints
 
-**Auth**
-- `POST /auth/register` — create a user account
-- `POST /auth/login` — get API token
-- `POST /auth/token` — generate API token for plugin/MCP
-
-**Workspaces**
-- `POST /workspaces` — create a workspace
-- `GET /workspaces` — list user's workspaces
-- `GET /workspaces/{id}` — workspace details
-- `PATCH /workspaces/{id}` — update workspace config
-- `POST /workspaces/{id}/members` — add a member
-- `DELETE /workspaces/{id}/members/{user_id}` — remove a member
+Lightweight auth — static bearer token. The server checks `Authorization: Bearer <token>` on every request (except `GET /health`). Token is configured via `WORKBENCH_API_TOKEN` env var on the server and stored in the plugin's `config.json`. No user management, no login flow. The token syncs across devservers/ODs via dotsync2.
 
 **Processing**
-- `POST /workspaces/{id}/process` — manually submit content for processing (text or doc URL)
+- `POST /api/process` — manually submit content for processing (text or doc URL). Async — returns `{job_id, status: "pending"}`.
+- `GET /api/jobs/{job_id}` — query pipeline job status and results
+- `POST /api/preferences/seed` — bootstrap initial preference summary from user input (cold start)
 
 **Items**
-- `GET /workspaces/{id}/items` — list items with filters (priority, source, status)
-- `PATCH /workspaces/{id}/items/{item_id}` — update item (mark done, change priority)
-- `DELETE /workspaces/{id}/items/{item_id}` — archive an item
+- `GET /api/items` — list items with filters (priority, source, status)
+- `PATCH /api/items/{item_id}` — update item (mark done, change priority)
+- `DELETE /api/items/{item_id}` — archive an item
 
 **Triage**
-- `GET /workspaces/{id}/triage/pending` — list items awaiting triage response
-- `POST /workspaces/{id}/triage/respond` — record a triage response
+- `GET /api/triage/pending` — list items awaiting triage response
+- `POST /api/triage/respond` — record a triage response
 
 **Plans**
-- `POST /workspaces/{id}/plans` — create a draft plan
-- `GET /workspaces/{id}/plans` — list plans
-- `PATCH /workspaces/{id}/plans/{plan_id}` — update plan
+- `POST /api/plans` — create a draft plan
+- `GET /api/plans` — list plans
+- `PATCH /api/plans/{plan_id}` — update plan
 
 **Preferences**
-- `GET /workspaces/{id}/preferences` — get preference summary
-- `GET /workspaces/{id}/preferences/digest` — get incremental digest
+- `GET /api/preferences` — get preference summary
+- `GET /api/preferences/digest` — get incremental digest
 
 **Filter Rules**
-- `GET /workspaces/{id}/filter-rules` — list filter rules
-- `POST /workspaces/{id}/filter-rules` — add a filter rule
-- `GET /workspaces/{id}/filter-rules/email/{account}` — email-specific filter rules
+- `GET /api/filter-rules` — list filter rules
+- `POST /api/filter-rules` — add a filter rule
+- `GET /api/filter-rules/{source_type}` — source-specific filter rules
 
 **Interaction Log**
-- `GET /workspaces/{id}/interactions` — query interaction history (cursor-based pagination)
+- `GET /api/interactions` — query interaction history (cursor-based pagination)
 
 **Enrichment**
-- `GET /workspaces/{id}/enrichment/trace` — query enrichment trace log
+- `GET /api/enrichment/trace` — query enrichment trace log
 
 **Sources**
-- `GET /workspaces/{id}/sources` — list configured source adapters
-- `POST /workspaces/{id}/sources` — add a source adapter
-- `PATCH /workspaces/{id}/sources/{source_id}` — update source config (credentials, schedule, enable/disable)
-- `DELETE /workspaces/{id}/sources/{source_id}` — remove a source adapter
-
-**Export**
-- `POST /workspaces/{id}/export` — export Dashboard to Google Docs or Notion
+- `GET /api/sources` — list configured source adapters
+- `POST /api/sources` — add a source adapter
+- `PATCH /api/sources/{source_id}` — update source config (schedule, enable/disable)
+- `DELETE /api/sources/{source_id}` — remove a source adapter
 
 **Config**
-- `GET /workspaces/{id}/config` — get workspace configuration
-- `PATCH /workspaces/{id}/config` — update configuration
+- `GET /api/config` — get configuration
+- `PATCH /api/config` — update configuration
 
 **Health**
 - `GET /health` — server health check
@@ -470,57 +583,37 @@ The server also exposes an MCP endpoint so any MCP-compatible client can interac
 - `workbench_items` — list/filter items
 - `workbench_triage_pending` — list pending triage items
 - `workbench_triage_respond` — respond to a triage card
-- `workbench_status` — workspace status and health
+- `workbench_status` — server status and health
 - `workbench_plans` — list/create/update plans
 - `workbench_sources` — manage source adapters
 
 ### Server-Side Scheduler
 
-Replaces Claude Code crons. The server runs a background scheduler (APScheduler or similar) that:
+The server runs a background scheduler (APScheduler or similar) that:
 
-- Polls each workspace's enabled source adapters on their configured schedule
-- Checks Messenger channels for triage responses
-- Runs daily cleanup (archive completed items, flag stale items, regenerate preferences, re-export Dashboard)
+- Polls each enabled source adapter on its configured schedule
+- **Triage queue manager**: After a poll run, queues all new triage cards. Sends one card at a time to Google Chat. Polls `list_messages()` for the user's text reply. On response (or timeout), advances to the next card. Timeout = configurable (default 30 min), after which the card stays pending and the queue advances to the next card. No re-send or nagging — the morning briefing includes pending triage count, and `/workbench:triage` handles batch catchup.
+- Sends daily morning briefing via Google Chat (configurable time, default 9:00 AM)
+- Daily preference regeneration for new interactions since last synthesis
+- Runs daily cleanup (archive completed items, flag stale items)
 
-Schedules are per-workspace and configurable via the API.
-
-## Database Schema (PostgreSQL)
-
-### Core Tables
-
-- `users` (id, email, name, password_hash, created_at)
-- `workspaces` (id, name, created_at)
-- `workspace_members` (workspace_id, user_id, role)
-
-### Per-Workspace Tables (all have workspace_id FK)
-
-- `items` (id, workspace_id, source_type, source_id, summary, priority, status, created_at, updated_at)
-- `plans` (id, workspace_id, title, status, content, sources, created_at)
-- `triage_cards` (id, workspace_id, item_id, card_content, options, sent_at, responded_at, response)
-- `interaction_log` (id, workspace_id, timestamp, source_type, item_id, triage_card_full, enrichment_context, options_presented, option_chosen, todo_created, enrichment_depth, enrichment_calls, enrichment_time_ms)
-- `filter_rules` (id, workspace_id, pattern, action, priority, created_from_interaction_id)
-- `email_filters` (id, workspace_id, account, pattern, action, created_from_interaction_id)
-- `preferences` (id, workspace_id, content, cursor_position, updated_at)
-- `enrichment_trace` (id, workspace_id, item_id, depth, calls_made, time_ms, context_retrieved, timestamp)
-- `processed` (workspace_id, source_type, source_id, processed_at)
-- `source_configs` (id, workspace_id, adapter_type, credentials_encrypted, schedule, enabled, created_at)
-- `workspace_config` (workspace_id, key, value)
+Schedules are configurable via the API.
 
 ## Claude Code Plugin (Thin Client)
 
-The plugin is a thin wrapper around the API. No pipeline logic, no source polling, no LLM calls.
+The plugin is a thin HTTP client wrapping API calls. No pipeline logic, no storage access, no LLM calls. All operations go through the server.
 
 ```
 ~/.claude/plugins/local/workbench/
   .claude-plugin/plugin.json
   commands/
-    process.md         -- /process <text or doc link>: POST to /workspaces/{id}/process
-    setup.md           -- /workbench:setup: start containers, register, configure
-    status.md          -- /workbench:status: GET /health + /workspaces/{id}/status
+    process.md         -- /process <text or doc link>: POST to /api/process
+    setup.md           -- /workbench:setup: configure server URL
+    status.md          -- /workbench:status: GET /health + dashboard summary
     triage.md          -- /workbench:triage: interactive CLI triage via API
     sources.md         -- /workbench:sources: manage sources via API
   config/
-    config.json        -- server URL, API token, default workspace ID
+    config.json        -- server URL (e.g., http://devgpu:8421)
 ```
 
 ## Project Structure (in repo)
@@ -530,68 +623,79 @@ workbench/
   specs/                          -- design specs
   plans/                          -- implementation plans
   server/
-    Dockerfile
-    docker-compose.yml
     requirements.txt
     main.py                       -- FastAPI app entrypoint
     config.py                     -- server configuration
-    models/                       -- SQLAlchemy models
-    migrations/                   -- Alembic migrations
+    storage/
+      base.py                    -- repository interfaces (ABC)
+      factory.py                 -- backend selection from config
+      xdb/
+        __init__.py
+        connection.py            -- XDB db_locator setup
+        items.py                 -- XDB ItemStore
+        triage.py                -- XDB TriageStore
+        plans.py                 -- XDB PlanStore
+        preferences.py           -- XDB PreferenceStore
+        interactions.py          -- XDB InteractionStore
+        filter_rules.py          -- XDB FilterRuleStore
+        enrichment.py            -- XDB EnrichmentTraceStore
+        sources.py               -- XDB SourceConfigStore
+        processed.py             -- XDB ProcessedStore
+        config.py                -- XDB ConfigStore
+        migrations.py            -- schema setup / migrations
+      sqlite/
+        __init__.py
+        connection.py
+        ... (same store modules)
+      postgres/
+        __init__.py
+        connection.py
+        ... (same store modules)
     api/
-      auth.py                     -- auth endpoints
-      workspaces.py               -- workspace CRUD
-      items.py                    -- items endpoints
-      triage.py                   -- triage endpoints
-      plans.py                    -- plans endpoints
-      preferences.py              -- preferences endpoints
-      filter_rules.py             -- filter rules endpoints
-      interactions.py             -- interaction log endpoints
-      enrichment.py               -- enrichment endpoints
-      sources.py                  -- source adapter management
-      export.py                   -- doc export endpoints
-      config.py                   -- config endpoints
-      health.py                   -- health check
+      items.py                   -- items endpoints
+      triage.py                  -- triage endpoints
+      plans.py                   -- plans endpoints
+      preferences.py             -- preferences endpoints
+      filter_rules.py            -- filter rules endpoints
+      interactions.py            -- interaction log endpoints
+      enrichment.py              -- enrichment endpoints
+      sources.py                 -- source adapter management
+      config.py                  -- config endpoints
+      health.py                  -- health check
     mcp/
-      server.py                   -- MCP server implementation
-      tools.py                    -- MCP tool definitions
+      server.py                  -- MCP server implementation
+      tools.py                   -- MCP tool definitions
     pipeline/
-      engine.py                   -- pipeline orchestration
-      extraction.py               -- LLM extraction stage
-      filter.py                   -- adaptive noise filter
-      enrichment.py               -- context enrichment
-      triage.py                   -- triage card generation
-      preferences.py              -- preference synthesis
-      scheduler.py                -- background job scheduler
+      engine.py                  -- pipeline orchestration
+      extraction.py              -- LLM extraction stage
+      filter.py                  -- adaptive noise filter
+      enrichment.py              -- context enrichment
+      triage.py                  -- triage card generation
+      preferences.py             -- preference synthesis
+      scheduler.py               -- background job scheduler
     providers/
       llm/
-        base.py                   -- LLM provider interface
-        claude.py                 -- Anthropic Claude
-        openai.py                 -- OpenAI
-        ollama.py                 -- Local Ollama
+        base.py                  -- LLM provider interface
+        claude.py                -- Anthropic Claude API
       doc_reader/
-        base.py                   -- DocReader interface
-        google_docs.py
-        notion.py
-        raw_url.py
-      doc_export/
-        base.py                   -- WorkbenchStore interface
-        google_docs.py
-        notion.py
+        base.py                  -- DocReader interface
+        google_docs.py           -- Google Docs via Google API proxy
       messenger/
-        base.py                   -- Messenger interface
-        whatsapp.py
-        discord.py
-        google_chat.py
+        base.py                  -- Messenger interface
+        google_chat.py           -- Google Chat API
       source/
-        base.py                   -- SourceAdapter interface
-        email_gmail.py
-        meetings_stub.py
-        social_stub.py
-        tasks_stub.py
-        code_review_stub.py
+        base.py                  -- SourceAdapter interface
+        phabricator.py           -- Phabricator diffs (Phase 1)
+        email.py                 -- Gmail (Phase 1)
+        tasks.py                 -- Meta Tasks (Phase 2)
+        workplace.py             -- Workplace posts (Phase 2)
+        calendar.py              -- Calendar / meeting notes (Phase 2)
+        sev.py                   -- SEVs (Phase 2)
+        oncall.py                -- Oncall alerts (Phase 2)
       enrichment/
-        base.py                   -- ContextEnricher interface
-        stub.py
+        base.py                  -- ContextEnricher interface
+        meta.py                  -- Meta-internal enricher
+        stub.py                  -- stub for testing
   plugin/
     .claude-plugin/plugin.json
     commands/
@@ -605,24 +709,23 @@ workbench/
   tests/
     test_pipeline.py
     test_api.py
-    test_providers.py
+    test_storage.py
     test_filter.py
     test_preferences.py
 ```
 
 ## Verification
 
-1. `docker-compose up` — server and DB start, migrations run
-2. Create user + workspace via API — verify auth works
-3. Configure Gmail source for workspace — verify credentials stored
-4. `POST /workspaces/{id}/process` with pasted text — triage card sent via Messenger
-5. Respond to triage card — item appears in DB with correct priority
-6. `POST /workspaces/{id}/process` with Google Doc link — doc fetched and processed
-7. Wait for server-side scheduler — verify it polls sources and processes new items
-8. "Never" response — filter rule created in DB for the workspace
-9. Verify second workspace has independent items, filters, preferences
-10. Connect via MCP — verify tools work (`workbench_process`, `workbench_items`, etc.)
-11. `/workbench:setup` from Claude Code — containers start, plugin configured
-12. `/process` from Claude Code — delegates to server, triage card sent
-13. Check enrichment trace — budget settings respected
-14. Preferences digest — incremental cursor-based read works
+1. Start server on devgpu — `python server/main.py` runs, `/health` returns OK
+2. From an OnDemand, `curl http://devgpu:8421/health` — server is reachable
+3. `POST /api/process` with pasted text — triage card sent via Google Chat
+4. Respond to triage card in Google Chat — item appears in storage with correct priority
+5. Configure Phabricator source — verify diffs needing review are ingested
+6. Wait for scheduler — verify it polls sources and processes new items
+7. "Never" response — filter rule created in storage
+8. Connect via MCP — verify tools work (`workbench_process`, `workbench_items`, etc.)
+9. `/workbench:setup` from Claude Code — plugin configured with server URL
+10. `/process` from Claude Code — delegates to server, triage card sent to Google Chat
+11. Switch storage backend to SQLite — verify same behavior
+12. Check enrichment trace — budget settings respected
+13. Preferences digest — incremental cursor-based read works

@@ -2,79 +2,61 @@
 
 ## Context
 
-Build the server, database, Claude Code plugin, and MCP server for a personal intelligence feed. Ingests from multiple pluggable sources (email, meeting notes, social feeds, tasks, code reviews), filters noise adaptively via a preference learning system, and triages items through rich interactive cards sent via Messenger (WhatsApp/Discord/Google Chat).
+Build the server, storage layer, Claude Code plugin, and MCP server for a Meta-internal personal intelligence feed. Ingests from internal sources (Phabricator diffs, Tasks, Workplace, calendar, SEVs, oncall, email), filters noise adaptively via a preference learning system, and triages items through rich interactive cards sent via Google Chat.
+
+Single-user tool running on devgpu, accessible from OnDemands.
 
 Full spec at: `specs/2026-05-21-workbench-design.md`
 
 ## Key Decisions
 
-- **Architecture**: FastAPI server does all heavy lifting (pipeline, LLM calls, scheduling). Clients are thin.
-- **Multi-tenant**: Users ↔ Workspaces (many-to-many with roles). All data is workspace-scoped.
-- **Deployment**: docker-compose with three containers: `workbench-server`, `workbench-db`, optional `workbench-worker`
-- **Auth**: Token-based. Plugin and MCP server store the token in config.
-- **Provider interfaces**: LLM (Claude/OpenAI/Ollama), DocReader, WorkbenchStore, Messenger, SourceAdapter, ContextEnricher — all pluggable, configured per-workspace
+- **Architecture**: FastAPI server does all heavy lifting (pipeline, LLM calls, scheduling). Clients are thin HTTP interfaces.
+- **Single-user**: No multi-tenant user/workspace management. No auth layer.
+- **Deployment**: FastAPI process on devgpu. OnDemands connect over the network.
+- **Storage**: Pluggable via repository pattern. XDB (MySQL) as default, SQLite and PostgreSQL as alternatives.
+- **LLM**: Claude API (Anthropic).
+- **Messenger**: Google Chat.
+- **Sources**: Phabricator, Tasks, Workplace, Calendar, SEVs, Oncall, Email — all Meta-internal.
+- **Plugin**: Thin HTTP client only. All operations go through the server API.
+- **Provider interfaces**: LLM, DocReader, Messenger, SourceAdapter, ContextEnricher — all pluggable.
 - **Filter**: Adaptive noise filter with 3-layer preference learning (interaction log → preference summary → informed decisions). LLM judgment, not regex.
-- **Triage**: Rich source-type-specific triage cards with actionable options, sent via Messenger
-- **Enrichment**: Configurable depth (shallow/deep) with per-workspace budget controls and trace logging
-- **Scheduler**: Server-side background scheduler (APScheduler) replaces crons
-- **Database**: PostgreSQL from day one
+- **Triage**: Rich source-type-specific triage cards with actionable options, sent via Google Chat.
+- **Enrichment**: Configurable depth (shallow/deep) with budget controls and trace logging.
+- **Scheduler**: Server-side background scheduler (APScheduler) for source polling.
 
 ## Implementation Sequence
 
-### 1. Docker stack
+### 1. Server skeleton
 
-- `server/Dockerfile` — FastAPI server image
-- `server/docker-compose.yml` — three-container stack (server, PostgreSQL, optional worker)
+- `server/main.py` — FastAPI app entrypoint
+- `server/config.py` — server configuration (storage backend, Claude API key, Google Chat config, port, etc.)
 - `server/requirements.txt` — Python dependencies
-- Verify: `docker-compose up` starts all containers
+- Verify: `python server/main.py` starts, `GET /health` returns OK
 
-### 2. Database schema and models
+### 2. Storage layer (interfaces + SQLite)
 
-- `server/models/` — SQLAlchemy models for all tables:
-  - Core: `users`, `workspaces`, `workspace_members`
-  - Per-workspace: `items`, `plans`, `triage_cards`, `interaction_log`, `filter_rules`, `email_filters`, `preferences`, `enrichment_trace`, `processed`, `source_configs`, `workspace_config`
-- `server/migrations/` — Alembic migrations for all tables
-- `server/config.py` — server configuration (DB URL, secrets, defaults)
-- Verify: `alembic upgrade head` creates all tables
+- `server/storage/base.py` — all repository interfaces (ItemStore, TriageStore, PlanStore, PreferenceStore, InteractionStore, FilterRuleStore, EnrichmentTraceStore, SourceConfigStore, ProcessedStore, ConfigStore)
+- `server/storage/factory.py` — backend selection from config
+- `server/storage/sqlite/` — SQLite implementation of all stores
+- Verify: unit tests pass against SQLite backend
 
-### 3. Auth endpoints
-
-- `server/api/auth.py`:
-  - `POST /auth/register` — create user account
-  - `POST /auth/login` — get API token
-  - `POST /auth/token` — generate API token for plugin/MCP
-- Verify: register user, login, use token for authenticated requests
-
-### 4. Workspace management endpoints
-
-- `server/api/workspaces.py`:
-  - `POST /workspaces` — create workspace
-  - `GET /workspaces` — list user's workspaces
-  - `GET /workspaces/{id}` — workspace details
-  - `PATCH /workspaces/{id}` — update workspace config
-  - `POST /workspaces/{id}/members` — add member
-  - `DELETE /workspaces/{id}/members/{user_id}` — remove member
-- Verify: create two workspaces, confirm data isolation
-
-### 5. Provider interfaces (base classes)
+### 4. Provider interfaces (base classes)
 
 - `server/providers/llm/base.py` — LLM provider interface (`extract`, `score_relevance`, `generate_triage_card`, `synthesize_preferences`)
 - `server/providers/doc_reader/base.py` — DocReader interface
-- `server/providers/doc_export/base.py` — WorkbenchStore interface
 - `server/providers/messenger/base.py` — Messenger interface (bidirectional)
 - `server/providers/source/base.py` — SourceAdapter interface
 - `server/providers/enrichment/base.py` — ContextEnricher interface
 
-### 6. Provider implementations
+### 5. Provider implementations
 
-- LLM: `server/providers/llm/claude.py`, `openai.py`, `ollama.py`
-- DocReader: `server/providers/doc_reader/google_docs.py`, `notion.py`, `raw_url.py`
-- Export: `server/providers/doc_export/google_docs.py`, `notion.py`
-- Messenger: `server/providers/messenger/whatsapp.py`, `discord.py`, `google_chat.py`
-- Source adapters: `server/providers/source/email_gmail.py` (full implementation), `meetings_stub.py`, `social_stub.py`, `tasks_stub.py`, `code_review_stub.py` (stubs)
-- Enrichment: `server/providers/enrichment/stub.py`
+- LLM: `server/providers/llm/claude.py` — Anthropic Claude API
+- DocReader: `server/providers/doc_reader/google_docs.py`
+- Messenger: `server/providers/messenger/google_chat.py`
+- Source adapters: `server/providers/source/phabricator.py` (Conduit API), `email.py` (Gmail via Google API proxy) — Phase 1 only
+- Enrichment: `server/providers/enrichment/meta.py` (Meta-internal), `stub.py` (testing)
 
-### 7. Processing pipeline
+### 6. Processing pipeline
 
 - `server/pipeline/engine.py` — pipeline orchestration
 - `server/pipeline/extraction.py` — LLM extraction (raw text → structured items)
@@ -83,30 +65,28 @@ Full spec at: `specs/2026-05-21-workbench-design.md`
 - `server/pipeline/triage.py` — rich triage card generation (source-type-specific)
 - `server/pipeline/preferences.py` — preference synthesis (incremental cursor-based digest → LLM summary)
 
-### 8. API endpoints (items, triage, plans, preferences, filter rules, interactions, enrichment, sources, export, config, health)
+### 7. API endpoints
 
-- `server/api/items.py` — `GET /workspaces/{id}/items`, `PATCH .../items/{item_id}`, `DELETE .../items/{item_id}`
-- `server/api/triage.py` — `GET .../triage/pending`, `POST .../triage/respond`
-- `server/api/plans.py` — `POST .../plans`, `GET .../plans`, `PATCH .../plans/{plan_id}`
-- `server/api/preferences.py` — `GET .../preferences`, `GET .../preferences/digest`
-- `server/api/filter_rules.py` — `GET .../filter-rules`, `POST .../filter-rules`, `GET .../filter-rules/email/{account}`
-- `server/api/interactions.py` — `GET .../interactions` (cursor-based pagination)
-- `server/api/enrichment.py` — `GET .../enrichment/trace`
-- `server/api/sources.py` — `GET .../sources`, `POST .../sources`, `PATCH .../sources/{source_id}`, `DELETE .../sources/{source_id}`
-- `server/api/export.py` — `POST .../export`
-- `server/api/config.py` — `GET .../config`, `PATCH .../config`
+- `server/api/items.py` — `GET /api/items`, `PATCH /api/items/{item_id}`, `DELETE /api/items/{item_id}`
+- `server/api/triage.py` — `GET /api/triage/pending`, `POST /api/triage/respond`
+- `server/api/plans.py` — `POST /api/plans`, `GET /api/plans`, `PATCH /api/plans/{plan_id}`
+- `server/api/preferences.py` — `GET /api/preferences`, `GET /api/preferences/digest`
+- `server/api/filter_rules.py` — `GET /api/filter-rules`, `POST /api/filter-rules`, `GET /api/filter-rules/{source_type}`
+- `server/api/interactions.py` — `GET /api/interactions` (cursor-based pagination)
+- `server/api/enrichment.py` — `GET /api/enrichment/trace`
+- `server/api/sources.py` — `GET /api/sources`, `POST /api/sources`, `PATCH /api/sources/{source_id}`, `DELETE /api/sources/{source_id}`
+- `server/api/config.py` — `GET /api/config`, `PATCH /api/config`
 - `server/api/health.py` — `GET /health`
-- `server/main.py` — FastAPI app entrypoint, mounts all routers
+- `server/main.py` — mounts all routers
 
-### 9. Server-side scheduler
+### 8. Server-side scheduler
 
 - `server/pipeline/scheduler.py` — background scheduler (APScheduler or similar):
-  - Poll each workspace's enabled source adapters on their configured schedule
-  - Check Messenger channels for triage responses
-  - Daily cleanup: archive completed items, flag stale items, regenerate preferences, re-export Dashboard
-- Schedules are per-workspace and configurable via API
+  - Poll each enabled source adapter on its configured schedule
+  - Check Google Chat for triage responses
+  - Daily cleanup: archive completed items, flag stale items, regenerate preferences
 
-### 10. MCP server
+### 9. MCP server
 
 - `server/mcp/server.py` — MCP server implementation
 - `server/mcp/tools.py` — MCP tool definitions:
@@ -114,41 +94,40 @@ Full spec at: `specs/2026-05-21-workbench-design.md`
   - `workbench_items` — list/filter items
   - `workbench_triage_pending` — list pending triage items
   - `workbench_triage_respond` — respond to a triage card
-  - `workbench_status` — workspace status and health
+  - `workbench_status` — server status and health
   - `workbench_plans` — list/create/update plans
   - `workbench_sources` — manage source adapters
 
-### 11. Claude Code plugin (thin client)
+### 10. Claude Code plugin (thin HTTP client)
 
 - `plugin/.claude-plugin/plugin.json` — plugin manifest
-- `plugin/commands/process.md` — `/process <text or doc link>`: POST to `/workspaces/{id}/process`
-- `plugin/commands/setup.md` — `/workbench:setup`: start containers, register user, configure workspace
-- `plugin/commands/status.md` — `/workbench:status`: GET `/health` + workspace status
+- `plugin/commands/process.md` — `/process <text or doc link>`: POST to `/api/process`
+- `plugin/commands/setup.md` — `/workbench:setup`: configure server URL
+- `plugin/commands/status.md` — `/workbench:status`: GET `/health` + dashboard summary
 - `plugin/commands/triage.md` — `/workbench:triage`: interactive CLI triage via API
 - `plugin/commands/sources.md` — `/workbench:sources`: manage sources via API
-- `plugin/config/config.json` — server URL, API token, default workspace ID
+- `plugin/config/config.json` — server URL (e.g., `http://devgpu:8421`)
 
-### 12. End-to-end testing
+### 11. End-to-end testing
 
 - `tests/test_pipeline.py` — pipeline stage tests
 - `tests/test_api.py` — API endpoint tests
-- `tests/test_providers.py` — provider interface tests
+- `tests/test_storage.py` — storage layer tests (run against each backend)
 - `tests/test_filter.py` — filter and preference learning tests
 - `tests/test_preferences.py` — preference synthesis tests
 
 ## Verification
 
-1. `docker-compose up` — server and DB start, migrations run
-2. Create user + workspace via API — verify auth works
-3. Configure Gmail source for workspace — verify credentials stored
-4. `POST /workspaces/{id}/process` with pasted text — triage card sent via Messenger
-5. Respond to triage card — item appears in DB with correct priority
-6. `POST /workspaces/{id}/process` with Google Doc link — doc fetched and processed
-7. Wait for server-side scheduler — verify it polls sources and processes new items
-8. "Never" response — filter rule created in DB for the workspace
-9. Verify second workspace has independent items, filters, preferences
-10. Connect via MCP — verify tools work (`workbench_process`, `workbench_items`, etc.)
-11. `/workbench:setup` from Claude Code — containers start, plugin configured
-12. `/process` from Claude Code — delegates to server, triage card sent
-13. Check enrichment trace — budget settings respected
-14. Preferences digest — incremental cursor-based read works
+1. Start server on devgpu — `python server/main.py` runs, `/health` returns OK
+2. From an OnDemand, `curl http://devgpu:8421/health` — server is reachable
+3. `POST /api/process` with pasted text — triage card sent via Google Chat
+4. Respond to triage card in Google Chat — item appears in storage with correct priority
+5. Configure Phabricator source — verify diffs needing review are ingested
+6. Wait for scheduler — verify it polls sources and processes new items
+7. "Never" response — filter rule created in storage
+8. Connect via MCP — verify tools work (`workbench_process`, `workbench_items`, etc.)
+9. `/workbench:setup` from Claude Code — plugin configured with server URL
+10. `/process` from Claude Code — delegates to server, triage card sent to Google Chat
+11. Switch storage backend to SQLite — verify same behavior
+12. Check enrichment trace — budget settings respected
+13. Preferences digest — incremental cursor-based read works
