@@ -18,8 +18,11 @@ _Avoid_: "answer", "reaction"
 **Filter Rule**: A natural language pattern matched by the LLM (not regex) to auto-include or auto-drop items. Created explicitly or learned from "never"/"always" triage responses.
 _Avoid_: "filter" alone (ambiguous — could mean the noise filter stage), "rule" alone
 
-**Preference Summary**: A single synthesized record describing what the user cares about, doesn't care about, and priority tendencies. Built incrementally from the interaction log by the LLM. Loaded as context for every pipeline run.
-_Avoid_: "preferences" (plural, ambiguous — could mean the raw interaction log), "profile"
+**Preference Fact**: A single learned preference extracted by Zep from triage interactions — e.g., "user always prioritizes diffs where reviewers are blocked." Stored in Zep's knowledge graph, queried at scoring time by the noise filter. Replaces the old hand-rolled preference summary.
+_Avoid_: "preference" (singular, too vague), "rule" (ambiguous with filter rule — filter rules are explicit and deterministic, preference facts are learned and probabilistic)
+
+**Memory Layer**: The abstraction for Zep integration. Sits alongside the repository pattern (not inside it). Two implementations: `ZepMemoryLayer` (production) and `NoopMemoryLayer` (testing/Zep-disabled). Records triage interactions, entities, and pipeline decisions; answers preference and relationship queries.
+_Avoid_: "knowledge base", "brain"
 
 **Interaction Log**: Append-only record of every triage card shown and the user's response. Source data for preference synthesis. Never pruned.
 _Avoid_: "history", "audit log"
@@ -61,8 +64,9 @@ _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 - Each **Extracted Item** gets its own relevance score, **Triage Card**, and **Item** row
 - **Triage Cards** are sent to Google Chat one at a time from the **Triage Queue**
 - A **Triage Response** creates an **Interaction Log** entry and may create a **Filter Rule**
-- The **Interaction Log** feeds **Preference Summary** synthesis
-- The **Preference Summary** informs the noise filter in every pipeline run
+- The **Interaction Log** is dual-written to the **Memory Layer** (Zep)
+- Zep extracts **Preference Facts** from interactions continuously
+- The **Memory Layer** informs the noise filter, enrichment, and triage card generation
 - **Repositories** abstract the **Storage Backend** from all business logic
 
 ## Example dialogue
