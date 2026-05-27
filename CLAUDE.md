@@ -12,7 +12,7 @@ Single-user tool for personal work use. Not open source.
 
 ## Architecture
 
-FastAPI server (Python) with pluggable storage (XDB / SQLite / PostgreSQL). Runs as a process on the devgpu. OnDemands connect to it over the network.
+FastAPI server (Python) with pluggable storage (SQLite / XDB / PostgreSQL) and Zep memory layer for knowledge graph and preference learning. All services run via Podman Compose on the devgpu. OnDemands connect over the network.
 
 The server does all heavy lifting. Clients are thin HTTP interfaces:
 - **Claude Code plugin** — slash commands wrapping API calls (no direct storage access)
@@ -22,7 +22,7 @@ The server does all heavy lifting. Clients are thin HTTP interfaces:
 ### Processing Pipeline
 
 ```
-Source adapter (raw data) → LLM extraction (Claude API) → Adaptive noise filter → Context enrichment → Rich triage card → Google Chat → User response → Storage
+Source adapter (raw data) → LLM extraction (Claude API) → Adaptive noise filter → Context enrichment → Rich triage card → Google Chat → User response → Storage + Zep
 ```
 
 ### Provider Interfaces
@@ -40,15 +40,19 @@ Single-user, no multi-tenant complexity. All data belongs to one user.
 ## Key Files
 
 - `specs/2026-05-21-workbench-design.md` — full design spec (architecture, storage layer, API endpoints, pipeline stages, triage card formats)
+- `docs/superpowers/specs/2026-05-27-zep-memory-layer-design.md` — Zep memory layer integration spec
 - `plans/phase-1-plan.md` — Phase 1 implementation sequence
 
 ## Development Commands
 
 ```bash
-# Start the server on devgpu
-python server/main.py
+# Start all services (Workbench + Zep + PostgreSQL)
+podman compose up -d
 
-# Or with uvicorn for reload during development
+# Tail logs
+podman compose logs -f
+
+# Development (Workbench only, no Zep)
 uvicorn server.main:app --host 0.0.0.0 --port 8421 --reload
 ```
 
@@ -71,7 +75,7 @@ tests/           — test suite
 - No auth layer — single-user tool on a devserver, server trusts all requests.
 - Plugin is a pure HTTP client — all reads/writes go through the server API, never direct to storage.
 - Adaptive noise filter uses LLM judgment against natural language patterns, not regex.
-- Preference learning has three layers: interaction log (append-only) → synthesized preference summary → informed pipeline decisions.
+- Preference learning via Zep knowledge graph: triage responses → auto-extracted facts → queried at scoring time. Replaces hand-rolled 3-layer synthesis.
 - Enrichment has configurable depth (shallow/deep) with budget controls and trace logging.
 - Triage cards are source-type-specific with actionable options, not simple yes/no.
 - Claude API (Anthropic) as the LLM provider.

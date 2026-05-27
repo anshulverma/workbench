@@ -57,21 +57,25 @@ The server does all heavy lifting: source polling, LLM calls for extraction/filt
 
 ## Deployment
 
-FastAPI server runs as a process on the devgpu. OnDemands connect to it over the network.
+All services run via Podman Compose on the devgpu. OnDemands connect to the Workbench server over the network.
 
-- **Server process**: FastAPI app (API + MCP server + pipeline engine + scheduler)
-- **Storage**: SQLite initially (local file, fast iteration). XDB later for shared state across devservers/ODs. PostgreSQL as another option.
-- **Process management**: systemd user service (`systemctl --user`). Survives logout, auto-restarts on crash, starts on boot.
-- No Docker or docker-compose required.
+- **Workbench server**: FastAPI app (API + MCP server + pipeline engine + scheduler)
+- **Zep server**: Self-hosted memory layer (knowledge graph, fact extraction)
+- **Zep PostgreSQL**: PostgreSQL + pgvector for Zep's storage
+- **Storage**: SQLite initially (local file, fast iteration). XDB later for shared state across devservers/ODs.
+- **Process management**: systemd user service running `podman compose`. Survives logout, auto-restarts on crash, starts on boot.
 
 ```bash
-# Start the server on devgpu (development)
-uvicorn server.main:app --host 0.0.0.0 --port 8421 --reload
+# Start all services
+podman compose up -d
+
+# Tail logs
+podman compose logs -f
 
 # Production: managed by systemd
 systemctl --user start workbench
-systemctl --user enable workbench   # auto-start on boot
-journalctl --user -u workbench -f   # tail logs
+systemctl --user enable workbench
+journalctl --user -u workbench -f
 ```
 
 ```ini
@@ -83,15 +87,16 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/anshulverma/workspace/workbench
-ExecStart=/usr/bin/python3 server/main.py
+ExecStart=/usr/bin/podman compose up
+ExecStop=/usr/bin/podman compose down
 Restart=on-failure
 RestartSec=5
-Environment=WORKBENCH_STORAGE_BACKEND=sqlite
-Environment=WORKBENCH_PORT=8421
 
 [Install]
 WantedBy=default.target
 ```
+
+See `docs/superpowers/specs/2026-05-27-zep-memory-layer-design.md` for the full Zep integration spec and docker-compose.yml.
 
 ## Data Model
 
@@ -130,10 +135,7 @@ class PlanStore(ABC):
     async def save_plan(self, plan: Plan) -> Plan: ...
     async def update_plan(self, plan_id: str, updates: PlanUpdate) -> Plan: ...
 
-class PreferenceStore(ABC):
-    async def get_summary(self) -> PreferenceSummary | None: ...
-    async def save_summary(self, summary: PreferenceSummary) -> None: ...
-    async def get_cursor(self) -> int: ...
+    # PreferenceStore removed — replaced by Zep MemoryLayer
 
 class InteractionStore(ABC):
     async def append(self, entry: InteractionEntry) -> None: ...
@@ -187,7 +189,7 @@ The logical schema is the same regardless of backend. Tables:
 - `triage_cards` (id, item_id, card_content JSON, options JSON, sent_at, responded_at, response)
 - `interaction_log` (id, timestamp, source_type, item_id, item_summary, triage_card_full JSON, enrichment_context JSON, options_presented JSON, option_chosen, todo_created JSON, enrichment_depth, enrichment_calls, enrichment_time_ms)
 - `filter_rules` (id, source_type, pattern, action, priority, created_from_interaction_id)
-- `preferences` (id, content, cursor_position, updated_at)
+- ~~`preferences`~~ — removed, replaced by Zep's knowledge graph
 - `enrichment_trace` (id, item_id, depth, calls_made, time_ms, context_retrieved JSON, timestamp)
 - `processed` (source_type, source_id, processed_at)
   - For poll-based sources, `source_id` is a composite key that includes modification state (e.g., `D12345_1748372400` for diffs). Each modification creates a new raw item so updates are surfaced. The raw item includes the original entity ID so the LLM has context about prior triage decisions.
@@ -402,7 +404,7 @@ When the user responds via Google Chat:
 
 ## Preference Learning System
 
-Three layers, all stored via the storage layer:
+Powered by Zep's knowledge graph (see `docs/superpowers/specs/2026-05-27-zep-memory-layer-design.md`). Two layers:
 
 ### Layer 1: Interaction Log
 
@@ -423,40 +425,20 @@ interaction_log:
 
 Append-only, never pruned.
 
-### Layer 2: Preference Summary
+### Layer 2: Zep Knowledge Graph
 
-A single record synthesized from the interaction log:
+Zep auto-extracts preference facts from the interaction log continuously:
+- "User always prioritizes diffs where reviewers are blocked"
+- "User drops emails from infrastructure-announcements group"
+- "User treats SEVs for auth service as P0"
 
-```markdown
-# Preferences
-Last updated: 2026-05-22
+The noise filter queries Zep for relevant preference facts at scoring time. No batch synthesis job needed — Zep handles this continuously.
 
-## What I care about
-- Anything where someone is blocked on me
-- Tasks assigned to me that are P0/P1
-- Diffs where I'm the only reviewer
-- SEVs for services my team owns
-...
+**Seed preferences (cold start):** On first run, the setup flow (`/workbench:setup` or `POST /api/preferences/seed`) prompts for a short seed: "What do you care about? What don't you care about?" Seed facts are written into Zep. Subsequent learning is automatic from triage responses.
 
-## What I don't care about
-- FYI posts from large Workplace groups unless they mention my project
-- CI bot comments on diffs
-- Tasks in "backlog" status unless priority changes
-...
+**Fallback:** If Zep is unavailable, the noise filter uses only explicit filter rules from SQLite. Less intelligent, but functional.
 
-## Priority tendencies
-- I tend to bump things up when people are waiting on me
-- I treat SEVs as P0 if my team owns the service
-...
-```
-
-**Seed preferences (cold start):** On first run, the preference summary is empty and the noise filter has no signal — every item would generate a triage card. To avoid flooding, the setup flow (`/workbench:setup` or `POST /api/preferences/seed`) prompts for a short seed: "What do you care about? What don't you care about?" The LLM formats the answers into an initial preference summary. This is a one-time bootstrap — subsequent updates are incremental from the interaction log.
-
-**Incremental updates**: The server reads only new interaction log entries since the last cursor position, computes statistics, and uses Claude to synthesize the updated preference summary.
-
-### Layer 3: Preference-Informed Decisions
-
-The preference summary is loaded as context for every pipeline run. It informs noise filtering, priority scoring, draft plan creation, and triage card style.
+Zep also accumulates entity knowledge (people, diffs, tasks, relationships) and provides relationship context for triage card generation. See the Zep design spec for details.
 
 ## Priority Scorer
 
