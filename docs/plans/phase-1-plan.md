@@ -6,7 +6,7 @@ Build the server, storage layer, Claude Code plugin, and MCP server for a Meta-i
 
 Single-user tool running on devgpu, accessible from OnDemands.
 
-Full spec at: `specs/2026-05-21-workbench-design.md`
+Full spec at: `docs/specs/2026-05-21-workbench-design.md`
 
 ## Key Decisions
 

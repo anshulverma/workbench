@@ -96,7 +96,7 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-See `docs/superpowers/specs/2026-05-27-zep-memory-layer-design.md` for the full Zep integration spec and docker-compose.yml.
+See `docs/specs/2026-05-27-zep-memory-layer-design.md` for the full Zep integration spec and docker-compose.yml.
 
 ## Data Model
 
@@ -404,7 +404,7 @@ When the user responds via Google Chat:
 
 ## Preference Learning System
 
-Powered by Zep's knowledge graph (see `docs/superpowers/specs/2026-05-27-zep-memory-layer-design.md`). Two layers:
+Powered by Zep's knowledge graph (see `docs/specs/2026-05-27-zep-memory-layer-design.md`). Two layers:
 
 ### Layer 1: Interaction Log
 

@@ -39,9 +39,9 @@ Single-user, no multi-tenant complexity. All data belongs to one user.
 
 ## Key Files
 
-- `specs/2026-05-21-workbench-design.md` — full design spec (architecture, storage layer, API endpoints, pipeline stages, triage card formats)
-- `docs/superpowers/specs/2026-05-27-zep-memory-layer-design.md` — Zep memory layer integration spec
-- `plans/phase-1-plan.md` — Phase 1 implementation sequence
+- `docs/specs/2026-05-21-workbench-design.md` — full design spec (architecture, storage layer, API endpoints, pipeline stages, triage card formats)
+- `docs/specs/2026-05-27-zep-memory-layer-design.md` — Zep memory layer integration spec
+- `docs/plans/phase-1-plan.md` — Phase 1 implementation sequence
 
 ## Development Commands
 
@@ -59,9 +59,14 @@ uvicorn server.main:app --host 0.0.0.0 --port 8421 --reload
 ## Planned Project Structure
 
 ```
+docs/            — all documentation
+docs/specs/      — design specs (main spec + Zep spec)
+docs/plans/      — implementation plans and step specs
+docs/adr/        — architectural decision records
 server/          — FastAPI app, API routes
 server/storage/  — pluggable storage layer (base interfaces + xdb/sqlite/postgres implementations)
-server/pipeline/ — processing pipeline (extraction, filter, enrichment, triage, preferences, scheduler)
+server/pipeline/ — processing pipeline (extraction, filter, enrichment, triage, scheduler)
+server/memory/   — Zep memory layer (MemoryLayer interface + implementations)
 server/providers/— pluggable provider implementations (llm/, doc_reader/, messenger/, source/, enrichment/)
 server/mcp/      — MCP server and tool definitions
 server/api/      — REST API route modules
