@@ -1,7 +1,7 @@
 # docker-compose.yml
 services:
   workbench:
-    build: ./server
+    build: .
     network_mode: host
     volumes:
       - workbench-data:/data
