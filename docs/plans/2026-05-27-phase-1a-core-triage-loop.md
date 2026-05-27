@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     anthropic_base_url: str = "https://plugboard.x2p.facebook.net"
     zep_url: str = ""
     gchat_space_id: str = ""
-    google_api_script: str = "/app/google_api.py"
+    google_api_script: str = "server/lib/google_api.py"
     poll_interval_minutes: int = 15
     triage_timeout_minutes: int = 30
     morning_briefing_hour: int = 9
@@ -1808,7 +1808,7 @@ sl commit -m "Add REST API endpoints and wire up FastAPI with stores and pipelin
 
 - [ ] **Step 1: Write GoogleChatMessenger**
 
-Wraps `google_api.py` calls via subprocess (same approach the existing script uses):
+Wraps `google_api.py` calls via subprocess. The script is copied from `fbsource/fbcode/claude-templates/components/skills/gchat/google_api.py` into `server/lib/google_api.py` (standalone, zero non-stdlib dependencies). Copy it as a prerequisite to this task:
 
 ```python
 # server/providers/messenger/google_chat.py
