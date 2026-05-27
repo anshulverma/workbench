@@ -86,6 +86,7 @@ _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 - **Credential encryption** — source adapters reference secrets via env vars or filesystem paths (DCAT certs, API keys), not stored in the DB.
 - **Export** — no Google Docs / Notion export. Dashboard lives in Google Chat (morning briefing) and CLI (`/workbench:status`).
 - **Multi-platform Messenger** — Google Chat only. No WhatsApp/Discord/Slack.
+- **Preference Summary** (hand-rolled) — replaced by Zep's knowledge graph and automatic fact extraction. See ADR 0004.
 
 ## Flagged ambiguities
 

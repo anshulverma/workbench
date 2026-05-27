@@ -53,29 +53,27 @@ All services run via Podman Compose on the devgpu:
 services:
   workbench:          # FastAPI server
     build: ./server
-    ports: ["8421:8421"]
+    network_mode: host
     volumes:
       - workbench-data:/data    # SQLite file
     environment:
-      - WORKBENCH_ZEP_URL=http://zep:8000
+      - WORKBENCH_ZEP_URL=http://localhost:8000
       - WORKBENCH_STORAGE_BACKEND=sqlite
       - WORKBENCH_API_TOKEN=${WORKBENCH_API_TOKEN}
-    depends_on: [zep]
+      - WORKBENCH_PORT=8421
 
   zep:                # Zep memory server
     image: ghcr.io/getzep/zep:latest
-    ports: ["8000:8000"]
+    network_mode: host
     environment:
-      - ZEP_STORE_POSTGRES_DSN=postgres://zep:zep@zep-postgres:5432/zep
+      - ZEP_STORE_POSTGRES_DSN=postgres://zep:zep@localhost:5432/zep
       - ZEP_LLM_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ZEP_LLM_ANTHROPIC_BASE_URL=https://plugboard.x2p.facebook.net
-    volumes:
-      - /var/facebook/credentials/${USER}/agent_x509:/certs:ro
-      - /var/facebook/rootcanal/ca.pem:/certs/ca.pem:ro
-    depends_on: [zep-postgres]
+      - ZEP_SERVER_PORT=8000
 
   zep-postgres:       # PostgreSQL + pgvector for Zep
     image: ghcr.io/getzep/postgres:latest
+    network_mode: host
     volumes:
       - zep-pgdata:/var/lib/postgresql/data
     environment:
@@ -86,6 +84,12 @@ services:
 volumes:
   workbench-data:
   zep-pgdata:
+```
+
+Pull images (first time only — devserver requires proxy for external registries):
+```bash
+with-proxy podman pull ghcr.io/getzep/zep:latest
+with-proxy podman pull ghcr.io/getzep/postgres:latest
 ```
 
 Managed by systemd user service:
@@ -180,6 +184,7 @@ Each stage uses a "Zep-first, fallback-gracefully" pattern:
 - `/api/preferences` returns Zep's current fact list
 - `/api/preferences/seed` writes seed facts into Zep
 - New endpoint: `/api/memory/facts` — proxies Zep's fact list for debugging visibility
+- New endpoint: `POST /api/memory/rebuild` — replays interaction log through Zep to rebuild knowledge graph
 
 ## Dual-Write Pattern
 
@@ -216,6 +221,14 @@ Build the pipeline end-to-end with `NoopMemoryLayer`. SQLite storage, Claude API
 - Triage card generation queries Zep for relationship context
 - Cards get richer contextual lines
 - Verify: triage cards show accumulated relationship context
+
+## Data Durability
+
+Zep's knowledge graph is always rebuildable from the interaction log (SQLite/XDB), which is the source of truth. Two mechanisms:
+
+**Rebuild from source of truth:** A `rebuild_memory()` function replays all interaction log entries through `memory.record_triage()`, reconstructing the knowledge graph from scratch. Available as an API endpoint (`POST /api/memory/rebuild`) and CLI command. Used after Zep data loss or when migrating to a new devserver.
+
+**Periodic PostgreSQL backup:** A cron job dumps Zep's PostgreSQL to a compressed file on a configurable schedule (default: daily). Stored locally and optionally synced to Manifold or another durable location. Faster recovery than a full rebuild — restore the dump instead of replaying months of interactions.
 
 ## Verification
 
