@@ -106,7 +106,7 @@ Configuration is stored alongside the data in the storage layer:
 - Source adapter configurations
 - Feed polling schedules
 - Filter rules
-- Preference summary and interaction log
+- Interaction log (Zep handles preference learning)
 - Items, plans, triage cards
 - Enrichment settings and trace log
 - Google Chat configuration
@@ -400,7 +400,7 @@ When the user responds via Google Chat:
 - The chosen action is executed (create todo, update priority, add plan, etc.)
 - The full triage card + response is logged to the interaction log
 - "Never"/"always" responses create filter rules
-- The preference summary is updated incrementally
+- The triage interaction is dual-written to the interaction log and Zep
 
 ## Preference Learning System
 
@@ -554,6 +554,10 @@ Lightweight auth — static bearer token. The server checks `Authorization: Bear
 - `GET /api/config` — get configuration
 - `PATCH /api/config` — update configuration
 
+**Memory (Zep)**
+- `GET /api/memory/facts` — list Zep's extracted preference facts
+- `POST /api/memory/rebuild` — replay interaction log through Zep to rebuild knowledge graph
+
 **Health**
 - `GET /health` — server health check
 
@@ -576,7 +580,6 @@ The server runs a background scheduler (APScheduler or similar) that:
 - Polls each enabled source adapter on its configured schedule
 - **Triage queue manager**: After a poll run, queues all new triage cards. Sends one card at a time to Google Chat. Polls `list_messages()` for the user's text reply. On response (or timeout), advances to the next card. Timeout = configurable (default 30 min), after which the card stays pending and the queue advances to the next card. No re-send or nagging — the morning briefing includes pending triage count, and `/workbench:triage` handles batch catchup.
 - Sends daily morning briefing via Google Chat (configurable time, default 9:00 AM)
-- Daily preference regeneration for new interactions since last synthesis
 - Runs daily cleanup (archive completed items, flag stale items)
 
 Schedules are configurable via the API.
@@ -602,82 +605,77 @@ The plugin is a thin HTTP client wrapping API calls. No pipeline logic, no stora
 
 ```
 workbench/
-  specs/                          -- design specs
-  plans/                          -- implementation plans
+  docs/
+    specs/                         -- design specs
+    plans/                         -- implementation plans
+    adr/                           -- architectural decision records
+    memory/                        -- project memory (decisions, context)
+  docker-compose.yml               -- Podman Compose (workbench + zep + zep-postgres)
   server/
+    Dockerfile
     requirements.txt
-    main.py                       -- FastAPI app entrypoint
-    config.py                     -- server configuration
+    main.py                        -- FastAPI app entrypoint
+    config.py                      -- server configuration
     storage/
-      base.py                    -- repository interfaces (ABC)
-      factory.py                 -- backend selection from config
-      xdb/
-        __init__.py
-        connection.py            -- XDB db_locator setup
-        items.py                 -- XDB ItemStore
-        triage.py                -- XDB TriageStore
-        plans.py                 -- XDB PlanStore
-        preferences.py           -- XDB PreferenceStore
-        interactions.py          -- XDB InteractionStore
-        filter_rules.py          -- XDB FilterRuleStore
-        enrichment.py            -- XDB EnrichmentTraceStore
-        sources.py               -- XDB SourceConfigStore
-        processed.py             -- XDB ProcessedStore
-        config.py                -- XDB ConfigStore
-        migrations.py            -- schema setup / migrations
-      sqlite/
+      base.py                     -- repository interfaces (ABC)
+      factory.py                  -- backend selection from config
+      sqlite/                     -- SQLite implementation (Phase 1)
         __init__.py
         connection.py
-        ... (same store modules)
-      postgres/
-        __init__.py
-        connection.py
-        ... (same store modules)
+        items.py, triage.py, plans.py, interactions.py,
+        filter_rules.py, enrichment.py, sources.py,
+        processed.py, config.py, jobs.py
+      xdb/                        -- XDB implementation (Phase 2)
+      postgres/                   -- PostgreSQL implementation (Phase 2)
+    memory/
+      base.py                     -- MemoryLayer interface (ABC)
+      noop.py                     -- NoopMemoryLayer (testing/Zep-disabled)
+      zep.py                      -- ZepMemoryLayer (Zep Python SDK)
     api/
-      items.py                   -- items endpoints
-      triage.py                  -- triage endpoints
-      plans.py                   -- plans endpoints
-      preferences.py             -- preferences endpoints
-      filter_rules.py            -- filter rules endpoints
-      interactions.py            -- interaction log endpoints
-      enrichment.py              -- enrichment endpoints
-      sources.py                 -- source adapter management
-      config.py                  -- config endpoints
-      health.py                  -- health check
+      items.py                    -- items endpoints
+      triage.py                   -- triage endpoints
+      plans.py                    -- plans endpoints
+      preferences.py              -- preferences endpoints (proxies Zep facts)
+      filter_rules.py             -- filter rules endpoints
+      interactions.py             -- interaction log endpoints
+      enrichment.py               -- enrichment endpoints
+      sources.py                  -- source adapter management
+      memory.py                   -- memory/facts + rebuild endpoints
+      config.py                   -- config endpoints
+      health.py                   -- health check
     mcp/
-      server.py                  -- MCP server implementation
-      tools.py                   -- MCP tool definitions
+      server.py                   -- MCP server implementation
+      tools.py                    -- MCP tool definitions
     pipeline/
-      engine.py                  -- pipeline orchestration
-      extraction.py              -- LLM extraction stage
-      filter.py                  -- adaptive noise filter
-      enrichment.py              -- context enrichment
-      triage.py                  -- triage card generation
-      preferences.py             -- preference synthesis
-      scheduler.py               -- background job scheduler
+      engine.py                   -- pipeline orchestration
+      extraction.py               -- LLM extraction stage
+      filter.py                   -- adaptive noise filter
+      enrichment.py               -- context enrichment
+      triage.py                   -- triage card generation
+      scheduler.py                -- background job scheduler
     providers/
       llm/
-        base.py                  -- LLM provider interface
-        claude.py                -- Anthropic Claude API
+        base.py                   -- LLM provider interface
+        claude.py                 -- Anthropic Claude API
       doc_reader/
-        base.py                  -- DocReader interface
-        google_docs.py           -- Google Docs via Google API proxy
+        base.py                   -- DocReader interface
+        google_docs.py            -- Google Docs via Google API proxy
       messenger/
-        base.py                  -- Messenger interface
-        google_chat.py           -- Google Chat API
+        base.py                   -- Messenger interface
+        google_chat.py            -- Google Chat API
       source/
-        base.py                  -- SourceAdapter interface
-        phabricator.py           -- Phabricator diffs (Phase 1)
-        email.py                 -- Gmail (Phase 1)
-        tasks.py                 -- Meta Tasks (Phase 2)
-        workplace.py             -- Workplace posts (Phase 2)
-        calendar.py              -- Calendar / meeting notes (Phase 2)
-        sev.py                   -- SEVs (Phase 2)
-        oncall.py                -- Oncall alerts (Phase 2)
+        base.py                   -- SourceAdapter interface
+        phabricator.py            -- Phabricator diffs (Phase 1)
+        email.py                  -- Gmail (Phase 1)
+        tasks.py                  -- Meta Tasks (Phase 2)
+        workplace.py              -- Workplace posts (Phase 2)
+        calendar.py               -- Calendar / meeting notes (Phase 2)
+        sev.py                    -- SEVs (Phase 2)
+        oncall.py                 -- Oncall alerts (Phase 2)
       enrichment/
-        base.py                  -- ContextEnricher interface
-        meta.py                  -- Meta-internal enricher
-        stub.py                  -- stub for testing
+        base.py                   -- ContextEnricher interface
+        meta.py                   -- Meta-internal enricher
+        stub.py                   -- stub for testing
   plugin/
     .claude-plugin/plugin.json
     commands/
@@ -692,22 +690,22 @@ workbench/
     test_pipeline.py
     test_api.py
     test_storage.py
+    test_memory.py
     test_filter.py
-    test_preferences.py
 ```
 
 ## Verification
 
-1. Start server on devgpu — `python server/main.py` runs, `/health` returns OK
-2. From an OnDemand, `curl http://devgpu:8421/health` — server is reachable
+1. `podman compose up -d` — all three services start (workbench, zep, zep-postgres)
+2. `GET /health` returns OK from devgpu and from an OnDemand
 3. `POST /api/process` with pasted text — triage card sent via Google Chat
 4. Respond to triage card in Google Chat — item appears in storage with correct priority
-5. Configure Phabricator source — verify diffs needing review are ingested
-6. Wait for scheduler — verify it polls sources and processes new items
-7. "Never" response — filter rule created in storage
-8. Connect via MCP — verify tools work (`workbench_process`, `workbench_items`, etc.)
-9. `/workbench:setup` from Claude Code — plugin configured with server URL
-10. `/process` from Claude Code — delegates to server, triage card sent to Google Chat
-11. Switch storage backend to SQLite — verify same behavior
-12. Check enrichment trace — budget settings respected
-13. Preferences digest — incremental cursor-based read works
+5. Triage response dual-written to Zep — `GET /api/memory/facts` shows extracted preference
+6. Configure Phabricator source — verify diffs needing review are ingested
+7. Wait for scheduler — verify it polls sources and processes new items
+8. "Never" response — filter rule created in storage
+9. Zep down — pipeline degrades gracefully (uses filter rules only, no crash)
+10. Connect via MCP — verify tools work (`workbench_process`, `workbench_items`, etc.)
+11. `/workbench:setup` from Claude Code — plugin configured with server URL
+12. `/process` from Claude Code — delegates to server, triage card sent to Google Chat
+13. `POST /api/memory/rebuild` — replays interaction log, knowledge graph rebuilt
