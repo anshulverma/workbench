@@ -1,0 +1,18 @@
+# docker-compose.yml
+services:
+  workbench:
+    build: ./server
+    network_mode: host
+    volumes:
+      - workbench-data:/data
+    environment:
+      - WORKBENCH_API_TOKEN=${WORKBENCH_API_TOKEN:-dev-token}
+      - WORKBENCH_STORAGE_BACKEND=sqlite
+      - WORKBENCH_SQLITE_PATH=/data/workbench.db
+      - WORKBENCH_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - WORKBENCH_ANTHROPIC_BASE_URL=https://plugboard.x2p.facebook.net
+      - WORKBENCH_GCHAT_SPACE_ID=${GCHAT_SPACE_ID}
+      - WORKBENCH_PORT=8421
+
+volumes:
+  workbench-data:
