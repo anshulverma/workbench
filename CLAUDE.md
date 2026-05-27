@@ -41,7 +41,8 @@ Single-user, no multi-tenant complexity. All data belongs to one user.
 
 - `docs/specs/2026-05-21-workbench-design.md` — full design spec (architecture, storage layer, API endpoints, pipeline stages, triage card formats)
 - `docs/specs/2026-05-27-zep-memory-layer-design.md` — Zep memory layer integration spec
-- `docs/plans/phase-1-plan.md` — Phase 1 implementation sequence
+- `docs/plans/` — implementation plans (to be written)
+- `docs/plans/_stale/` — old step specs from prior design, kept as reference
 
 ## Development Commands
 
