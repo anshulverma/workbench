@@ -62,14 +62,17 @@ def triage(server_url: str, token: str) -> None:
             print("  Invalid input. Skipping.\n")
 
 
-def serve() -> None:
+def serve(config_path: str = None, override_path: str = None) -> None:
     """Start the Workbench server via uvicorn."""
     import uvicorn
 
     from workbench.config import load_config
 
-    config_path = os.environ.get("WORKBENCH_CONFIG", "config.yml")
-    override_path = os.environ.get("WORKBENCH_CONFIG_OVERRIDE")
+    config_path = config_path or os.environ.get("WORKBENCH_CONFIG", "config.yml")
+    override_path = override_path or os.environ.get("WORKBENCH_CONFIG_OVERRIDE")
+    os.environ["WORKBENCH_CONFIG"] = config_path
+    if override_path:
+        os.environ["WORKBENCH_CONFIG_OVERRIDE"] = override_path
     config = load_config(config_path, override_path)
     uvicorn.run(
         "workbench.main:app",
@@ -87,7 +90,9 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("serve", help="Start the server")
+    serve_parser = subparsers.add_parser("serve", help="Start the server")
+    serve_parser.add_argument("--config", default=None, help="Config file path (or set WORKBENCH_CONFIG)")
+    serve_parser.add_argument("--override", default=None, help="Override config file (or set WORKBENCH_CONFIG_OVERRIDE)")
 
     triage_parser = subparsers.add_parser("triage", help="Interactive triage from stdin")
     triage_parser.add_argument(
@@ -100,7 +105,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "serve":
-        serve()
+        serve(config_path=args.config, override_path=args.override)
     elif args.command == "triage":
         token = args.token or os.environ.get("WORKBENCH_API_TOKEN", "")
         if not token:
