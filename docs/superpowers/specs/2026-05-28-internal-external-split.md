@@ -15,8 +15,9 @@ Two repos, one package namespace:
 
 **`workbench`** (public, GitHub):
 - Framework: FastAPI server, pipeline engine, storage layer, provider ABCs, YAML config/registry, Alembic migrations
-- External providers: `AnthropicLLM` (direct API, no proxy/certs), `ConsoleMessenger` (stdout), `GitHubSourceAdapter` (polls repos via PyGithub)
+- External providers: `AnthropicLLM` (direct API, no proxy/certs), `ConsoleMessenger` (prints to stdout, responses via API/CLI), `GitHubSourceAdapter` (polls repos via `gh` CLI)
 - Default providers: `StubEnricher`, `NoopMemoryLayer`
+- CLI: `workbench serve`, `workbench triage` (interactive stdin-based triage)
 - `config.example.yml` with external defaults (api.anthropic.com, ConsoleMessenger)
 - Dockerfile, docker-compose.yml, plugin, tests, genericized docs
 
@@ -24,8 +25,7 @@ Two repos, one package namespace:
 - Meta providers: `MetaAnthropicLLM` (Plugboard + x509 mTLS), `MetaQueueScorer` (same certs), `GoogleChatMessenger` (google_api.py + DCAT), `PhabricatorAdapter` (arc conduit), `GmailAdapter`, `MetaEnricher`
 - `lib/google_api.py` (1565 lines, DCAT auth)
 - `config.meta.yml` (layered override)
-- `docker-compose.override.yml`
-- Internal Dockerfile (extends public image)
+- `docker-compose.override.yml` (volume-mounts meta into public container)
 - Original design docs (preserved for reference)
 
 ## Deployment
@@ -39,8 +39,26 @@ workbench serve --config config.yml --override ~/workspace/workbench-meta/config
 
 Or via Podman:
 ```bash
-podman compose up -d                                    # base stack
-podman compose -f docker-compose.override.yml up -d     # with meta overlay
+# From workbench repo root:
+podman compose up -d
+
+# With meta overlay (from workbench-meta):
+podman compose -f ~/workspace/workbench/docker-compose.yml \
+  -f ~/workspace/workbench-meta/docker-compose.override.yml up -d
+```
+
+The override file volume-mounts `workbench-meta` into the public container and pip-installs it at startup — no second Dockerfile needed:
+
+```yaml
+# workbench-meta/docker-compose.override.yml
+services:
+  workbench:
+    volumes:
+      - ~/workspace/workbench-meta:/opt/workbench-meta:ro
+      - ~/workspace/workbench-meta/config.meta.yml:/app/config.override.yml:ro
+    command: >
+      sh -c "pip install -e /opt/workbench-meta &&
+             workbench serve --config /app/config.yml --override /app/config.override.yml"
 ```
 
 ## What moves where
@@ -56,13 +74,17 @@ All framework code:
 - Tests (framework + external providers)
 
 New external providers (created during split):
-- `src/workbench/providers/llm/anthropic.py` — `AnthropicLLM`: direct `AsyncAnthropic(api_key, base_url="https://api.anthropic.com")`, no certs, no proxy
-- `src/workbench/providers/messenger/console.py` — `ConsoleMessenger`: prints triage cards to stdout, reads responses from stdin (for local dev/debugging)
-- `src/workbench/providers/source/github.py` — `GitHubSourceAdapter`: polls GitHub repos for PRs/issues via PyGithub
-- `src/workbench/providers/queue_scorer/llm.py` — genericized: strip cert logic, use direct Anthropic API
+- `src/workbench/providers/llm/anthropic.py` — `AnthropicLLM`: direct `AsyncAnthropic(api_key, base_url="https://api.anthropic.com")`, no certs, no proxy. Takes optional `http_client` param in ProviderConfig for subclass injection.
+- `src/workbench/providers/messenger/console.py` — `ConsoleMessenger`: prints triage cards to stdout, `poll_responses` returns `[]`. Responses come via API or CLI.
+- `src/workbench/providers/source/github.py` — `GitHubSourceAdapter`: polls GitHub repos for PRs/issues via `gh` CLI (`asyncio.create_subprocess_exec`). No Python library dependency.
+- `src/workbench/providers/queue_scorer/llm.py` — genericized: strip cert logic, use direct Anthropic API with optional `http_client`.
+- `src/workbench/cli.py` — `workbench triage` command: interactive stdin loop that calls API (GET pending, print card, read choice, POST respond).
+
+Interface cleanup:
+- `src/workbench/providers/source/base.py` — `SourceAdapter.poll()` signature changes from `poll(config: dict, since)` to `poll(since)`. Adapters already have config from ProviderConfig construction.
 
 Infrastructure:
-- `pyproject.toml` — updated dependencies (add PyGithub, remove aiosqlite)
+- `pyproject.toml` — remove `pydantic-settings`, `aiosqlite` (no longer used). No new deps (gh CLI is external).
 - `Dockerfile` — unchanged from Phase 1a
 - `docker-compose.yml` — unchanged
 - `config.example.yml` — external defaults
@@ -83,8 +105,7 @@ Provider implementations:
 
 Config + Docker:
 - `config.meta.yml` — layered override with Meta class paths
-- `docker-compose.override.yml` — extends public image, mounts meta config
-- `Dockerfile` — `FROM workbench:latest`, `pip install -e /opt/workbench-meta`
+- `docker-compose.override.yml` — volume-mounts meta package, pip installs at startup
 
 Docs:
 - `docs/specs/` (originals with Meta-internal details)
@@ -102,41 +123,54 @@ These files exist in `~/.claude/projects/-home-anshulverma-workspace-workbench/m
 
 ## Provider Changes
 
-### ClaudeProvider → AnthropicLLM (public) + MetaAnthropicLLM (internal)
+### AnthropicLLM (public) + MetaAnthropicLLM (internal)
 
-**Public `AnthropicLLM`:**
+**Public `AnthropicLLM`** — all LLM business logic lives here (prompts, retry, JSON parsing, template options):
 ```python
 class AnthropicLLM(LLMProvider):
     class ProviderConfig(BaseModel):
         api_key: str
         base_url: str = "https://api.anthropic.com"
         model: str = "claude-sonnet-4-20250514"
+        http_client: Any = None  # optional, for subclass injection
 
     def __init__(self, config: ProviderConfig):
-        self.client = AsyncAnthropic(api_key=config.api_key, base_url=config.base_url)
+        self.client = AsyncAnthropic(
+            api_key=config.api_key, base_url=config.base_url,
+            http_client=config.http_client,
+        )
         self.model = config.model
+        self._http_client = config.http_client
+
+    # extract(), score_relevance(), generate_triage_card(),
+    # _call_with_retry(), _extract_json(), _template_options()
+    # — all business logic stays here, unchanged from ClaudeProvider
 ```
 
-No SSL context, no cert paths, no proxy. Simple and clean.
-
-**Internal `MetaAnthropicLLM` (in workbench-meta):**
+**Internal `MetaAnthropicLLM`** — only adds the mTLS transport:
 ```python
 class MetaAnthropicLLM(AnthropicLLM):
     class ProviderConfig(AnthropicLLM.ProviderConfig):
         base_url: str = "https://plugboard.x2p.facebook.net"
 
     def __init__(self, config: ProviderConfig):
-        # Add mTLS cert handling before calling super
-        ...
+        user = os.environ.get("USER", "anshulverma")
+        cert_path = f"/var/facebook/credentials/{user}/agent_x509/claude_code_{user}.pem"
+        ca_path = "/var/facebook/rootcanal/ca.pem"
+        if os.path.exists(cert_path):
+            ssl_ctx = ssl.create_default_context(cafile=ca_path)
+            ssl_ctx.load_cert_chain(cert_path)
+            config.http_client = httpx.AsyncClient(verify=ssl_ctx)
+        super().__init__(config)
 ```
-
-Inherits from the public class, adds Meta-specific cert logic.
 
 ### LLMQueueScorer
 
-Same pattern: public version uses direct Anthropic API. Internal `MetaQueueScorer` inherits and adds certs.
+Same pattern: public version uses direct Anthropic API with optional `http_client`. Internal `MetaQueueScorer` inherits and injects the SSL client.
 
 ### ConsoleMessenger (new, public)
+
+Server-side component only. Prints cards, returns empty from poll. Triage responses come via API/CLI.
 
 ```python
 class ConsoleMessenger(Messenger):
@@ -144,27 +178,78 @@ class ConsoleMessenger(Messenger):
         pass
 
     async def send_card(self, card_text: str) -> str:
+        msg_id = f"console-{uuid4()}"
         print(f"\n{'='*60}")
         print(card_text)
-        print(f"{'='*60}\n")
-        return f"console-{uuid4()}"
+        print(f"{'='*60}")
+        print(f"Respond via: curl -X POST http://localhost:8421/api/triage/respond ...")
+        return msg_id
 
     async def poll_responses(self, since_message_id=None) -> list[dict]:
-        return []  # Console messenger doesn't poll — responses come via API
+        return []
+```
+
+### `workbench triage` CLI command (new, public)
+
+Interactive client-side triage loop:
+```python
+# src/workbench/cli.py (triage subcommand)
+def triage_interactive(server_url, token):
+    """Pull pending cards, print each, read stdin choice, post response."""
+    pending = requests.get(f"{server_url}/api/triage/pending", headers=auth).json()
+    for i, card in enumerate(pending):
+        print(format_card(card, i+1, len(pending)))
+        choice = input("Your choice: ")
+        requests.post(f"{server_url}/api/triage/respond",
+                      json={"card_id": card["id"], "choice": int(choice)}, headers=auth)
 ```
 
 ### GitHubSourceAdapter (new, public)
 
+Uses `gh` CLI via `asyncio.create_subprocess_exec`. Same pattern as PhabricatorAdapter.
+
 ```python
 class GitHubSourceAdapter(SourceAdapter):
     class ProviderConfig(BaseModel):
-        token: str
         repos: list[str] = []
 
-    async def poll(self, config, since=None) -> list[RawItem]:
-        # Use PyGithub to poll PRs and issues
-        ...
+    def adapter_type(self) -> str:
+        return "github"
+
+    async def poll(self, since=None) -> list[RawItem]:
+        items = []
+        for repo in self.repos:
+            prs = await self._gh_json("pr", "list", "--repo", repo, "--json", "number,title,updatedAt,url")
+            for pr in prs:
+                items.append(RawItem(
+                    id=f"gh-pr-{repo}-{pr['number']}",
+                    source_type="github",
+                    source_label=f"PR #{pr['number']} — {pr['title']}",
+                    raw_text=json.dumps(pr),
+                ))
+        return items
+
+    async def _gh_json(self, *args) -> list[dict]:
+        proc = await asyncio.create_subprocess_exec(
+            "gh", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        return json.loads(stdout) if proc.returncode == 0 else []
 ```
+
+### SourceAdapter ABC cleanup
+
+```python
+# BEFORE (redundant config param):
+class SourceAdapter(ABC):
+    async def poll(self, config: dict, since: datetime | None = None) -> list[RawItem]: ...
+
+# AFTER:
+class SourceAdapter(ABC):
+    async def poll(self, since: datetime | None = None) -> list[RawItem]: ...
+```
+
+All existing adapters (PhabricatorAdapter, GmailAdapter) updated to match. Scheduler's `_poll_sources` updated to not pass config.
 
 ## Config Files
 
@@ -234,8 +319,7 @@ sources:
 ```
 workbench-meta/
 ├── pyproject.toml              # declares workbench as dependency
-├── Dockerfile                  # FROM workbench:latest, pip install -e .
-├── docker-compose.override.yml
+├── docker-compose.override.yml # volume-mounts meta, pip installs at startup
 ├── config.meta.yml
 ├── workbench_meta/
 │   ├── __init__.py
@@ -260,7 +344,7 @@ workbench-meta/
 │   └── lib/
 │       └── google_api.py
 ├── docs/
-│   └── original/               # pre-genericization docs
+│   └── original/               # pre-genericization docs from workbench
 └── tests/
 ```
 
@@ -269,14 +353,14 @@ workbench-meta/
 ### Files to genericize (strip Meta references)
 
 - `CLAUDE.md` — remove Plugboard URLs, devgpu references, Meta-specific deployment details
-- `CONTEXT.md` — remove Meta-specific source types (Phabricator, Workplace, SEVs, Oncall), keep generic concepts
+- `CONTEXT.md` — replace Google Chat/Meta-specific terms with generic messenger language, replace Phabricator/SEV examples with GitHub examples, remove XDB/devserver references
 - `config.example.yml` — external defaults (already covered above)
 - `README.md` — write from scratch for OSS audience
-- `pyproject.toml` — remove pydantic-settings, aiosqlite (no longer used); add PyGithub
+- `pyproject.toml` — remove `pydantic-settings`, `aiosqlite` (no longer used). No new deps added.
 
 ### Git history rewrite
 
-Interactive rebase of 12 commits to clean commit messages:
+Done as the **last step** after all split code is committed. Single interactive rebase pass to clean all commit messages:
 - Remove Meta Task numbers (T273284990, etc.)
 - Remove plugboard URLs
 - Remove devgpu hostnames
@@ -297,11 +381,15 @@ Must return zero results.
 ## Sequencing
 
 1. Create `workbench-meta` repo structure + move Meta providers there
-2. Create external providers in `workbench` (AnthropicLLM, ConsoleMessenger, GitHubSourceAdapter)
-3. Genericize `workbench` (strip Meta refs from all files)
-4. Genericize docs (CLAUDE.md, CONTEXT.md, README.md)
-5. Add LICENSE (MIT)
-6. Rewrite git history
-7. Run security scan
-8. Push to GitHub
-9. Verify: clone on devvm, `pip install -e .`, `podman compose up`, `curl /health`
+2. Clean up SourceAdapter ABC (remove redundant `config` param)
+3. Create external providers in `workbench` (AnthropicLLM, ConsoleMessenger, GitHubSourceAdapter, genericized LLMQueueScorer)
+4. Add `workbench triage` CLI command
+5. Delete Meta-specific files from `workbench` (claude.py, google_chat.py, phabricator.py, email_gmail.py, lib/google_api.py)
+6. Remove `docs/memory/` from repo
+7. Genericize docs (CLAUDE.md, CONTEXT.md, README.md)
+8. Add LICENSE (MIT)
+9. Update pyproject.toml (remove unused deps)
+10. Rewrite git history (single pass, all commits)
+11. Run security scan
+12. Push to GitHub
+13. Verify: clone on devvm, `pip install -e .`, `podman compose up`, `curl /health`
