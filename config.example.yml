@@ -1,0 +1,53 @@
+# config.example.yml — copy to config.yml and edit
+version: "0.1.0"
+
+server:
+  port: 8421
+  debug: false
+  api_token: ${oc.env:WORKBENCH_API_TOKEN,dev-token-change-me}
+
+storage:
+  postgres_dsn: ${oc.env:WORKBENCH_POSTGRES_DSN,postgres://workbench:workbench@localhost:5432/workbench}
+
+llm:
+  class: workbench.providers.llm.claude.ClaudeProvider
+  api_key: ${oc.env:ANTHROPIC_API_KEY}
+  base_url: ${oc.env:ANTHROPIC_BASE_URL,https://plugboard.x2p.facebook.net}
+  model: claude-sonnet-4-20250514
+
+queue:
+  scorer:
+    class: workbench.providers.queue_scorer.llm.LLMQueueScorer
+    api_key: ${oc.env:ANTHROPIC_API_KEY}
+    base_url: ${oc.env:ANTHROPIC_BASE_URL,https://plugboard.x2p.facebook.net}
+    model: claude-haiku-4-5-20251001
+  worker_concurrency: 2
+  max_attempts: 3
+  base_delay_seconds: 5
+
+triage:
+  daily_cap: 20
+  expiry_days: 7
+  timeout_minutes: 30
+
+pipeline:
+  include_threshold: 70
+  drop_threshold: 30
+  confidence_threshold: 70
+
+scheduler:
+  poll_interval_minutes: 15
+  morning_briefing_hour: 9
+
+messenger:
+  class: workbench.providers.messenger.google_chat.GoogleChatMessenger
+  space_id: ${oc.env:GCHAT_SPACE_ID}
+  google_api_script: ${oc.env:GOOGLE_API_SCRIPT,src/workbench/lib/google_api.py}
+
+sources: []
+
+enrichment:
+  class: workbench.providers.enrichment.stub.StubEnricher
+
+memory:
+  class: workbench.memory.noop.NoopMemoryLayer
