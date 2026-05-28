@@ -1,8 +1,16 @@
+from pydantic import BaseModel
 from workbench.memory.base import MemoryLayer
 from workbench.models import TriageCard, TriageResponse, Item, Fact, EntityKnowledge, Relationship
 
 
 class NoopMemoryLayer(MemoryLayer):
+
+    class ProviderConfig(BaseModel):
+        pass
+
+    def __init__(self, config: ProviderConfig = None):
+        self.config = config
+
     async def record_triage(self, card, response): pass
     async def record_entity(self, entity_type, entity_id, facts): pass
     async def record_pipeline_decision(self, item, decision, reason): pass

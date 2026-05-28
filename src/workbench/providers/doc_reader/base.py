@@ -6,3 +6,6 @@ class DocReader(ABC):
     def can_handle(self, url: str) -> bool: ...
     @abstractmethod
     async def read(self, url: str) -> str: ...
+
+    async def close(self) -> None:
+        pass

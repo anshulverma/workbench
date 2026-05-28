@@ -17,3 +17,6 @@ class MemoryLayer(ABC):
     async def query_relationships(self, entity_id: str) -> list[Relationship]: ...
     @abstractmethod
     async def is_available(self) -> bool: ...
+
+    async def close(self) -> None:
+        pass

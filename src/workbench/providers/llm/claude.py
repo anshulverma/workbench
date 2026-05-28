@@ -4,6 +4,7 @@ import asyncio
 import os
 import ssl
 import httpx
+from pydantic import BaseModel
 from anthropic import AsyncAnthropic
 from workbench.providers.llm.base import LLMProvider
 from workbench.models import ExtractedItem, ItemCategory, RawItem, FilterRule, TriageCard, TriageOption, Fact
@@ -33,17 +34,27 @@ Filter rules:
 Return JSON: {{"relevance": <0-100>, "confidence": <0-100>}}"""
 
 class ClaudeProvider(LLMProvider):
-    def __init__(self, api_key: str, base_url: str, model: str = "claude-sonnet-4-20250514"):
+
+    class ProviderConfig(BaseModel):
+        api_key: str
+        base_url: str = "https://plugboard.x2p.facebook.net"
+        model: str = "claude-sonnet-4-20250514"
+
+    def __init__(self, config: ProviderConfig):
         user = os.environ.get("USER", "anshulverma")
         cert_path = f"/var/facebook/credentials/{user}/agent_x509/claude_code_{user}.pem"
         ca_path = "/var/facebook/rootcanal/ca.pem"
-        http_client = None
+        self._http_client = None
         if os.path.exists(cert_path):
             ssl_ctx = ssl.create_default_context(cafile=ca_path)
             ssl_ctx.load_cert_chain(cert_path)
-            http_client = httpx.AsyncClient(verify=ssl_ctx)
-        self.client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
-        self.model = model
+            self._http_client = httpx.AsyncClient(verify=ssl_ctx)
+        self.client = AsyncAnthropic(api_key=config.api_key, base_url=config.base_url, http_client=self._http_client)
+        self.model = config.model
+
+    async def close(self) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
 
     async def extract(self, raw_text: str, source_type: str) -> list[ExtractedItem]:
         raw_item = RawItem(id="", source_type=source_type, source_label="", raw_text=raw_text)

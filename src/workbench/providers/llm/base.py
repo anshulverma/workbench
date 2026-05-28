@@ -9,3 +9,6 @@ class LLMProvider(ABC):
     async def score_relevance(self, item: ExtractedItem, preference_facts: list[Fact], rules: list[FilterRule]) -> tuple[int, int]: ...
     @abstractmethod
     async def generate_triage_card(self, item: ExtractedItem, enrichment_context: dict, source_type: str) -> TriageCard: ...
+
+    async def close(self) -> None:
+        pass

@@ -8,3 +8,6 @@ class SourceAdapter(ABC):
     async def poll(self, config: dict, since: datetime | None = None) -> list[RawItem]: ...
     @abstractmethod
     def adapter_type(self) -> str: ...
+
+    async def close(self) -> None:
+        pass

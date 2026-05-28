@@ -1,21 +1,27 @@
+import asyncio
 import json
-import subprocess
+from pydantic import BaseModel
 from workbench.providers.messenger.base import Messenger
 
 
 class GoogleChatMessenger(Messenger):
-    def __init__(self, space_id: str, google_api_script: str):
-        self.space_id = space_id
-        self.script = google_api_script
+
+    class ProviderConfig(BaseModel):
+        space_id: str
+        google_api_script: str = "src/workbench/lib/google_api.py"
+
+    def __init__(self, config: ProviderConfig):
+        self.space_id = config.space_id
+        self.script = config.google_api_script
 
     async def send_card(self, card_text: str) -> str:
-        result = self._run({"action": "send_message", "space_id": self.space_id, "text": card_text, "as_bot": True})
+        result = await self._run({"action": "send_message", "space_id": self.space_id, "text": card_text, "as_bot": True})
         if result.get("success"):
             return result["data"].get("name", "")
         raise RuntimeError(f"Failed to send message: {result.get('error', 'unknown')}")
 
     async def poll_responses(self, since_message_id: str | None = None) -> list[dict]:
-        result = self._run({"action": "list_messages", "space_id": self.space_id})
+        result = await self._run({"action": "list_messages", "space_id": self.space_id})
         if not result.get("success"):
             return []
         messages = result["data"].get("messages", [])
@@ -32,14 +38,22 @@ class GoogleChatMessenger(Messenger):
             return filtered
         return human_msgs
 
-    def _run(self, params: dict) -> dict:
-        result = subprocess.run(
-            ["python3", self.script, json.dumps(params)],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            return {"success": False, "error": result.stderr}
+    async def _run(self, params: dict) -> dict:
         try:
-            return json.loads(result.stdout)
+            proc = await asyncio.create_subprocess_exec(
+                "python3", self.script, json.dumps(params),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return {"success": False, "error": "Timeout after 30s"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        if proc.returncode != 0:
+            return {"success": False, "error": stderr.decode()}
+        try:
+            return json.loads(stdout.decode())
         except json.JSONDecodeError:
             return {"success": False, "error": "Invalid JSON response"}
