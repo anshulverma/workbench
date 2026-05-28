@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from workbench.models import (
-    TriageResponse, Item, ItemCategory, ItemOrigin, Priority,
-    FilterRule, InteractionEntry,
+    FilterRule, InteractionEntry, Item, ItemCategory, ItemOrigin,
+    ItemStatus, ItemUpdate, Priority, TriageResponse,
 )
 
 router = APIRouter(prefix="/api", tags=["triage"])
@@ -28,15 +28,26 @@ async def respond_to_triage(response: TriageResponse, request: Request):
 
     if option.action == "add_todo":
         priority = Priority(option.details.get("priority", "P2"))
-        item = Item(
-            source_type=card.card_content.get("source_type", "unknown"),
-            source_id=card.id,
-            summary=card.card_content.get("summary", ""),
-            category=ItemCategory.ACTION_ITEM,
-            origin=ItemOrigin.TRIAGED,
-            priority=priority,
-        )
-        await stores.items.save_item(item)
+        if card.item_id:
+            await stores.items.update_item(
+                card.item_id, ItemUpdate(priority=priority, status=ItemStatus.ACTIVE)
+            )
+        else:
+            item = Item(
+                source_type=card.card_content.get("source_type", "unknown"),
+                source_id=card.id,
+                summary=card.card_content.get("summary", ""),
+                category=ItemCategory.ACTION_ITEM,
+                origin=ItemOrigin.TRIAGED, priority=priority,
+            )
+            await stores.items.save_item(item)
+
+    elif option.action == "skip":
+        if card.item_id:
+            await stores.items.update_item(
+                card.item_id, ItemUpdate(status=ItemStatus.ARCHIVED)
+            )
+
     elif option.action == "mute_pattern":
         rule = FilterRule(
             source_type=card.card_content.get("source_type"),
