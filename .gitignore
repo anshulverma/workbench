@@ -1,0 +1,10 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+data/
+logs/
+config.yml
+config.meta.yml
+docker-compose.override.yml
+internal/

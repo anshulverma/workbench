@@ -1,8 +1,7 @@
-# server/Dockerfile
 FROM python:3.12-slim
 WORKDIR /app
-COPY requirements.txt .
+COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+COPY server/ server/
 EXPOSE 8421
 CMD ["python", "-m", "uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8421"]
