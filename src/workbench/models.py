@@ -1,4 +1,5 @@
 # server/models.py
+from typing import Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
@@ -12,6 +13,7 @@ class Priority(str, Enum):
     PENDING = "pending"
 
 class ItemStatus(str, Enum):
+    PENDING_TRIAGE = "pending_triage"
     ACTIVE = "active"
     DONE = "done"
     ARCHIVED = "archived"
@@ -19,6 +21,7 @@ class ItemStatus(str, Enum):
 class ItemCategory(str, Enum):
     ACTION_ITEM = "action_item"
     MEETING = "meeting"
+    PLAN_SEED = "plan_seed"
     INFORMATIONAL = "informational"
 
 class ItemOrigin(str, Enum):
@@ -27,6 +30,7 @@ class ItemOrigin(str, Enum):
     MANUAL = "manual"
 
 class JobStatus(str, Enum):
+    QUEUED = "queued"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -41,6 +45,7 @@ class RawItem(BaseModel):
     source_type: str
     source_label: str
     raw_text: str
+    urgency_signals: dict[str, Any] = Field(default_factory=dict)
 
 class ExtractedItem(BaseModel):
     summary: str
@@ -82,6 +87,12 @@ class TriageCard(BaseModel):
     item_id: str | None = None
     card_content: dict = Field(default_factory=dict)
     options: list[TriageOption] = Field(default_factory=list)
+    relevance_score: int = 50
+    confidence_score: int = 50
+    status: str = "queued"  # queued, sent, responded, expired
+    bot_message_id: str | None = None
+    daily_sequence: int | None = None
+    expires_at: datetime | None = None
     sent_at: datetime | None = None
     responded_at: datetime | None = None
     response: str | None = None
@@ -193,3 +204,26 @@ class Relationship(BaseModel):
     from_entity: str
     to_entity: str
     relation: str
+
+class QueueEntryStatus(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    DEAD_LETTER = "dead_letter"
+
+class IngestionQueueEntry(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    raw_content: str
+    source_type: str
+    source_id: str | None = None
+    urgency_signals: dict[str, Any] = Field(default_factory=dict)
+    urgency_score: int = 50
+    job_id: str
+    status: QueueEntryStatus = QueueEntryStatus.QUEUED
+    attempt: int = 0
+    max_attempts: int = 3
+    next_retry_at: datetime | None = None
+    error: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

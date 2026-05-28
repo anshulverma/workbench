@@ -4,6 +4,7 @@ from workbench.models import (
     Item, ItemStatus, ItemCategory, ItemOrigin, Priority,
     RawItem, ExtractedItem, TriageCard, TriageOption,
     FilterRule, InteractionEntry, PipelineJob, JobStatus, JobTrigger,
+    IngestionQueueEntry, QueueEntryStatus,
 )
 
 def test_item_defaults():
@@ -48,3 +49,32 @@ def test_filter_rule():
     rule = FilterRule(pattern="CI bot comments on diffs", action="drop")
     assert rule.source_type is None
     assert rule.action == "drop"
+
+def test_item_status_includes_pending_triage():
+    assert ItemStatus.PENDING_TRIAGE.value == "pending_triage"
+
+def test_job_status_includes_queued():
+    assert JobStatus.QUEUED.value == "queued"
+
+def test_item_category_includes_plan_seed():
+    assert ItemCategory.PLAN_SEED.value == "plan_seed"
+
+def test_raw_item_has_urgency_signals():
+    raw = RawItem(id="1", source_type="diff", source_label="D123", raw_text="content")
+    assert raw.urgency_signals == {}
+    raw2 = RawItem(id="2", source_type="diff", source_label="D456", raw_text="content",
+                   urgency_signals={"blocking_reviewer": True})
+    assert raw2.urgency_signals["blocking_reviewer"] is True
+
+def test_ingestion_queue_entry_defaults():
+    entry = IngestionQueueEntry(raw_content="test", source_type="manual", job_id="j1")
+    assert entry.status == QueueEntryStatus.QUEUED
+    assert entry.attempt == 0
+    assert entry.urgency_score == 50
+
+def test_triage_card_queue_fields():
+    card = TriageCard()
+    assert card.status == "queued"
+    assert card.relevance_score == 50
+    assert card.bot_message_id is None
+    assert card.expires_at is None
