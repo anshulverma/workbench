@@ -58,7 +58,8 @@ async def lifespan(app: FastAPI):
 
     from workbench.pipeline.engine import PipelineEngine
     app.state.pipeline = PipelineEngine(
-        app.state.stores, app.state.memory, app.state.llm, app.state.enricher
+        app.state.stores, app.state.memory, app.state.llm, app.state.enricher,
+        queue_scorer=app.state.queue_scorer,
     )
 
     # Scheduler
@@ -92,12 +93,12 @@ def create_app() -> FastAPI:
 
     from workbench.api import (
         config as config_api, filter_rules, health, items, jobs,
-        memory, process, sources, triage,
+        memory, process, queue, sources, triage,
     )
     for r in [
         health.router, items.router, triage.router, process.router,
         filter_rules.router, sources.router, config_api.router,
-        memory.router, jobs.router,
+        memory.router, jobs.router, queue.router,
     ]:
         app.include_router(r)
 

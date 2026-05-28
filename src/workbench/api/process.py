@@ -1,4 +1,3 @@
-import asyncio
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from workbench.models import JobTrigger
@@ -14,6 +13,5 @@ class ProcessRequest(BaseModel):
 @router.post("/process")
 async def process(req: ProcessRequest, request: Request):
     pipeline = request.app.state.pipeline
-    # Run pipeline in background so the endpoint returns immediately
-    job = await pipeline.process(req.text, req.source_type, JobTrigger.MANUAL)
+    job = await pipeline.enqueue(req.text, req.source_type, trigger=JobTrigger.MANUAL)
     return {"job_id": job.id, "status": job.status.value}
