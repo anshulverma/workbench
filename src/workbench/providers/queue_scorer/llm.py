@@ -1,8 +1,6 @@
 import json
-import os
-import ssl
+from typing import Any
 
-import httpx
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
@@ -24,19 +22,16 @@ Return only a JSON object: {{"urgency": <0-100>}}"""
 class LLMQueueScorer(QueueScorer):
     class ProviderConfig(BaseModel):
         api_key: str
-        base_url: str = "https://plugboard.x2p.facebook.net"
+        base_url: str = "https://api.anthropic.com"
         model: str = "claude-haiku-4-5-20251001"
+        http_client: Any = None
+
+        class Config:
+            arbitrary_types_allowed = True
 
     def __init__(self, config: ProviderConfig):
         self.model = config.model
-        user = os.environ.get("USER", "anshulverma")
-        cert_path = f"/var/facebook/credentials/{user}/agent_x509/claude_code_{user}.pem"
-        ca_path = "/var/facebook/rootcanal/ca.pem"
-        self._http_client = None
-        if os.path.exists(cert_path):
-            ssl_ctx = ssl.create_default_context(cafile=ca_path)
-            ssl_ctx.load_cert_chain(cert_path)
-            self._http_client = httpx.AsyncClient(verify=ssl_ctx)
+        self._http_client = config.http_client
         self.client = AsyncAnthropic(
             api_key=config.api_key, base_url=config.base_url,
             http_client=self._http_client,

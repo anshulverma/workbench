@@ -17,16 +17,15 @@ class PhabricatorAdapter(SourceAdapter):
     def adapter_type(self) -> str:
         return "diff"
 
-    async def poll(self, config: dict, since: datetime | None = None) -> list[RawItem]:
-        user_phid = self.user_phid or config.get("user_phid", "")
-        if not user_phid:
+    async def poll(self, since: datetime | None = None) -> list[RawItem]:
+        if not self.user_phid:
             return []
 
         items = []
         # Fetch diffs authored by user
-        items.extend(await self._query_diffs({"authorPHIDs": [user_phid]}, since))
+        items.extend(await self._query_diffs({"authorPHIDs": [self.user_phid]}, since))
         # Fetch diffs where user is reviewer
-        items.extend(await self._query_diffs({"reviewerPHIDs": [user_phid]}, since))
+        items.extend(await self._query_diffs({"reviewerPHIDs": [self.user_phid]}, since))
         return items
 
     async def _query_diffs(self, constraints: dict, since: datetime | None) -> list[RawItem]:
