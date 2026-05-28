@@ -1,5 +1,5 @@
 import asyncio
-from server.memory.noop import NoopMemoryLayer
+from workbench.memory.noop import NoopMemoryLayer
 
 
 def test_noop_memory_returns_empty():

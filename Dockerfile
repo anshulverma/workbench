@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 WORKDIR /app
-COPY server/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY server/ server/
+COPY pyproject.toml .
+COPY src/ src/
+RUN pip install --no-cache-dir -e .
 EXPOSE 8421
-CMD ["python", "-m", "uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8421"]
+CMD ["python", "-m", "uvicorn", "workbench.main:app", "--host", "0.0.0.0", "--port", "8421"]

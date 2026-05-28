@@ -1,7 +1,7 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock
-from server.providers.messenger.google_chat import GoogleChatMessenger
+from workbench.providers.messenger.google_chat import GoogleChatMessenger
 
 
 @pytest.fixture

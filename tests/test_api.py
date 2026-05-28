@@ -9,13 +9,13 @@ _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 os.environ["WORKBENCH_SQLITE_PATH"] = _tmp.name
 
-from server.main import app  # noqa: E402
-from server.storage.factory import create_stores  # noqa: E402
-from server.config import Settings  # noqa: E402
-from server.memory.noop import NoopMemoryLayer  # noqa: E402
-from server.providers.llm.claude import ClaudeProvider  # noqa: E402
-from server.providers.enrichment.stub import StubEnricher  # noqa: E402
-from server.pipeline.engine import PipelineEngine  # noqa: E402
+from workbench.main import app  # noqa: E402
+from workbench.storage.factory import create_stores  # noqa: E402
+from workbench.config import Settings  # noqa: E402
+from workbench.memory.noop import NoopMemoryLayer  # noqa: E402
+from workbench.providers.llm.claude import ClaudeProvider  # noqa: E402
+from workbench.providers.enrichment.stub import StubEnricher  # noqa: E402
+from workbench.pipeline.engine import PipelineEngine  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)

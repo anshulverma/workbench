@@ -1,17 +1,17 @@
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock
-from server.pipeline.engine import PipelineEngine
-from server.pipeline.filter import score_and_decide
-from server.pipeline.triage import format_card_for_chat
-from server.memory.noop import NoopMemoryLayer
-from server.providers.enrichment.stub import StubEnricher
-from server.models import (
+from workbench.pipeline.engine import PipelineEngine
+from workbench.pipeline.filter import score_and_decide
+from workbench.pipeline.triage import format_card_for_chat
+from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.enrichment.stub import StubEnricher
+from workbench.models import (
     ExtractedItem, ItemCategory, RawItem, TriageCard, TriageOption,
     FilterRule, JobTrigger, JobStatus,
 )
 import tempfile, os
-from server.storage.sqlite import create_sqlite_stores
+from workbench.storage.sqlite import create_sqlite_stores
 
 @pytest_asyncio.fixture
 async def stores():
@@ -48,7 +48,7 @@ async def test_pipeline_auto_include(stores, mock_llm):
     assert job.status == JobStatus.COMPLETED
     assert job.items_extracted == 1
     assert job.items_included == 1
-    from server.models import ItemFilters
+    from workbench.models import ItemFilters
     items = await stores.items.get_items(ItemFilters())
     assert len(items) == 1
 
@@ -58,7 +58,7 @@ async def test_pipeline_auto_drop(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     job = await engine.process("spam content", "email")
     assert job.items_dropped == 1
-    from server.models import ItemFilters
+    from workbench.models import ItemFilters
     items = await stores.items.get_items(ItemFilters())
     assert len(items) == 0
 

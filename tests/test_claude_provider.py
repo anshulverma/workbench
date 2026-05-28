@@ -1,8 +1,8 @@
 # tests/test_claude_provider.py
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from server.providers.llm.claude import ClaudeProvider
-from server.models import ExtractedItem, ItemCategory, RawItem, FilterRule, Fact
+from workbench.providers.llm.claude import ClaudeProvider
+from workbench.models import ExtractedItem, ItemCategory, RawItem, FilterRule, Fact
 
 @pytest.fixture
 def provider():

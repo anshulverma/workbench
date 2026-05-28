@@ -2,8 +2,8 @@ import asyncio
 import tempfile
 import os
 import pytest
-from server.storage.sqlite import create_sqlite_stores
-from server.models import (
+from workbench.storage.sqlite import create_sqlite_stores
+from workbench.models import (
     Item, ItemCategory, ItemOrigin, Priority, ItemStatus, ItemFilters, ItemUpdate,
     FilterRule, InteractionEntry, TriageCard, TriageOption, TriageResponse,
     PipelineJob, JobTrigger, JobStatus,

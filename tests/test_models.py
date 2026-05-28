@@ -1,6 +1,6 @@
 # tests/test_models.py
 import pytest
-from server.models import (
+from workbench.models import (
     Item, ItemStatus, ItemCategory, ItemOrigin, Priority,
     RawItem, ExtractedItem, TriageCard, TriageOption,
     FilterRule, InteractionEntry, PipelineJob, JobStatus, JobTrigger,
