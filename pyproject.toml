@@ -30,7 +30,7 @@ dev = [
 ]
 
 [project.scripts]
-workbench = "workbench.main:cli_main"
+workbench = "workbench.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
