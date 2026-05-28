@@ -4,7 +4,7 @@ import pytest
 
 
 def test_load_config_placeholder():
-    """Placeholder test — actual config loading requires omegaconf which isn't installed on devgpu."""
+    """Placeholder — requires omegaconf to be installed."""
     assert True
 
 

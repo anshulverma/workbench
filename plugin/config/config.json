@@ -1,4 +1,4 @@
 {
-  "server_url": "http://devgpu004.lla1.facebook.com:8421",
-  "api_token": "dev-token-change-me"
+  "server_url": "http://localhost:8421",
+  "api_token": "change-me"
 }

@@ -6,7 +6,7 @@ Configure the Workbench plugin by setting the server URL and API token. Writes s
 
 1. Read the current config from `plugin/config/config.json` if it exists. Show the current values (mask the token, showing only the last 4 characters).
 2. Ask the user for:
-   - **Server URL**: The base URL of the Workbench server (e.g., `http://devgpu004.lla1.facebook.com:8421`). If the user presses enter, keep the current value.
+   - **Server URL**: The base URL of the Workbench server (e.g., `http://localhost:8421`). If the user presses enter, keep the current value.
    - **API token**: The bearer token for authentication. If the user presses enter, keep the current value.
 3. Write the updated config to `plugin/config/config.json`:
    ```json

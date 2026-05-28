@@ -20,9 +20,7 @@ services:
       WORKBENCH_API_TOKEN: ${WORKBENCH_API_TOKEN:-dev-token}
       WORKBENCH_POSTGRES_DSN: postgres://workbench:workbench@localhost:5432/workbench
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://plugboard.x2p.facebook.net}
-      GCHAT_SPACE_ID: ${GCHAT_SPACE_ID:-}
-      GOOGLE_API_SCRIPT: ${GOOGLE_API_SCRIPT:-/app/src/workbench/lib/google_api.py}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
 
 volumes:
   pgdata:
