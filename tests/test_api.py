@@ -1,42 +1,74 @@
-import os
-import tempfile
+"""
+API tests for the Workbench server.
+
+These tests bypass the normal lifespan (which requires a real PostgreSQL and
+external providers) and instead wire up app.state manually with the PG stores
+from conftest and mock/stub providers.
+"""
 import pytest
 import pytest_asyncio
+from unittest.mock import AsyncMock, patch, MagicMock
 from httpx import AsyncClient, ASGITransport
 
-# Override the sqlite path before importing the app so lifespan uses a temp DB
-_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_tmp.close()
-os.environ["WORKBENCH_SQLITE_PATH"] = _tmp.name
-
-from workbench.main import app  # noqa: E402
-from workbench.storage.factory import create_stores  # noqa: E402
-from workbench.config import Settings  # noqa: E402
-from workbench.memory.noop import NoopMemoryLayer  # noqa: E402
-from workbench.providers.llm.claude import ClaudeProvider  # noqa: E402
-from workbench.providers.enrichment.stub import StubEnricher  # noqa: E402
-from workbench.pipeline.engine import PipelineEngine  # noqa: E402
+from workbench.models import (
+    ExtractedItem, ItemCategory, RawItem, TriageCard, TriageOption,
+)
+from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.enrichment.stub import StubEnricher
+from workbench.pipeline.engine import PipelineEngine
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def setup_app_state():
-    """Set up app state that would normally be created by the lifespan."""
-    settings = Settings()
-    app.state.stores = await create_stores(settings)
-    app.state.memory = NoopMemoryLayer()
-    app.state.llm = ClaudeProvider(
-        settings.anthropic_api_key, settings.anthropic_base_url
+@pytest.fixture
+def mock_llm():
+    llm = AsyncMock()
+    llm.extract.return_value = []
+    llm.score_relevance.return_value = (50, 50)
+    llm.generate_triage_card.return_value = TriageCard(
+        card_content={"summary": "test"},
+        options=[TriageOption(label="Skip", action="skip")],
     )
-    app.state.enricher = StubEnricher()
-    app.state.pipeline = PipelineEngine(
-        app.state.stores, app.state.memory, app.state.llm, app.state.enricher
-    )
-    yield
+    return llm
 
 
 @pytest_asyncio.fixture
-async def client():
-    transport = ASGITransport(app=app)
+async def app_with_state(stores, mock_llm):
+    """Create a fresh FastAPI app with test-appropriate state.
+
+    We patch get_config so the module-level create_app() can build an app
+    without a real config file, then set up state manually.
+    """
+    from workbench.config import AppConfig, ServerConfig, StorageConfig
+
+    test_config = AppConfig(
+        storage=StorageConfig(postgres_dsn="postgres://workbench:workbench@localhost:5432/workbench"),
+        llm={"class": "workbench.providers.llm.anthropic.AnthropicLLM", "api_key": "test"},
+        server=ServerConfig(api_token="dev-token-change-me"),
+    )
+
+    with patch("workbench.main.get_config", return_value=test_config):
+        # Import create_app inside the patch so the module-level app is not affected
+        from workbench.main import create_app
+        test_app = create_app()
+
+    # Wire up state manually (skip lifespan which needs real providers)
+    test_app.state.config = test_config
+    test_app.state.stores = stores
+    test_app.state.memory = NoopMemoryLayer()
+    test_app.state.llm = mock_llm
+    test_app.state.enricher = StubEnricher()
+    test_app.state.messenger = None
+    test_app.state.queue_scorer = None
+    test_app.state.sources = []
+    test_app.state.pipeline = PipelineEngine(
+        stores, NoopMemoryLayer(), mock_llm, StubEnricher()
+    )
+
+    yield test_app
+
+
+@pytest_asyncio.fixture
+async def client(app_with_state):
+    transport = ASGITransport(app=app_with_state)
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
@@ -53,16 +85,16 @@ async def test_health(client):
 
 
 @pytest.mark.asyncio
-async def test_health_no_auth(client):
-    transport = ASGITransport(app=app)
+async def test_health_no_auth(client, app_with_state):
+    transport = ASGITransport(app=app_with_state)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         r = await c.get("/health")
         assert r.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_items_requires_auth(client):
-    transport = ASGITransport(app=app)
+async def test_items_requires_auth(client, app_with_state):
+    transport = ASGITransport(app=app_with_state)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         r = await c.get("/api/items")
         assert r.status_code == 401

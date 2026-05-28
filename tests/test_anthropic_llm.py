@@ -1,12 +1,15 @@
-# tests/test_claude_provider.py
+# tests/test_anthropic_llm.py
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from workbench.providers.llm.claude import ClaudeProvider
+from workbench.providers.llm.anthropic import AnthropicLLM
 from workbench.models import ExtractedItem, ItemCategory, RawItem, FilterRule, Fact
+
 
 @pytest.fixture
 def provider():
-    return ClaudeProvider(api_key="test", base_url="http://test")
+    config = AnthropicLLM.ProviderConfig(api_key="test", base_url="http://test")
+    return AnthropicLLM(config)
+
 
 @pytest.mark.asyncio
 async def test_extract_parses_json_response(provider):
@@ -20,6 +23,7 @@ async def test_extract_parses_json_response(provider):
     assert items[0].summary == "Review PR"
     assert items[0].category == ItemCategory.ACTION_ITEM
 
+
 @pytest.mark.asyncio
 async def test_score_relevance_parses_scores(provider):
     mock_response = MagicMock()
@@ -32,6 +36,7 @@ async def test_score_relevance_parses_scores(provider):
     rel, conf = await provider.score_relevance(item, [], [])
     assert rel == 85
     assert conf == 90
+
 
 @pytest.mark.asyncio
 async def test_template_options_vary_by_source(provider):
