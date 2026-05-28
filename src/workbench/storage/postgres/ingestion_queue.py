@@ -53,7 +53,9 @@ class PgIngestionQueueStore(IngestionQueueStore):
                RETURNING *""",
             limit,
         )
-        return [self._row_to_entry(r) for r in rows]
+        entries = [self._row_to_entry(r) for r in rows]
+        entries.sort(key=lambda e: e.urgency_score, reverse=True)
+        return entries
 
     async def mark_completed(self, entry_id: str) -> None:
         await self.pool.execute(
