@@ -1,22 +1,13 @@
 COMPOSE := podman-compose
-PROXY := HTTP_PROXY=http://fwdproxy:8080 HTTPS_PROXY=http://fwdproxy:8080
-
-# Detect if workbench-meta overlay exists
-META_DIR := $(HOME)/workspace/workbench-meta
-COMPOSE_FILES := -f docker-compose.yml
-ifneq (,$(wildcard $(META_DIR)/docker-compose.override.yml))
-  COMPOSE_FILES += -f $(META_DIR)/docker-compose.override.yml
-endif
+COMPOSE_FILES ?= -f docker-compose.yml
 
 .PHONY: build up down logs health triage setup test migrate
 
 build:
-	$(PROXY) $(COMPOSE) $(COMPOSE_FILES) build \
-		--build-arg HTTP_PROXY=http://fwdproxy:8080 \
-		--build-arg HTTPS_PROXY=http://fwdproxy:8080
+	$(COMPOSE) $(COMPOSE_FILES) build
 
 up: build
-	$(PROXY) $(COMPOSE) $(COMPOSE_FILES) up -d
+	$(COMPOSE) $(COMPOSE_FILES) up -d
 
 down:
 	$(COMPOSE) $(COMPOSE_FILES) down
@@ -32,11 +23,7 @@ triage:
 
 setup:
 	python3 -m venv $(HOME)/.venv/workbench
-	$(PROXY) $(HOME)/.venv/workbench/bin/pip install -e ".[dev]" podman-compose
-	@if [ -d "$(META_DIR)" ]; then \
-		echo "Installing workbench-meta..."; \
-		$(PROXY) $(HOME)/.venv/workbench/bin/pip install -e $(META_DIR); \
-	fi
+	$(HOME)/.venv/workbench/bin/pip install -e ".[dev]"
 	@echo "Activate with: source ~/.venv/workbench/bin/activate"
 
 test:
