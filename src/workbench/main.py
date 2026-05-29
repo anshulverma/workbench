@@ -87,9 +87,8 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    config = get_config()
     app = FastAPI(title="Workbench", version=__version__, lifespan=lifespan)
-    app.add_middleware(BearerTokenMiddleware, token=config.server.api_token)
+    app.add_middleware(BearerTokenMiddleware)
 
     from workbench.api import (
         config as config_api, filter_rules, health, items, jobs,
