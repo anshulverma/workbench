@@ -20,8 +20,13 @@ class GitHubSourceAdapter(SourceAdapter):
 
     async def poll(self, since: datetime | None = None) -> list[RawItem]:
         items = []
+        search_filter = []
+        if since:
+            search_filter = ["--search", f"updated:>{since.strftime('%Y-%m-%dT%H:%M:%SZ')}"]
+
         for repo in self.repos:
             prs = await self._gh_json("pr", "list", "--repo", repo,
+                                       *search_filter,
                                        "--json", "number,title,updatedAt,url,author")
             for pr in prs:
                 items.append(RawItem(
@@ -33,6 +38,7 @@ class GitHubSourceAdapter(SourceAdapter):
                 ))
 
             issues = await self._gh_json("issue", "list", "--repo", repo,
+                                          *search_filter,
                                           "--json", "number,title,updatedAt,url,author")
             for issue in issues:
                 items.append(RawItem(

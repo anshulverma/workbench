@@ -168,3 +168,139 @@ def test_format_card_without_enrichment():
     assert "Some item" in text
     # No enrichment line should appear
     assert "By" not in text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_poll_sources_enqueues_items(stores, mock_llm):
+    from workbench.pipeline.scheduler import WorkbenchScheduler
+    from workbench.pipeline.engine import PipelineEngine
+    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.config import AppConfig, StorageConfig
+    from workbench.models import RawItem
+    from unittest.mock import AsyncMock, MagicMock
+
+    config = AppConfig(
+        storage=StorageConfig(postgres_dsn="postgres://x:x@localhost/x"),
+        llm={"class": "x"},
+    )
+    memory = NoopMemoryLayer()
+    pipeline = PipelineEngine(stores, memory, mock_llm, StubEnricher())
+
+    mock_source = AsyncMock()
+    mock_source.adapter_type = MagicMock(return_value="github")
+    mock_source.poll.return_value = [
+        RawItem(id="gh-pr-1", source_type="github", source_label="PR #1", raw_text='{"number":1}'),
+        RawItem(id="gh-pr-2", source_type="github", source_label="PR #2", raw_text='{"number":2}'),
+    ]
+
+    messenger = AsyncMock()
+    scheduler = WorkbenchScheduler(stores, memory, pipeline, messenger, config, sources=[mock_source])
+
+    await scheduler._poll_sources()
+
+    mock_source.poll.assert_called_once()
+    assert await stores.ingestion_queue.queue_depth() == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduler_poll_sources_tracks_last_polled(stores, mock_llm):
+    from workbench.pipeline.scheduler import WorkbenchScheduler
+    from workbench.pipeline.engine import PipelineEngine
+    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.config import AppConfig, StorageConfig
+    from workbench.models import RawItem
+    from unittest.mock import AsyncMock, MagicMock
+
+    config = AppConfig(
+        storage=StorageConfig(postgres_dsn="postgres://x:x@localhost/x"),
+        llm={"class": "x"},
+    )
+    memory = NoopMemoryLayer()
+    pipeline = PipelineEngine(stores, memory, mock_llm, StubEnricher())
+
+    mock_source = AsyncMock()
+    mock_source.adapter_type = MagicMock(return_value="github")
+    mock_source.poll.return_value = [
+        RawItem(id="gh-pr-1", source_type="github", source_label="PR #1", raw_text='{"number":1}'),
+    ]
+
+    scheduler = WorkbenchScheduler(stores, memory, pipeline, None, config, sources=[mock_source])
+
+    # First poll: since=None (no stored timestamp yet)
+    await scheduler._poll_sources()
+    assert mock_source.poll.call_args.kwargs["since"] is None
+
+    # Verify last_polled_at was stored in ConfigStore
+    stored = await stores.config.get("source_last_polled:github")
+    assert stored is not None
+
+    # Second poll: since should be the stored timestamp
+    mock_source.poll.reset_mock()
+    mock_source.poll.return_value = []
+    await scheduler._poll_sources()
+    assert mock_source.poll.call_args.kwargs["since"] is not None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_poll_sources_skips_duplicates(stores, mock_llm):
+    from workbench.pipeline.scheduler import WorkbenchScheduler
+    from workbench.pipeline.engine import PipelineEngine
+    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.config import AppConfig, StorageConfig
+    from workbench.models import RawItem
+    from unittest.mock import AsyncMock, MagicMock
+
+    config = AppConfig(
+        storage=StorageConfig(postgres_dsn="postgres://x:x@localhost/x"),
+        llm={"class": "x"},
+    )
+    memory = NoopMemoryLayer()
+    pipeline = PipelineEngine(stores, memory, mock_llm, StubEnricher())
+
+    mock_source = AsyncMock()
+    mock_source.adapter_type = MagicMock(return_value="github")
+    mock_source.poll.return_value = [
+        RawItem(id="gh-pr-1", source_type="github", source_label="PR #1", raw_text='{"number":1}'),
+    ]
+
+    scheduler = WorkbenchScheduler(stores, memory, pipeline, None, config, sources=[mock_source])
+
+    await scheduler._poll_sources()
+    await scheduler._poll_sources()
+
+    # Second poll returns the same item — dedup should skip it
+    assert await stores.ingestion_queue.queue_depth() == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_poll_sources_handles_adapter_failure(stores, mock_llm):
+    from workbench.pipeline.scheduler import WorkbenchScheduler
+    from workbench.pipeline.engine import PipelineEngine
+    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.config import AppConfig, StorageConfig
+    from unittest.mock import AsyncMock, MagicMock
+
+    config = AppConfig(
+        storage=StorageConfig(postgres_dsn="postgres://x:x@localhost/x"),
+        llm={"class": "x"},
+    )
+    memory = NoopMemoryLayer()
+    pipeline = PipelineEngine(stores, memory, mock_llm, StubEnricher())
+
+    failing_source = AsyncMock()
+    failing_source.adapter_type = MagicMock(return_value="github")
+    failing_source.poll.side_effect = Exception("API timeout")
+
+    scheduler = WorkbenchScheduler(stores, memory, pipeline, None, config, sources=[failing_source])
+
+    # Should not raise — adapter failures are caught and logged
+    await scheduler._poll_sources()
+    assert await stores.ingestion_queue.queue_depth() == 0
+
+    # last_polled_at should NOT be updated on failure
+    stored = await stores.config.get("source_last_polled:github")
+    assert stored is None

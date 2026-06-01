@@ -9,7 +9,7 @@ from workbench.config import AppConfig
 from workbench.memory.base import MemoryLayer
 from workbench.models import (
     FilterRule, InteractionEntry, Item, ItemCategory, ItemOrigin,
-    ItemStatus, ItemUpdate, Priority, TriageResponse,
+    ItemStatus, ItemUpdate, JobTrigger, Priority, TriageResponse,
 )
 from workbench.pipeline.engine import PipelineEngine
 from workbench.pipeline.triage import format_card_for_chat
@@ -21,24 +21,66 @@ logger = logging.getLogger(__name__)
 
 class WorkbenchScheduler:
     def __init__(self, stores: Stores, memory: MemoryLayer, pipeline: PipelineEngine,
-                 messenger: Messenger | None, config: AppConfig):
+                 messenger: Messenger | None, config: AppConfig, sources: list | None = None):
         self.stores = stores
         self.memory = memory
         self.pipeline = pipeline
         self.messenger = messenger
         self.config = config
+        self.sources = sources or []
         self.scheduler = AsyncIOScheduler()
 
     def start(self):
         jobs = [
-            ("triage_queue", "interval", {"seconds": self.config.triage.triage_poll_interval_seconds}, self._manage_triage_queue),
-            ("briefing", "cron", {"hour": self.config.scheduler.morning_briefing_hour}, self._morning_briefing),
+            ("triage_queue", "interval",
+             {"seconds": self.config.triage.triage_poll_interval_seconds},
+             self._manage_triage_queue),
+            ("briefing", "cron",
+             {"hour": self.config.scheduler.morning_briefing_hour},
+             self._morning_briefing),
             ("expire_cards", "cron", {"hour": 3}, self._expire_cards),
         ]
+        if self.sources:
+            jobs.append((
+                "poll_sources", "interval",
+                {"minutes": self.config.scheduler.poll_interval_minutes},
+                self._poll_sources,
+            ))
         for job_id, trigger, kwargs, func in jobs:
             logger.info(f"Scheduling job '{job_id}' ({trigger})")
             self.scheduler.add_job(func, trigger, id=job_id, **kwargs)
         self.scheduler.start()
+
+    async def _poll_sources(self):
+        for source in self.sources:
+            adapter_type = source.adapter_type()
+            try:
+                since = None
+                stored = await self.stores.config.get(f"source_last_polled:{adapter_type}")
+                if stored:
+                    since = datetime.fromisoformat(stored)
+
+                raw_items = await source.poll(since=since)
+                for raw_item in raw_items:
+                    try:
+                        await self.pipeline.enqueue(
+                            raw_item.raw_text,
+                            raw_item.source_type,
+                            source_id=raw_item.id,
+                            urgency_signals=raw_item.urgency_signals,
+                            trigger=JobTrigger.POLL,
+                        )
+                    except Exception as e:
+                        logger.error("Failed to enqueue item %s from %s: %s",
+                                     raw_item.id, adapter_type, e)
+
+                await self.stores.config.set(
+                    f"source_last_polled:{adapter_type}",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                logger.info("Polled %s: %d items (since=%s)", adapter_type, len(raw_items), since)
+            except Exception as e:
+                logger.error("Source adapter %s poll failed: %s", adapter_type, e)
 
     async def _manage_triage_queue(self):
         if not self.messenger:
