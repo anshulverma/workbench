@@ -1,8 +1,10 @@
+import datetime
 import logging
 import os
 import sys
 import threading
 import time
+import zoneinfo
 from logging.handlers import RotatingFileHandler
 
 
@@ -55,9 +57,12 @@ class GlogFormatter(logging.Formatter):
         logging.CRITICAL: "F",
     }
 
+    _tz = zoneinfo.ZoneInfo("America/Los_Angeles")
+
     def format(self, record: logging.LogRecord) -> str:
         level = self.LEVEL_CHAR.get(record.levelno, "?")
-        ts = self.formatTime(record, "%m%d %H:%M:%S")
+        dt = datetime.datetime.fromtimestamp(record.created, tz=self._tz)
+        ts = dt.strftime("%m%d %H:%M:%S")
         usecs = f"{record.created % 1:.6f}"[2:]
         tid = threading.get_ident() % 100000
         filename = os.path.basename(record.pathname)
