@@ -33,6 +33,8 @@ Phase 1b adds a **memory service** that learns user preferences from triage inte
                                                     │       (LLM + custom prompt)│
                                                     │                            │
                                                     │  Graphiti (in-process)      │
+                                                    │    └─ AnthropicClient       │
+                                                    │       (pluggable via config)│
                                                     └──────┬──────────┬──────────┘
                                                            │          │
                                                     ┌──────▼───┐ ┌────▼──────────┐
@@ -47,7 +49,8 @@ Phase 1b adds a **memory service** that learns user preferences from triage inte
 - **PostgreSQL remains the source of truth.** The interaction log in PG is the authoritative record. The memory service's graph is derived and rebuildable (Phase 1c).
 - **Fire-and-forget writes.** `record_triage()` returns 202 immediately. Extraction happens asynchronously in the memory service. The triage loop is never blocked by LLM extraction.
 - **Graceful degradation.** If the memory service is down, `HttpMemoryLayer` catches the error and the noise filter falls back to explicit filter rules only. The pipeline never crashes.
-- **Pluggable LLM.** The memory service has its own `llm:` config section. In Meta internal, this points to Plugboard. In OSS, it can be a different model (e.g., Haiku for cheaper extraction).
+- **Pluggable LLM client.** The memory service uses Graphiti's `AnthropicClient` by default, configured via a `client_class:` field in the memory service config. The client class is loaded via dynamic import (same pattern as workbench's provider registry). For Meta internal, workbench-meta overrides this with a Plugboard-aware client that adds mTLS + api-key-helper. The memory service never knows which LLM backend it's talking to.
+- **Config layering.** The memory service supports `--config` + `--override`, same pattern as workbench. OSS uses `memory-config.yml`. Meta internal overlays `memory-config.meta.yml` for Plugboard LLM and credentials.
 
 ## Memory Service API
 
@@ -186,6 +189,55 @@ Graphiti's LLM call extracts facts, deduplicates against existing facts in the g
 
 Results are merged, deduplicated, and returned as `Fact` objects with content, source, and timestamp.
 
+## LLM Integration
+
+The memory service uses Graphiti's native `AnthropicClient` (from `graphiti-core[anthropic]`) for all LLM calls (fact extraction, entity resolution, semantic search). The client is configured via the memory service's config file and loaded via dynamic import.
+
+### How it works
+
+Graphiti's `Graphiti` class accepts an `llm_client: LLMClient` parameter. The memory service:
+
+1. Reads `llm.client_class` from config (e.g., `memory.llm.DefaultLLMClient`)
+2. Dynamically imports and instantiates the class, passing the config
+3. Passes the client to `Graphiti(llm_client=client)`
+
+### OSS default
+
+`memory.llm.DefaultLLMClient` wraps Graphiti's `AnthropicClient`:
+
+```python
+from graphiti_core.llm_client import LLMConfig
+from graphiti_core.llm_client.anthropic_client import AnthropicClient
+
+class DefaultLLMClient(AnthropicClient):
+    def __init__(self, config):
+        llm_config = LLMConfig(
+            api_key=config.api_key,
+            model=config.model,
+            base_url=config.base_url,
+        )
+        super().__init__(config=llm_config)
+```
+
+### Meta override (in workbench-meta)
+
+`workbench_meta.memory.PlugboardLLMClient` adds mTLS + api-key-helper:
+
+```python
+from anthropic import AsyncAnthropic
+from graphiti_core.llm_client import LLMConfig
+from graphiti_core.llm_client.anthropic_client import AnthropicClient
+
+class PlugboardLLMClient(AnthropicClient):
+    def __init__(self, config):
+        llm_config = LLMConfig(api_key=..., model=config.model)
+        super().__init__(config=llm_config, client=AsyncAnthropic(
+            api_key=get_api_key(),
+            base_url="https://plugboard.x2p.facebook.net",
+            http_client=create_mtls_client(),
+        ))
+```
+
 ## HttpMemoryLayer
 
 New file in workbench: `src/workbench/memory/http.py`. Implements `MemoryLayer` ABC. Thin HTTP client using `httpx.AsyncClient`.
@@ -231,6 +283,7 @@ src/
     ├── __init__.py
     ├── main.py                         (FastAPI app, lifespan, route handlers)
     ├── config.py                       (MemoryConfig — neo4j, pg, llm settings)
+    ├── llm.py                          (DefaultLLMClient — wraps Graphiti's AnthropicClient)
     ├── graphiti_layer.py               (GraphitiMemoryLayer — structured writes + episodes)
     ├── extraction.py                   (custom extraction prompt, narrative formatting)
     └── models.py                       (API request/response models)
@@ -253,12 +306,21 @@ storage:
   postgres_dsn: ${oc.env:MEMORY_PG_DSN,postgres://graphiti:graphiti@localhost:5432/graphiti}
 
 llm:
+  client_class: memory.llm.DefaultLLMClient
   api_key: ${oc.env:ANTHROPIC_API_KEY}
   base_url: https://api.anthropic.com
   model: claude-haiku-4-5-20251001
 ```
 
-The memory service creates its own Anthropic client directly from config — it does not import `workbench.providers.llm`. This keeps the two packages fully independent.
+The `client_class` is loaded via dynamic import — same pattern as workbench's provider registry. The memory service never imports workbench code.
+
+### Memory service meta override (`memory-config.meta.yml`)
+
+```yaml
+llm:
+  client_class: workbench_meta.memory.PlugboardLLMClient
+  base_url: https://plugboard.x2p.facebook.net
+```
 
 ### Workbench config addition (`config.yml`)
 
@@ -268,15 +330,15 @@ memory:
   base_url: http://localhost:8422
 ```
 
-### Meta override (`config.meta.yml`)
+### Config layering
 
-```yaml
-memory:
-  class: workbench.memory.http.HttpMemoryLayer
-  base_url: http://localhost:8422
+The memory service supports the same `--config` + `--override` pattern as workbench:
+
+```bash
+memory-serve --config memory-config.yml --override memory-config.meta.yml
 ```
 
-The memory service's LLM config is overridden separately in its own meta config if needed.
+Merge rules are identical: scalars replace, dicts deep-merge, lists replace.
 
 ## Container Setup
 
@@ -307,6 +369,27 @@ memory:
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
 ```
 
+### docker-compose.override.yml (workbench-meta)
+
+Adds overrides for the memory service container, same pattern as the workbench override:
+
+```yaml
+memory:
+  volumes:
+    - ~/workspace/workbench-meta:/opt/workbench-meta:ro
+    - ~/workspace/workbench-meta/memory-config.meta.yml:/app/memory-config.override.yml:ro
+    - /var/facebook/credentials:/var/facebook/credentials:ro
+    - /var/facebook/rootcanal:/var/facebook/rootcanal:ro
+  environment:
+    USER: ${USER}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  entrypoint: ["sh", "-c"]
+  command:
+    - |
+      pip install --no-deps --no-build-isolation -e /opt/workbench-meta &&
+      exec uvicorn memory.main:app --host 0.0.0.0 --port 8422
+```
+
 ### init-db.sh update
 
 Replace the `zep` user/database with `graphiti`:
@@ -320,11 +403,10 @@ GRANT ALL PRIVILEGES ON DATABASE graphiti TO graphiti;
 ## Dependencies
 
 ### Memory service (`src/memory/`)
-- `graphiti-core` — Graphiti library
-- `neo4j` — Neo4j Python driver (used by Graphiti)
+- `graphiti-core[anthropic]` — Graphiti library with Anthropic client support
+- `neo4j` — Neo4j Python driver (pulled in by graphiti-core)
 - `fastapi`, `uvicorn` — HTTP server
 - `httpx` — HTTP client
-- `anthropic` — Anthropic SDK for LLM extraction calls
 - `asyncpg` — PG connection for Graphiti's vector store
 - `omegaconf`, `pyyaml` — config loading
 
@@ -353,7 +435,7 @@ The memory service has its own `pyproject.toml` and does not depend on the `work
 
 ### New files
 - `src/workbench/memory/http.py` — `HttpMemoryLayer`
-- `src/memory/` — entire memory service (6 files)
+- `src/memory/` — entire memory service (7 files)
 - `Dockerfile.memory` — container build for memory service
 - `memory-config.example.yml` — example config for memory service
 
