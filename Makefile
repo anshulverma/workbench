@@ -13,7 +13,7 @@ down:
 	$(COMPOSE) $(COMPOSE_FILES) down
 
 logs:
-	$(COMPOSE) $(COMPOSE_FILES) logs -f
+	tail -f data/logs/workbench.log
 
 health:
 	@curl -s http://localhost:8421/health | python3 -m json.tool
