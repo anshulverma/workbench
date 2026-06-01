@@ -96,3 +96,75 @@ def test_format_card_for_chat():
     assert "Review D123" in text
     assert "1. Add todo (P1)" in text
     assert "2. Skip" in text
+
+
+@pytest.mark.asyncio
+async def test_auto_include_populates_raw_data(stores, mock_llm):
+    mock_llm.score_relevance.return_value = (85, 90)
+    engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
+
+    raw = RawItem(
+        id="D123", source_type="diff", source_label="D123",
+        raw_text='{"number": 123, "title": "fix auth"}',
+        urgency_signals={"type": "pull_request"},
+    )
+    job = await engine.enqueue(raw.raw_text, "diff")
+    await engine.process_raw_item(raw, job.id)
+
+    items = await stores.items.get_items(ItemFilters())
+    assert len(items) == 1
+    assert items[0].raw_data != {}
+    assert items[0].raw_data["raw_text"] == '{"number": 123, "title": "fix auth"}'
+
+
+@pytest.mark.asyncio
+async def test_triage_item_populates_raw_data(stores, mock_llm):
+    mock_llm.score_relevance.return_value = (50, 50)
+    engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
+
+    raw = RawItem(
+        id="D456", source_type="diff", source_label="D456",
+        raw_text='{"number": 456, "title": "add tests"}',
+    )
+    job = await engine.enqueue(raw.raw_text, "diff")
+    await engine.process_raw_item(raw, job.id)
+
+    items = await stores.items.get_items(ItemFilters(status=ItemStatus.PENDING_TRIAGE))
+    assert len(items) == 1
+    assert items[0].raw_data["source_type"] == "diff"
+
+
+def test_format_card_with_enrichment_context():
+    card = TriageCard(
+        card_content={
+            "summary": "Review D123: fix auth",
+            "source_type": "github",
+            "enrichment": {
+                "context": {
+                    "author": "alice",
+                    "files_changed": 3,
+                    "review_status": "changes_requested",
+                    "labels": "security, auth",
+                }
+            },
+        },
+        options=[
+            TriageOption(label="Add todo (P1)", action="add_todo"),
+            TriageOption(label="Skip", action="skip"),
+        ],
+    )
+    text = format_card_for_chat(card)
+    assert "alice" in text
+    assert "3 files" in text
+    assert "changes requested" in text
+
+
+def test_format_card_without_enrichment():
+    card = TriageCard(
+        card_content={"summary": "Some item", "source_type": "manual"},
+        options=[TriageOption(label="Skip", action="skip")],
+    )
+    text = format_card_for_chat(card)
+    assert "Some item" in text
+    # No enrichment line should appear
+    assert "By" not in text

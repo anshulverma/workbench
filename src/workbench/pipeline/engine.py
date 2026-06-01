@@ -104,6 +104,7 @@ class PipelineEngine:
                 summary=ext_item.summary, category=ext_item.category,
                 origin=ItemOrigin.AUTO_INCLUDED, priority=Priority.P2,
                 status=ItemStatus.ACTIVE,
+                raw_data=ext_item.raw_item.model_dump(),
             )
             await self.stores.items.save_item(item)
             await self.memory.record_pipeline_decision(item, "auto_include", f"relevance={relevance}")
@@ -129,6 +130,7 @@ class PipelineEngine:
                 summary=ext_item.summary, category=ext_item.category,
                 origin=ItemOrigin.TRIAGED, priority=Priority.PENDING,
                 status=ItemStatus.PENDING_TRIAGE,
+                raw_data=ext_item.raw_item.model_dump(),
             )
             await self.stores.items.save_item(item)
 
