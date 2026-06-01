@@ -33,6 +33,7 @@ triage:
   daily_cap: 20
   expiry_days: 7
   timeout_minutes: 30
+  triage_poll_interval_seconds: 10
 
 pipeline:
   include_threshold: 70
@@ -43,8 +44,14 @@ scheduler:
   poll_interval_minutes: 15
   morning_briefing_hour: 9
 
+# Messenger — Google Chat (production) or Console (local dev)
 messenger:
   class: workbench.providers.messenger.console.ConsoleMessenger
+# Google Chat:
+# messenger:
+#   class: workbench.providers.messenger.google_chat.GoogleChatMessenger
+#   space_id: ${oc.env:GOOGLE_CHAT_SPACE_ID}
+#   service_account_key_path: ${oc.env:GOOGLE_CHAT_SA_KEY_PATH,/app/credentials/chat-sa.json}
 
 sources: []
 # Example GitHub source:
@@ -53,8 +60,12 @@ sources: []
 #     repos:
 #       - "owner/repo"
 
+# Enrichment — GitHub (production) or Stub (no enrichment)
 enrichment:
   class: workbench.providers.enrichment.stub.StubEnricher
+# GitHub enrichment:
+# enrichment:
+#   class: workbench.providers.enrichment.github.GitHubEnricher
 
 memory:
   class: workbench.memory.noop.NoopMemoryLayer
