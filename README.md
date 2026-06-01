@@ -1,34 +1,37 @@
 # Workbench
 
-Personal intelligence feed. Ingests from sources, filters noise adaptively, and triages items through interactive cards.
+Personal intelligence feed. Ingests from configurable sources, filters noise adaptively via preference learning, and triages items through interactive cards.
 
 ## Quick Start
 
 ```bash
-# Install
-pip install -e .
-
-# Set up PostgreSQL
-podman compose up -d postgres
-
-# Configure
+# Clone and configure
 cp config.example.yml config.yml
-# Edit config.yml: set ANTHROPIC_API_KEY
+# Edit config.yml: set ANTHROPIC_API_KEY (or export it)
 
-# Run migrations
+# Start PostgreSQL + server
+docker compose up -d
+
+# Or run locally
+pip install -e .
 alembic upgrade head
-
-# Start the server
 workbench serve
 ```
 
 ## Architecture
 
-FastAPI server with PostgreSQL storage, pluggable provider system, and durable queues.
+FastAPI server (Python 3.12+) with PostgreSQL storage, durable queues, and a pluggable provider system.
 
 ```
-Source Adapter → Ingestion Queue → LLM Extraction → Noise Filter → Triage Card → Messenger → User Response → Storage
+Source Adapter → Ingestion Queue (LLM scoring) → Queue Worker → LLM Extraction
+→ Adaptive Noise Filter → Context Enrichment → Triage Card → Messenger → User Response → Storage
 ```
+
+The server does all heavy lifting. Clients are thin interfaces:
+- **CLI** -- `workbench triage` for terminal-based triage
+- **Claude Code plugin** -- slash commands wrapping API calls
+- **MCP server** -- tool access from any MCP-compatible client
+- **Messenger** -- primary surface for triage cards and responses
 
 ### Providers
 
@@ -36,39 +39,45 @@ All external integrations are pluggable via YAML config:
 
 | Provider | Role | Default |
 |----------|------|---------|
-| LLM | Extraction, scoring, card generation | AnthropicLLM (Claude API) |
-| Messenger | Send triage cards, receive responses | ConsoleMessenger (stdout) |
-| Source | Poll external systems for new items | GitHubSourceAdapter (gh CLI) |
-| Enrichment | Additional context before triage | StubEnricher |
-| Memory | Knowledge graph for preference learning | NoopMemoryLayer |
-| Queue Scorer | Urgency scoring at ingest time | LLMQueueScorer (Haiku) |
+| LLM | Extraction, scoring, card generation | `AnthropicLLM` (Claude Sonnet) |
+| Queue Scorer | Urgency scoring at ingest time | `LLMQueueScorer` (Claude Haiku) |
+| Messenger | Send triage cards, receive responses | `ConsoleMessenger` (stdout) |
+| Source | Poll external systems for new items | `GitHubSourceAdapter` (gh CLI) |
+| Enrichment | Additional context before triage | `StubEnricher` |
+| Memory | Knowledge graph for preference learning | `NoopMemoryLayer` |
 
 ### Configuration
 
-YAML config with OmegaConf env var interpolation:
+YAML config with [OmegaConf](https://omegaconf.readthedocs.io/) env var interpolation:
 
 ```yaml
 llm:
   class: workbench.providers.llm.anthropic.AnthropicLLM
   api_key: ${oc.env:ANTHROPIC_API_KEY}
+  model: claude-sonnet-4-20250514
 ```
 
-Custom providers: implement the ABC, add a `ProviderConfig` inner class, reference via `class:` in config.
+Custom providers: implement the interface, add a `ProviderConfig` inner class, reference via `class:` in config.
+
+## Development
+
+```bash
+make setup          # Create venv + install deps
+make up             # Build and start services (docker compose)
+make down           # Stop services
+make logs           # Tail server log file
+make test           # Run test suite
+make migrate        # Run Alembic migrations
+make health         # Check server health
+```
 
 ## CLI
 
 ```bash
-workbench serve              # Start the server
-workbench triage --token T   # Interactive triage from terminal
+workbench serve                        # Start the server
+workbench serve --config config.yml    # Explicit config path
+workbench triage --token TOKEN         # Interactive triage from terminal
 ```
-
-## API
-
-- `POST /api/process` -- Submit content for processing
-- `GET /api/items` -- List items
-- `GET /api/triage/pending` -- Pending triage cards
-- `POST /api/triage/respond` -- Respond to a triage card
-- `GET /health` -- Server health + queue stats
 
 ## License
 

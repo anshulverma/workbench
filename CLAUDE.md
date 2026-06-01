@@ -34,14 +34,14 @@ Repository pattern -- one interface per domain entity (ItemStore, TriageStore, I
 ## Development Commands
 
 ```bash
-# Start services
-podman compose up -d
+# Start services (docker compose)
+make up
 
 # Tail logs
-podman compose logs -f
+make logs
 
 # Dev server
-uvicorn workbench.main:app --host 0.0.0.0 --port 8421 --reload
+workbench serve
 ```
 
 ## Project Structure

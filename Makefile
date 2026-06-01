@@ -1,4 +1,4 @@
-COMPOSE := podman-compose
+COMPOSE := docker compose
 COMPOSE_FILES ?= -f docker-compose.yml
 
 .PHONY: build up down logs health triage setup test migrate
