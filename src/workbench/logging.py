@@ -2,7 +2,46 @@ import logging
 import os
 import sys
 import threading
+import time
 from logging.handlers import RotatingFileHandler
+
+
+class AgeRotatingFileHandler(RotatingFileHandler):
+    """Size-based rotation with age-based backup cleanup."""
+
+    def __init__(self, filename: str, max_age_days: int = 84, **kwargs):
+        kwargs.pop("backupCount", None)
+        super().__init__(filename, backupCount=1, **kwargs)
+        self.max_age_days = max_age_days
+
+    def doRollover(self) -> None:
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        max_i = 0
+        while os.path.exists(f"{self.baseFilename}.{max_i + 1}"):
+            max_i += 1
+
+        cutoff = time.time() - self.max_age_days * 86400
+        for i in range(max_i, 0, -1):
+            if os.path.getmtime(f"{self.baseFilename}.{i}") < cutoff:
+                os.remove(f"{self.baseFilename}.{i}")
+                max_i = i - 1
+            else:
+                break
+
+        for i in range(max_i, 0, -1):
+            os.rename(
+                f"{self.baseFilename}.{i}",
+                f"{self.baseFilename}.{i + 1}",
+            )
+
+        if os.path.exists(self.baseFilename):
+            os.rename(self.baseFilename, f"{self.baseFilename}.1")
+
+        if not self.delay:
+            self.stream = self._open()
 
 
 class GlogFormatter(logging.Formatter):
@@ -45,10 +84,10 @@ def setup_logging(log_dir: str | None = None, level: int = logging.INFO) -> None
 
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
-        file_handler = RotatingFileHandler(
+        file_handler = AgeRotatingFileHandler(
             os.path.join(log_dir, "workbench.log"),
             maxBytes=10 * 1024 * 1024,
-            backupCount=5,
+            max_age_days=84,
         )
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
