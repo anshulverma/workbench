@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
         level=getattr(logging, log_cfg.level.upper(), logging.INFO),
         max_bytes=log_cfg.max_bytes,
         max_age_days=log_cfg.max_age_days,
+        timezone=log_cfg.timezone,
     )
     logger.info("Config loaded (version=%s, port=%d)", config.version, config.server.port)
 

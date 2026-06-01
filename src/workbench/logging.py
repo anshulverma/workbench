@@ -57,7 +57,9 @@ class GlogFormatter(logging.Formatter):
         logging.CRITICAL: "F",
     }
 
-    _tz = zoneinfo.ZoneInfo("America/Los_Angeles")
+    def __init__(self, timezone: str = "America/Los_Angeles", **kwargs):
+        super().__init__(**kwargs)
+        self._tz = zoneinfo.ZoneInfo(timezone)
 
     def format(self, record: logging.LogRecord) -> str:
         level = self.LEVEL_CHAR.get(record.levelno, "?")
@@ -81,8 +83,9 @@ def setup_logging(
     level: int = logging.INFO,
     max_bytes: int = 10 * 1024 * 1024,
     max_age_days: int = 84,
+    timezone: str = "America/Los_Angeles",
 ) -> None:
-    formatter = GlogFormatter()
+    formatter = GlogFormatter(timezone=timezone)
 
     root = logging.getLogger()
     root.setLevel(level)

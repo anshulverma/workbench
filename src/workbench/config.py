@@ -43,6 +43,7 @@ class LoggingConfig(BaseModel):
     log_dir: str | None = None
     max_bytes: int = 10 * 1024 * 1024
     max_age_days: int = 84
+    timezone: str = "America/Los_Angeles"
 
 
 class SchedulerConfig(BaseModel):
