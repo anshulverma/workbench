@@ -14,9 +14,7 @@ from workbench.memory.noop import NoopMemoryLayer
 from workbench.registry import close_provider, create_provider
 from workbench.storage.factory import create_stores
 
-LOG_DIR = os.environ.get("WORKBENCH_LOG_DIR", "logs")
-
-setup_logging(log_dir=LOG_DIR)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +28,15 @@ def get_config() -> AppConfig:
 async def lifespan(app: FastAPI):
     config = get_config()
     app.state.config = config
+
+    log_cfg = config.logging
+    log_dir = log_cfg.log_dir or os.environ.get("WORKBENCH_LOG_DIR", "logs")
+    setup_logging(
+        log_dir=log_dir,
+        level=getattr(logging, log_cfg.level.upper(), logging.INFO),
+        max_bytes=log_cfg.max_bytes,
+        max_age_days=log_cfg.max_age_days,
+    )
     logger.info("Config loaded (version=%s, port=%d)", config.version, config.server.port)
 
     app.state.stores = await create_stores(config)

@@ -71,7 +71,12 @@ class GlogFormatter(logging.Formatter):
         return msg
 
 
-def setup_logging(log_dir: str | None = None, level: int = logging.INFO) -> None:
+def setup_logging(
+    log_dir: str | None = None,
+    level: int = logging.INFO,
+    max_bytes: int = 10 * 1024 * 1024,
+    max_age_days: int = 84,
+) -> None:
     formatter = GlogFormatter()
 
     root = logging.getLogger()
@@ -86,8 +91,8 @@ def setup_logging(log_dir: str | None = None, level: int = logging.INFO) -> None
         os.makedirs(log_dir, exist_ok=True)
         file_handler = AgeRotatingFileHandler(
             os.path.join(log_dir, "workbench.log"),
-            maxBytes=10 * 1024 * 1024,
-            max_age_days=84,
+            maxBytes=max_bytes,
+            max_age_days=max_age_days,
         )
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)

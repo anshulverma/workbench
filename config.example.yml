@@ -14,6 +14,12 @@ llm:
   api_key: ${oc.env:ANTHROPIC_API_KEY}
   model: claude-sonnet-4-20250514
 
+logging:
+  level: INFO
+  log_dir: ${oc.env:WORKBENCH_LOG_DIR,logs}
+  max_bytes: 10485760    # 10 MB
+  max_age_days: 84       # 12 weeks
+
 queue:
   scorer:
     class: workbench.providers.queue_scorer.llm.LLMQueueScorer

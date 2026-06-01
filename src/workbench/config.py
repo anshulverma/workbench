@@ -37,6 +37,13 @@ class PipelineConfig(BaseModel):
     confidence_threshold: int = 70
 
 
+class LoggingConfig(BaseModel):
+    level: str = "INFO"
+    log_dir: str | None = None
+    max_bytes: int = 10 * 1024 * 1024
+    max_age_days: int = 84
+
+
 class SchedulerConfig(BaseModel):
     poll_interval_minutes: int = 15
     morning_briefing_hour: int = 9
@@ -50,6 +57,7 @@ class AppConfig(BaseModel):
     queue: QueueConfig = Field(default_factory=QueueConfig)
     triage: TriageConfig = Field(default_factory=TriageConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     messenger: dict | None = None
     sources: list[dict] = Field(default_factory=list)
