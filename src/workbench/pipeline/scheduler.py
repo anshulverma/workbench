@@ -86,6 +86,12 @@ class WorkbenchScheduler:
         if not self.messenger:
             return
 
+        try:
+            await self._manage_triage_queue_inner()
+        except Exception:
+            logger.error("Triage queue management failed", exc_info=True)
+
+    async def _manage_triage_queue_inner(self):
         sent_today = await self.stores.triage.count_sent_today()
         if sent_today >= self.config.triage.daily_cap:
             return
@@ -186,6 +192,12 @@ class WorkbenchScheduler:
     async def _morning_briefing(self):
         if not self.messenger:
             return
+        try:
+            await self._morning_briefing_inner()
+        except Exception:
+            logger.error("Morning briefing failed", exc_info=True)
+
+    async def _morning_briefing_inner(self):
         from workbench.models import ItemFilters
         items = await self.stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE))
         pending = await self.stores.triage.get_pending()
