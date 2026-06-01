@@ -31,7 +31,7 @@ class WorkbenchScheduler:
 
     def start(self):
         jobs = [
-            ("triage_queue", "interval", {"seconds": 30}, self._manage_triage_queue),
+            ("triage_queue", "interval", {"seconds": self.config.triage.triage_poll_interval_seconds}, self._manage_triage_queue),
             ("briefing", "cron", {"hour": self.config.scheduler.morning_briefing_hour}, self._morning_briefing),
             ("expire_cards", "cron", {"hour": 3}, self._expire_cards),
         ]

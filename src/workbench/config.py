@@ -29,6 +29,7 @@ class TriageConfig(BaseModel):
     daily_cap: int = 20
     expiry_days: int = 7
     timeout_minutes: int = 30
+    triage_poll_interval_seconds: int = 10
 
 
 class PipelineConfig(BaseModel):
