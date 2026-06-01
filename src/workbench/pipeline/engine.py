@@ -89,7 +89,7 @@ class PipelineEngine:
                         job.items_failed += 1
                         await self.stores.jobs.update_job(job)
         except Exception as e:
-            logger.error(f"Pipeline processing failed: {e}")
+            logger.error("Pipeline processing failed: %s", e, exc_info=True)
             raise
 
     async def _process_extracted_item(self, ext_item: ExtractedItem, job: PipelineJob | None) -> None:
