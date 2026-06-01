@@ -9,3 +9,4 @@ config.meta.yml
 docker-compose.override.yml
 internal/
 *.egg-info/
+build/
