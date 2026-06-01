@@ -30,16 +30,14 @@ class WorkbenchScheduler:
         self.scheduler = AsyncIOScheduler()
 
     def start(self):
-        self.scheduler.add_job(
-            self._manage_triage_queue, "interval", seconds=30, id="triage_queue"
-        )
-        self.scheduler.add_job(
-            self._morning_briefing, "cron",
-            hour=self.config.scheduler.morning_briefing_hour, id="briefing"
-        )
-        self.scheduler.add_job(
-            self._expire_cards, "cron", hour=3, id="expire_cards"
-        )
+        jobs = [
+            ("triage_queue", "interval", {"seconds": 30}, self._manage_triage_queue),
+            ("briefing", "cron", {"hour": self.config.scheduler.morning_briefing_hour}, self._morning_briefing),
+            ("expire_cards", "cron", {"hour": 3}, self._expire_cards),
+        ]
+        for job_id, trigger, kwargs, func in jobs:
+            logger.info(f"Scheduling job '{job_id}' ({trigger})")
+            self.scheduler.add_job(func, trigger, id=job_id, **kwargs)
         self.scheduler.start()
 
     async def _manage_triage_queue(self):
