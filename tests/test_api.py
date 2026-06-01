@@ -180,3 +180,19 @@ async def test_item_not_found(client):
         json={"priority": "P0"},
     )
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_process_creates_queue_entry(client, app_with_state):
+    """Verify /api/process enqueues to the ingestion queue."""
+    r = await client.post(
+        "/api/process",
+        json={"text": "Review the auth migration PR", "source_type": "manual"},
+    )
+    assert r.status_code == 200
+    job_id = r.json()["job_id"]
+    assert job_id is not None
+
+    stores = app_with_state.state.stores
+    depth = await stores.ingestion_queue.queue_depth()
+    assert depth == 1

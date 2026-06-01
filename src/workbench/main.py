@@ -75,11 +75,20 @@ async def lifespan(app: FastAPI):
         queue_scorer=app.state.queue_scorer,
     )
 
+    # Ingestion queue worker
+    from workbench.pipeline.worker import IngestionQueueWorker
+    worker = IngestionQueueWorker(
+        app.state.stores, app.state.pipeline,
+        concurrency=config.queue.worker_concurrency,
+    )
+    worker.start()
+    app.state.worker = worker
+
     # Scheduler
     from workbench.pipeline.scheduler import WorkbenchScheduler
     app.state.scheduler = WorkbenchScheduler(
         app.state.stores, app.state.memory, app.state.pipeline,
-        app.state.messenger, config,
+        app.state.messenger, config, sources=app.state.sources,
     )
     app.state.scheduler.start()
     logger.info("Workbench %s ready on port %d", __version__, config.server.port)
@@ -89,6 +98,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
 
     # Cleanup
+    if hasattr(app.state, 'worker'):
+        app.state.worker.stop()
     app.state.scheduler.scheduler.shutdown(wait=False)
 
     for provider in [app.state.llm, app.state.messenger, app.state.enricher,
