@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import threading
+from logging.handlers import RotatingFileHandler
 
 
 class GlogFormatter(logging.Formatter):
@@ -44,7 +45,11 @@ def setup_logging(log_dir: str | None = None, level: int = logging.INFO) -> None
 
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
-        file_handler = logging.FileHandler(os.path.join(log_dir, "workbench.log"))
+        file_handler = RotatingFileHandler(
+            os.path.join(log_dir, "workbench.log"),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+        )
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
 
