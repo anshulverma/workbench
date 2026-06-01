@@ -9,10 +9,14 @@ from fastapi import FastAPI
 from workbench import __version__
 from workbench.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
+from workbench.logging import setup_logging
 from workbench.memory.noop import NoopMemoryLayer
 from workbench.registry import close_provider, create_provider
 from workbench.storage.factory import create_stores
 
+LOG_DIR = os.environ.get("WORKBENCH_LOG_DIR", "logs")
+
+setup_logging(log_dir=LOG_DIR)
 logger = logging.getLogger(__name__)
 
 
@@ -26,8 +30,10 @@ def get_config() -> AppConfig:
 async def lifespan(app: FastAPI):
     config = get_config()
     app.state.config = config
+    logger.info("Config loaded (version=%s, port=%d)", config.version, config.server.port)
 
     app.state.stores = await create_stores(config)
+    logger.info("Storage connected")
 
     app.state.llm = create_provider(config.llm)
 
@@ -69,8 +75,11 @@ async def lifespan(app: FastAPI):
         app.state.messenger, config,
     )
     app.state.scheduler.start()
+    logger.info("Workbench %s ready on port %d", __version__, config.server.port)
 
     yield
+
+    logger.info("Shutting down...")
 
     # Cleanup
     app.state.scheduler.scheduler.shutdown(wait=False)
