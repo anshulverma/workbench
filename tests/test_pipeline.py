@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock
 from workbench.pipeline.engine import PipelineEngine
@@ -304,3 +306,86 @@ async def test_scheduler_poll_sources_handles_adapter_failure(stores, mock_llm):
     # last_polled_at should NOT be updated on failure
     stored = await stores.config.get("source_last_polled:github")
     assert stored is None
+
+
+@pytest.mark.asyncio
+async def test_e2e_enqueue_to_triage_card(stores, mock_llm):
+    """Full pipeline: enqueue → worker dequeues → extraction → filter → triage card."""
+    from workbench.pipeline.worker import IngestionQueueWorker
+
+    mock_llm.score_relevance.return_value = (50, 50)
+
+    engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
+    worker = IngestionQueueWorker(stores, engine, concurrency=1)
+
+    job = await engine.enqueue("Review the auth migration PR #456", "diff")
+    assert job.status == JobStatus.QUEUED
+    assert await stores.ingestion_queue.queue_depth() == 1
+
+    worker.start()
+    for _ in range(20):
+        if await stores.ingestion_queue.queue_depth() == 0:
+            break
+        await asyncio.sleep(0.1)
+    worker.stop()
+
+    assert await stores.ingestion_queue.queue_depth() == 0
+
+    pending = await stores.triage.get_pending()
+    assert len(pending) == 1
+    assert pending[0].item_id is not None
+
+    items = await stores.items.get_items(ItemFilters(status=ItemStatus.PENDING_TRIAGE))
+    assert len(items) == 1
+    assert items[0].id == pending[0].item_id
+    assert items[0].raw_data != {}
+
+    fetched_job = await stores.jobs.get_job(job.id)
+    assert fetched_job.status == JobStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_e2e_auto_include(stores, mock_llm):
+    """Full pipeline: high relevance → auto-include, no triage card."""
+    from workbench.pipeline.worker import IngestionQueueWorker
+
+    mock_llm.score_relevance.return_value = (90, 95)
+
+    engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
+    worker = IngestionQueueWorker(stores, engine, concurrency=1)
+
+    job = await engine.enqueue("P0 incident: auth service down", "incident")
+    worker.start()
+    for _ in range(20):
+        if await stores.ingestion_queue.queue_depth() == 0:
+            break
+        await asyncio.sleep(0.1)
+    worker.stop()
+
+    assert len(await stores.triage.get_pending()) == 0
+
+    items = await stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE))
+    assert len(items) == 1
+    assert items[0].raw_data != {}
+
+
+@pytest.mark.asyncio
+async def test_e2e_auto_drop(stores, mock_llm):
+    """Full pipeline: low relevance → auto-drop, no item or card."""
+    from workbench.pipeline.worker import IngestionQueueWorker
+
+    mock_llm.score_relevance.return_value = (5, 95)
+
+    engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
+    worker = IngestionQueueWorker(stores, engine, concurrency=1)
+
+    job = await engine.enqueue("CI bot comment: lint passed", "github")
+    worker.start()
+    for _ in range(20):
+        if await stores.ingestion_queue.queue_depth() == 0:
+            break
+        await asyncio.sleep(0.1)
+    worker.stop()
+
+    assert len(await stores.triage.get_pending()) == 0
+    assert len(await stores.items.get_items(ItemFilters())) == 0
