@@ -120,6 +120,7 @@ class InteractionEntry(BaseModel):
     enrichment_context: dict = Field(default_factory=dict)
     options_presented: list[dict] = Field(default_factory=list)
     option_chosen: str = ""
+    choice_index: int | None = None
     todo_created: dict | None = None
     enrichment_depth: str = "none"
     enrichment_calls: int = 0

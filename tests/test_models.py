@@ -78,3 +78,11 @@ def test_triage_card_queue_fields():
     assert card.relevance_score == 50
     assert card.bot_message_id is None
     assert card.expires_at is None
+
+def test_interaction_entry_choice_index_default():
+    entry = InteractionEntry(source_type="diff", item_summary="Review D123")
+    assert entry.choice_index is None
+
+def test_interaction_entry_choice_index_set():
+    entry = InteractionEntry(source_type="diff", item_summary="Review D123", choice_index=2)
+    assert entry.choice_index == 2

@@ -63,7 +63,7 @@ class HttpMemoryLayer(MemoryLayer):
     async def query_entity(self, entity_type: str, entity_id: str) -> EntityKnowledge | None:
         return None
 
-    async def query_relationships(self, entity_id: str) -> list[Relationship]:
+    async def query_relationships(self, entity_type: str, entity_id: str) -> list[Relationship]:
         return []
 
     async def is_available(self) -> bool:

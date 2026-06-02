@@ -7,7 +7,7 @@ def test_noop_memory_returns_empty():
         memory = NoopMemoryLayer()
         assert await memory.query_preferences("any context") == []
         assert await memory.query_entity("diff", "D123") is None
-        assert await memory.query_relationships("D123") == []
+        assert await memory.query_relationships("diff", "D123") == []
         assert await memory.is_available() is False
 
     asyncio.run(_test())
