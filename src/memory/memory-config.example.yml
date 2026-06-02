@@ -1,0 +1,34 @@
+# memory-config.example.yml — copy to memory-config.yml and edit
+server:
+  port: 8422
+
+neo4j:
+  uri: bolt://localhost:7687
+  user: neo4j
+  password: ${oc.env:NEO4J_PASSWORD,neo4j}
+
+storage:
+  postgres_dsn: ${oc.env:MEMORY_PG_DSN,postgres://memory:memory@localhost:5432/memory}
+
+llm:
+  client_class: memory.llm.DefaultLLMClient
+  api_key: ${oc.env:ANTHROPIC_API_KEY}
+  base_url: https://api.anthropic.com
+  model: claude-haiku-4-5-20251001
+
+# Embedder — OpenAI (default) or local sentence-transformers
+embedder:
+  embedder_class: memory.embedder.OpenAIEmbedderWrapper
+  api_key: ${oc.env:OPENAI_API_KEY}
+  model: text-embedding-3-small
+  embedding_dim: 1536
+# Local embedder (no API key needed, uses sentence-transformers):
+# embedder:
+#   embedder_class: memory.embedder.LocalEmbedder
+#   model: all-MiniLM-L6-v2
+#   embedding_dim: 384
+
+queue:
+  max_attempts: 3
+  base_delay_seconds: 5
+  worker_concurrency: 1
