@@ -3,9 +3,12 @@ services:
   postgres:
     image: docker.io/library/postgres:17
     network_mode: host
+    entrypoint: ["sh", "-c"]
+    command: ["docker-entrypoint.sh postgres 2>&1 | tee -a /var/log/app/postgres.log"]
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+      - ./data/logs:/var/log/app
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -14,8 +17,11 @@ services:
   neo4j:
     image: docker.io/library/neo4j:5-community
     network_mode: host
+    entrypoint: ["sh", "-c"]
+    command: ["/startup/docker-entrypoint.sh neo4j 2>&1 | tee -a /var/log/app/neo4j.log"]
     volumes:
       - ./data/neo4j:/data
+      - ./data/logs:/var/log/app
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-workbench}
       NEO4J_PLUGINS: '["apoc"]'
@@ -25,9 +31,12 @@ services:
     build:
       context: ./src/memory
     network_mode: host
+    command: ["sh", "-c", "uvicorn memory.main:app --host 0.0.0.0 --port 8422 2>&1 | tee -a /app/logs/memory.log"]
     depends_on:
       - postgres
       - neo4j
+    volumes:
+      - ./data/logs:/app/logs
     environment:
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-workbench}
       MEMORY_PG_DSN: postgres://memory:memory@localhost:5432/memory
