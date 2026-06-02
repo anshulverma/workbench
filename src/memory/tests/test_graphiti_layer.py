@@ -178,3 +178,137 @@ async def test_record_triage_prefers_edge_has_priority(layer, mock_graphiti):
     call_args = mock_graphiti.add_triplet.call_args
     edge = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["edge"]
     assert edge.attributes.get("priority") == "P1"
+
+
+# --- Entity tests ---
+
+@pytest.fixture
+def mock_store():
+    s = AsyncMock()
+    s.get_entity = AsyncMock(return_value=None)
+    s.upsert_entity = AsyncMock()
+    s.update_graph_uuid = AsyncMock()
+    s.enqueue = AsyncMock(return_value="entry-123")
+    return s
+
+
+@pytest.mark.asyncio
+async def test_record_entity_calls_add_triplet_per_fact(layer, mock_graphiti, mock_store):
+    facts = {"name": "Alice", "role": "engineer"}
+    await layer.record_entity("person", "p1", facts, mock_store)
+
+    assert mock_graphiti.add_triplet.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_record_entity_upserts_in_pg_store(layer, mock_graphiti, mock_store):
+    facts = {"name": "Alice"}
+    await layer.record_entity("person", "p1", facts, mock_store)
+
+    mock_store.upsert_entity.assert_called_once_with("person", "p1", facts)
+
+
+@pytest.mark.asyncio
+async def test_record_entity_updates_graph_uuid(layer, mock_graphiti, mock_store):
+    facts = {"name": "Alice"}
+    await layer.record_entity("person", "p1", facts, mock_store)
+
+    mock_store.update_graph_uuid.assert_called_once()
+    call_args = mock_store.update_graph_uuid.call_args
+    assert call_args.args[0] == "person"
+    assert call_args.args[1] == "p1"
+    # graph_uuid should be a string (UUID)
+    assert isinstance(call_args.args[2], str)
+
+
+@pytest.mark.asyncio
+async def test_record_entity_does_not_write_pg_on_graph_failure(layer, mock_graphiti, mock_store):
+    mock_graphiti.add_triplet.side_effect = Exception("Neo4j down")
+
+    with pytest.raises(Exception, match="Neo4j down"):
+        await layer.record_entity("person", "p1", {"name": "Alice"}, mock_store)
+
+    mock_store.upsert_entity.assert_not_called()
+    mock_store.update_graph_uuid.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_entity_returns_from_store(layer, mock_store):
+    mock_store.get_entity.return_value = {
+        "entity_type": "person",
+        "entity_id": "p1",
+        "facts": {"name": "Alice"},
+        "graph_uuid": "uuid-123",
+    }
+
+    result = await layer.query_entity("person", "p1", mock_store)
+    assert result is not None
+    assert result["entity_id"] == "p1"
+    assert result["facts"]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_query_entity_returns_none_when_not_found(layer, mock_store):
+    mock_store.get_entity.return_value = None
+
+    result = await layer.query_entity("person", "p99", mock_store)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_record_decision_creates_structured_edge(layer, mock_graphiti, mock_store):
+    await layer.record_decision(
+        "CI notifications from bot", "auto_drop", "low relevance", "github", mock_store
+    )
+
+    mock_graphiti.add_triplet.assert_called_once()
+    call_args = mock_graphiti.add_triplet.call_args
+    source_node = call_args.args[0]
+    edge = call_args.args[1]
+    target_node = call_args.args[2]
+    assert source_node.name == "pipeline"
+    assert edge.name == "dropped"
+    assert "CI notifications" in target_node.name
+
+
+@pytest.mark.asyncio
+async def test_record_decision_calls_add_episode(layer, mock_graphiti, mock_store):
+    await layer.record_decision(
+        "Important PR review", "auto_include", "high relevance", "github", mock_store
+    )
+
+    mock_graphiti.add_episode.assert_called_once()
+    call_kwargs = mock_graphiti.add_episode.call_args.kwargs
+    assert "Important PR review" in call_kwargs["episode_body"]
+    assert "auto_include" in call_kwargs["episode_body"]
+
+
+@pytest.mark.asyncio
+async def test_query_relationships_returns_from_cypher(layer, mock_graphiti, mock_store):
+    mock_store.get_entity.return_value = {
+        "entity_type": "person",
+        "entity_id": "p1",
+        "facts": {"name": "Alice"},
+        "graph_uuid": "uuid-123",
+    }
+    mock_graphiti.driver.execute_query = AsyncMock(return_value=[
+        {"from_entity": "person:p1", "to_entity": "team:eng", "relation": "member_of", "fact": "p1 is member of eng"},
+    ])
+
+    result = await layer.query_relationships("person", "p1", mock_store)
+    assert len(result) == 1
+    assert result[0]["from_entity"] == "person:p1"
+    assert result[0]["relation"] == "member_of"
+
+
+@pytest.mark.asyncio
+async def test_query_relationships_returns_empty_without_graph_uuid(layer, mock_store):
+    mock_store.get_entity.return_value = {
+        "entity_type": "person",
+        "entity_id": "p1",
+        "facts": {"name": "Alice"},
+        "graph_uuid": None,
+    }
+
+    result = await layer.query_relationships("person", "p1", mock_store)
+    assert result == []

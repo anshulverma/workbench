@@ -14,9 +14,14 @@ from memory.graphiti_layer import GraphitiMemoryLayer
 from memory.llm import create_llm_client
 from memory.embedder import create_embedder, create_cross_encoder
 from memory.models import (
+    DecisionRecordRequest,
+    EntityRecordRequest,
+    EntityResponse,
     FactsListResponse,
     HealthResponse,
     PreferenceQueryResponse,
+    QueueDepthResponse,
+    RelationshipsResponse,
     TriageRecordRequest,
 )
 from memory.logging import setup_logging
@@ -51,11 +56,29 @@ async def _run_ingestion_worker(
                 async with semaphore:
                     try:
                         payload = entry["payload"]
-                        await layer.record_triage(payload["card"], payload["response"])
+                        entry_type = entry.get("type", "triage")
+                        if entry_type == "decision":
+                            await layer.record_decision(
+                                payload["item_summary"],
+                                payload["decision"],
+                                payload["reason"],
+                                payload.get("source_type", "unknown"),
+                                store,
+                            )
+                        else:
+                            await layer.record_triage(
+                                payload["card"], payload["response"]
+                            )
                         await store.mark_completed(entry["id"])
-                        logger.info("Fact ingestion completed for entry %s", entry["id"])
+                        logger.info(
+                            "Ingestion completed for %s entry %s",
+                            entry_type,
+                            entry["id"],
+                        )
                     except Exception as e:
-                        logger.error("Fact ingestion failed for entry %s: %s", entry["id"], e)
+                        logger.error(
+                            "Ingestion failed for entry %s: %s", entry["id"], e
+                        )
                         await store.mark_failed(entry["id"], str(e))
 
             await asyncio.gather(*(process(e) for e in entries))
@@ -166,21 +189,84 @@ def create_app() -> FastAPI:
         facts = await layer.query_preferences("")
         return FactsListResponse(facts=facts, total=len(facts))
 
-    @app.post("/record/entity", status_code=501)
-    async def record_entity():
-        return {"error": "Not implemented — Phase 1c"}
+    @app.post("/record/entity", status_code=200)
+    async def record_entity(request: EntityRecordRequest):
+        layer: GraphitiMemoryLayer = app.state.layer
+        store: PendingIngestionStore = app.state.store
+        graph_uuid = await layer.record_entity(
+            request.entity_type, request.entity_id, request.facts, store
+        )
+        return {
+            "status": "ok",
+            "entity_type": request.entity_type,
+            "entity_id": request.entity_id,
+            "graph_uuid": graph_uuid,
+        }
 
-    @app.post("/record/decision", status_code=501)
-    async def record_decision():
-        return {"error": "Not implemented — Phase 1c"}
+    @app.post("/record/decision", status_code=202)
+    async def record_decision(request: DecisionRecordRequest):
+        store: PendingIngestionStore = app.state.store
+        entry_id = await store.enqueue(request, entry_type="decision")
+        return {"status": "queued", "entry_id": entry_id}
 
-    @app.get("/query/entity", status_code=501)
-    async def query_entity():
-        return {"error": "Not implemented — Phase 1c"}
+    @app.get("/query/entity", response_model=EntityResponse)
+    async def query_entity(
+        entity_type: str = Query(...), entity_id: str = Query(...)
+    ):
+        layer: GraphitiMemoryLayer = app.state.layer
+        store: PendingIngestionStore = app.state.store
+        entity = await layer.query_entity(entity_type, entity_id, store)
+        if entity is None:
+            from fastapi.responses import JSONResponse
 
-    @app.get("/query/relationships", status_code=501)
-    async def query_relationships():
-        return {"error": "Not implemented — Phase 1c"}
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Entity not found"},
+            )
+        return EntityResponse(
+            entity_type=entity["entity_type"],
+            entity_id=entity["entity_id"],
+            facts=entity["facts"],
+        )
+
+    @app.get("/query/relationships", response_model=RelationshipsResponse)
+    async def query_relationships(
+        entity_type: str = Query(...), entity_id: str = Query(...)
+    ):
+        layer: GraphitiMemoryLayer = app.state.layer
+        store: PendingIngestionStore = app.state.store
+        relationships = await layer.query_relationships(
+            entity_type, entity_id, store
+        )
+        return RelationshipsResponse(relationships=relationships)
+
+    @app.post("/admin/reset-graph")
+    async def admin_reset_graph():
+        if os.environ.get("MEMORY_ADMIN_ENABLED", "false") != "true":
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Admin endpoints are disabled"},
+            )
+        graphiti = app.state.graphiti
+        store: PendingIngestionStore = app.state.store
+        # Wipe Neo4j
+        try:
+            await graphiti.driver.execute_query("MATCH (n) DETACH DELETE n")
+        except Exception as e:
+            logger.error("Failed to wipe Neo4j: %s", e)
+            raise
+        # Clear all graph_uuids in PG
+        await store.clear_all_graph_uuids()
+        return {"status": "ok", "message": "Graph reset complete"}
+
+    @app.get("/admin/queue-depth", response_model=QueueDepthResponse)
+    async def admin_queue_depth():
+        store: PendingIngestionStore = app.state.store
+        depth = await store.queue_depth()
+        dead_letters = await store.dead_letter_count()
+        return QueueDepthResponse(depth=depth, dead_letters=dead_letters)
 
     return app
 
