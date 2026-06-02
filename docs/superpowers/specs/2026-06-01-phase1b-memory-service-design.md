@@ -47,7 +47,7 @@ Phase 1b adds a **memory service** that learns user preferences from triage inte
 
 - **Workbench never imports Graphiti.** All interaction goes through the memory service's HTTP API. Graphiti, Neo4j, and extraction prompts are internal to the memory service.
 - **PostgreSQL remains the source of truth.** The interaction log in PG is the authoritative record. The memory service's graph is derived and rebuildable (Phase 1c).
-- **Fire-and-forget writes.** `record_triage()` returns 202 immediately. Extraction happens asynchronously in the memory service. The triage loop is never blocked by LLM extraction.
+- **Fire-and-forget writes with durable queue.** `record_triage()` returns 202 immediately. The triage payload is written to a `pending_ingestions` table in PostgreSQL (`memory` database), then processed asynchronously by an in-process worker. If the memory service restarts mid-ingestion, pending entries are recovered and retried. The triage loop is never blocked by fact ingestion.
 - **Graceful degradation.** If the memory service is down, `HttpMemoryLayer` catches the error and the noise filter falls back to explicit filter rules only. The pipeline never crashes.
 - **Pluggable LLM client.** The memory service uses Graphiti's `AnthropicClient` by default, configured via a `client_class:` field in the memory service config. The client class is loaded via dynamic import (same pattern as workbench's provider registry). For Meta internal, workbench-meta overrides this with a Plugboard-aware client that adds mTLS + api-key-helper. The memory service never knows which LLM backend it's talking to.
 - **Config layering.** The memory service supports `--config` + `--override`, same pattern as workbench. OSS uses `memory-config.yml`. Meta internal overlays `memory-config.meta.yml` for Plugboard LLM and credentials.
@@ -80,12 +80,14 @@ Request:
 
 Response: `202 Accepted` with `{"status": "queued"}`
 
-Internally:
+The payload is durably written to the `pending_ingestions` table in PostgreSQL before returning 202. An in-process async worker picks it up and runs fact ingestion. Failed ingestions retry with exponential backoff up to max attempts, then become dead letters.
+
+Fact ingestion does two things:
 1. **Structured writes** — creates deterministic graph nodes and edges:
    - `(user) --[prefers {priority: P1}]--> (pattern: "diffs with blocked reviewers")`
    - `(user) --[avoids]--> (pattern: "CI bot comments")`
    - `(user) --[triaged {action: skip}]--> (item: "PR #42 auth fix")`
-2. **Episode ingestion** — formats the interaction as a narrative and calls `graphiti.add_episode()` with a custom extraction prompt for implicit preference patterns.
+2. **Episode fact ingestion** — formats the interaction as a narrative and calls `graphiti.add_episode()` with a custom extraction prompt for implicit preference patterns.
 
 #### `GET /query/preferences?context={text}`
 
@@ -150,7 +152,7 @@ When `record_triage()` is called, the layer extracts structured data from the ca
 
 Source type is attached to the pattern node: `(pattern {text: "...", source_type: "github"})`.
 
-### Layer 2: Episode Extraction (LLM)
+### Layer 2: Episode Fact Ingestion (LLM)
 
 The same interaction is formatted as a narrative text:
 
@@ -179,7 +181,7 @@ Examples:
 - "User usually skips emails about infrastructure announcements"
 ```
 
-Graphiti's LLM call extracts facts, deduplicates against existing facts in the graph, and stores them with temporal metadata.
+Graphiti's LLM call extracts facts, deduplicates against existing facts in the graph, and stores them with temporal metadata. This is the "fact ingestion" step — it runs asynchronously via the pending ingestions worker, never blocking the API response.
 
 ### Querying
 
@@ -280,13 +282,18 @@ src/
 │       └── http.py                     (new — HttpMemoryLayer, thin HTTP client)
 │
 └── memory/                             (new — standalone FastAPI service)
-    ├── __init__.py
-    ├── main.py                         (FastAPI app, lifespan, route handlers)
-    ├── config.py                       (MemoryConfig — neo4j, pg, llm settings)
-    ├── llm.py                          (DefaultLLMClient — wraps Graphiti's AnthropicClient)
-    ├── graphiti_layer.py               (GraphitiMemoryLayer — structured writes + episodes)
-    ├── extraction.py                   (custom extraction prompt, narrative formatting)
-    └── models.py                       (API request/response models)
+    ├── pyproject.toml                  (package metadata + dependencies)
+    ├── memory/                         (Python package)
+    │   ├── __init__.py
+    │   ├── main.py                     (FastAPI app, lifespan, route handlers)
+    │   ├── config.py                   (MemoryConfig — neo4j, pg, llm settings)
+    │   ├── llm.py                      (DefaultLLMClient — wraps Graphiti's AnthropicClient)
+    │   ├── graphiti_layer.py           (GraphitiMemoryLayer — structured writes + episodes)
+    │   ├── extraction.py               (custom fact ingestion prompt, narrative formatting)
+    │   ├── queue.py                    (PendingIngestionStore + async worker)
+    │   └── models.py                   (API request/response models)
+    ├── memory-config.example.yml
+    └── Dockerfile
 ```
 
 ## Configuration
@@ -303,7 +310,7 @@ neo4j:
   password: ${oc.env:NEO4J_PASSWORD,neo4j}
 
 storage:
-  postgres_dsn: ${oc.env:MEMORY_PG_DSN,postgres://graphiti:graphiti@localhost:5432/graphiti}
+  postgres_dsn: ${oc.env:MEMORY_PG_DSN,postgres://memory:memory@localhost:5432/memory}
 
 llm:
   client_class: memory.llm.DefaultLLMClient
@@ -365,7 +372,7 @@ memory:
   environment:
     NEO4J_URI: bolt://localhost:7687
     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j}
-    MEMORY_PG_DSN: postgres://graphiti:graphiti@localhost:5432/graphiti
+    MEMORY_PG_DSN: postgres://memory:memory@localhost:5432/memory
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
 ```
 
@@ -390,14 +397,18 @@ memory:
       exec uvicorn memory.main:app --host 0.0.0.0 --port 8422
 ```
 
+### PostgreSQL image
+
+Switch from `ghcr.io/getzep/postgres:latest` (Zep-branded, includes pgvector) to `postgres:17` (standard). Graphiti stores vectors in Neo4j, not PostgreSQL. The workbench and memory databases only need standard PostgreSQL features (JSONB, indexes).
+
 ### init-db.sh update
 
-Replace the `zep` user/database with `graphiti`:
+Replace the `zep` user/database with `memory`:
 
 ```sql
-CREATE USER graphiti WITH PASSWORD 'graphiti';
-CREATE DATABASE graphiti OWNER graphiti;
-GRANT ALL PRIVILEGES ON DATABASE graphiti TO graphiti;
+CREATE USER memory WITH PASSWORD 'memory';
+CREATE DATABASE memory OWNER memory;
+GRANT ALL PRIVILEGES ON DATABASE memory TO memory;
 ```
 
 ## Dependencies
@@ -407,8 +418,10 @@ GRANT ALL PRIVILEGES ON DATABASE graphiti TO graphiti;
 - `neo4j` — Neo4j Python driver (pulled in by graphiti-core)
 - `fastapi`, `uvicorn` — HTTP server
 - `httpx` — HTTP client
-- `asyncpg` — PG connection for Graphiti's vector store
+- `asyncpg` — PG connection for the pending ingestions queue
 - `omegaconf`, `pyyaml` — config loading
+
+Graphiti does NOT use PostgreSQL — it stores everything (graph + vectors) in Neo4j. The memory service's PG connection is only for its own pending ingestions queue table.
 
 The memory service has its own `pyproject.toml` and does not depend on the `workbench` package. The two are fully independent.
 
@@ -419,11 +432,14 @@ The memory service has its own `pyproject.toml` and does not depend on the `work
 ## What Changes in Existing Code
 
 ### Modified files
-- `init-db.sh` — replace `zep`/`zep` with `graphiti`/`graphiti`
-- `docker-compose.yml` — add `neo4j` and `memory` services
+- `init-db.sh` — replace `zep`/`zep` with `memory`/`memory`
+- `docker-compose.yml` — switch PG image to `postgres:17`, add `neo4j` and `memory` services
 - `config.example.yml` — update `memory:` section to use `HttpMemoryLayer`
 - `docs/CONTEXT.md` — replace all "Zep" references with "memory service" / "Graphiti"
 - `docs/adr/0004-*` — update to reflect Graphiti, not Zep
+
+### Deleted files
+- `docs/specs/2026-05-27-zep-memory-layer-design.md` — superseded by this spec
 
 ### Unchanged files
 - `src/workbench/memory/base.py` — `MemoryLayer` ABC stays exactly the same
@@ -435,9 +451,8 @@ The memory service has its own `pyproject.toml` and does not depend on the `work
 
 ### New files
 - `src/workbench/memory/http.py` — `HttpMemoryLayer`
-- `src/memory/` — entire memory service (7 files)
-- `Dockerfile.memory` — container build for memory service
-- `memory-config.example.yml` — example config for memory service
+- `src/memory/` — entire memory service (package with `pyproject.toml`, 8 source files, Dockerfile, example config)
+- `docs/adr/0009-memory-as-separate-service.md` — ADR for the HTTP service boundary decision
 
 ## Verification
 
