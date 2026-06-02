@@ -32,6 +32,73 @@ def mock_llm():
 
 
 @pytest.mark.asyncio
+async def test_score_and_decide_with_entity_and_relationships(stores, mock_llm):
+    from workbench.pipeline.filter import score_and_decide
+    from workbench.models import EntityKnowledge, Relationship, Fact
+
+    mock_memory = AsyncMock()
+    mock_memory.query_preferences = AsyncMock(return_value=[
+        Fact(content="User prefers auth diffs"),
+    ])
+    mock_memory.query_entity = AsyncMock(return_value=EntityKnowledge(
+        entity_type="github", entity_id="D123_100", facts={"team": "infra", "lang": "python"},
+    ))
+    mock_memory.query_relationships = AsyncMock(return_value=[
+        Relationship(from_entity="alice", to_entity="infra-core", relation="reviews"),
+    ])
+
+    item = ExtractedItem(
+        summary="Review auth PR",
+        category=ItemCategory.ACTION_ITEM,
+        source_context="ctx",
+        raw_item=RawItem(id="D123_100", source_type="github", source_label="D123", raw_text="test"),
+    )
+
+    mock_llm.score_relevance.return_value = (85, 90)
+    action, relevance, confidence = await score_and_decide(
+        mock_llm, mock_memory, stores.filter_rules, item,
+    )
+
+    assert action == "auto_include"
+    # Verify all three queries were called
+    mock_memory.query_preferences.assert_called_once()
+    mock_memory.query_entity.assert_called_once_with("github", "D123_100")
+    mock_memory.query_relationships.assert_called_once_with("github", "D123_100")
+
+    # Verify facts passed to LLM include entity and relationship context
+    call_args = mock_llm.score_relevance.call_args
+    facts_passed = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("preference_facts", [])
+    sources = [f.source for f in facts_passed]
+    assert "entity" in sources
+    assert "relationship" in sources
+    assert len(facts_passed) == 3  # 1 preference + 1 entity + 1 relationship
+
+
+@pytest.mark.asyncio
+async def test_score_and_decide_handles_none_entity(stores, mock_llm):
+    from workbench.pipeline.filter import score_and_decide
+    from workbench.models import Fact
+
+    mock_memory = AsyncMock()
+    mock_memory.query_preferences = AsyncMock(return_value=[])
+    mock_memory.query_entity = AsyncMock(return_value=None)
+    mock_memory.query_relationships = AsyncMock(return_value=[])
+
+    item = ExtractedItem(
+        summary="Some item",
+        category=ItemCategory.ACTION_ITEM,
+        source_context="ctx",
+        raw_item=RawItem(id="E1", source_type="email", source_label="email", raw_text="test"),
+    )
+
+    mock_llm.score_relevance.return_value = (50, 50)
+    action, _, _ = await score_and_decide(
+        mock_llm, mock_memory, stores.filter_rules, item,
+    )
+    assert action == "triage"
+
+
+@pytest.mark.asyncio
 async def test_enqueue_creates_job(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     job = await engine.enqueue("test content", "manual")
