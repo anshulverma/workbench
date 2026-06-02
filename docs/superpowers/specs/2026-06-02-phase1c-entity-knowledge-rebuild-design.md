@@ -2,26 +2,28 @@
 
 ## Context
 
-Phase 1b delivered the memory service with triage interaction recording (structured writes + LLM episode extraction) and preference querying. Four API endpoints return 501 stubs: `record/entity`, `record/decision`, `query/entity`, `query/relationships`. The MemoryLayer ABC already defines methods for all four. Phase 1c fills in these stubs and adds a rebuild mechanism.
+Phase 1b delivered the memory service with triage interaction recording (structured writes + LLM episode extraction) and preference querying. Four API endpoints return 501 stubs: `record/entity`, `record/decision`, `query/entity`, `query/relationships`. The MemoryLayer ABC already defines methods for all four. Phase 1c fills in these stubs, wires callers in the pipeline, and adds a rebuild mechanism.
 
 ## Goals
 
-1. **Entity knowledge** — Record facts about people, repos, teams as graph nodes. Query them to enrich triage context.
+1. **Entity knowledge** — Record facts about people, repos, teams as graph nodes. Query them to enrich triage context and inform noise filter scoring.
 2. **Pipeline decision recording** — Record why the pipeline included/dropped items. Full LLM episode extraction to learn patterns like "pipeline consistently drops CI notifications."
 3. **Relationship querying** — Query the graph for relationships between entities (emergent from episode extraction, not explicitly created).
 4. **Memory rebuild** — CLI script to replay the interaction log from workbench PG into the memory service, reconstructing the graph from scratch.
+5. **Pipeline integration** — Wire entity/relationship queries into both the noise filter and enricher so memory context actually influences scoring and triage cards.
 
 ## Architecture
 
-No new services or databases. Phase 1c extends the existing memory service with new methods on GraphitiMemoryLayer, new endpoints in main.py, and wires HttpMemoryLayer to call them.
+No new services or databases. Phase 1c extends the existing memory service with new methods on GraphitiMemoryLayer, new endpoints in main.py, and wires HttpMemoryLayer to call them. The pipeline gains entity/relationship awareness in both the filter and enrichment stages.
 
 ```
 Workbench Pipeline
   ├─ Enrichment stage ─── POST /record/entity (sync)
+  │                       GET /query/entity (check memory before external calls)
   ├─ Engine ──────────── POST /record/decision (queued, async)
   ├─ Noise filter ────── GET /query/preferences (existing)
-  │                      GET /query/entity
-  │                      GET /query/relationships
+  │                      GET /query/entity (flatten to Fact)
+  │                      GET /query/relationships (flatten to Fact)
   └─ Triage ──────────── POST /record/triage (existing)
 
 Rebuild script ──── reads workbench PG interaction_log
@@ -69,7 +71,15 @@ Implementation: GraphitiMemoryLayer searches Graphiti for a node matching `entit
 
 ### Where workbench calls it
 
-The enrichment stage records entity knowledge as a side effect. When the GitHub enricher fetches PR details and sees the author, it calls `memory.record_entity("person", "alice", {repos: [...], recent_prs: [...]})`. This builds entity knowledge incrementally without a separate ingestion pipeline.
+**Enrichment stage** — The `ContextEnricher.enrich()` signature changes to accept `MemoryLayer`. The enricher:
+1. Checks memory first via `query_entity()` before making external API calls (e.g., if we already know alice's team, skip the `gh` CLI call)
+2. Records new entity knowledge via `record_entity()` as a side effect of enrichment
+
+This requires changing the `ContextEnricher` ABC: `async def enrich(self, item, depth, budget, memory)`. `StubEnricher` ignores the memory parameter. `GitHubEnricher` uses it.
+
+The pipeline engine passes `self.memory` when calling `enrich_item()`.
+
+**Noise filter** — `score_and_decide()` queries `query_entity()` for entities mentioned in the item, flattens results to `Fact(content="alice is tech lead on infra team", source="entity")`, and appends them to the preference_facts list passed to `llm.score_relevance()`. No change to the LLM provider interface.
 
 HttpMemoryLayer wires `record_entity()` → `POST /record/entity` and `query_entity()` → `GET /query/entity`.
 
@@ -108,17 +118,26 @@ Extract facts in the form: "Pipeline [always/never/usually] [includes/drops] [it
 
 ### Queue changes
 
-The `pending_ingestions` table gets a `type` column (`triage` or `decision`). The worker dispatches to the appropriate handler based on type. Existing triage entries default to `type = 'triage'`. Same retry/dead-letter behavior for both types.
+The `pending_ingestions` table `CREATE TABLE IF NOT EXISTS` adds a `type TEXT NOT NULL DEFAULT 'triage'` column. The worker dispatches to the appropriate handler based on type. No ALTER TABLE — users with existing data wipe the memory PG data dir (the memory database is derived and rebuildable).
+
+### HttpMemoryLayer wiring
+
+The MemoryLayer ABC signature is `record_pipeline_decision(item: Item, decision, reason)`. HttpMemoryLayer extracts flat fields from the Item:
+```python
+async def record_pipeline_decision(self, item, decision, reason):
+    await self._client.post("/record/decision", json={
+        "item_summary": item.summary,
+        "decision": decision,
+        "reason": reason,
+        "source_type": item.source_type,
+    })
+```
+
+The ABC signature stays unchanged. The memory service API takes flat fields. Clean separation — the memory service never knows about the Item model.
 
 ### Where workbench calls it
 
-Already called in `engine.py:110,116`:
-```python
-await self.memory.record_pipeline_decision(item, "auto_include", f"relevance={relevance}")
-await self.memory.record_pipeline_decision(item, "auto_drop", f"relevance={relevance}, reason={reason}")
-```
-
-Currently a no-op in HttpMemoryLayer. Phase 1c wires it to `POST /record/decision`.
+Already called in `engine.py:110,116`. Currently a no-op in HttpMemoryLayer. Phase 1c wires it to `POST /record/decision`.
 
 ## Relationship Querying
 
@@ -147,6 +166,10 @@ No explicit "create relationship" endpoint. Relationships are inferred by Graphi
 
 Graphiti handles entity resolution — two mentions of "alice" in different episodes converge to the same node.
 
+### Where workbench calls it
+
+**Noise filter** — `score_and_decide()` queries `query_relationships()` for entities mentioned in the item, flattens results to `Fact(content="alice reviews infra-core repo", source="relationship")`, and appends to the preference_facts list. Same flattening approach as entity knowledge — no LLM provider interface change.
+
 ## Memory Rebuild
 
 ### CLI script: `src/memory/scripts/rebuild.py`
@@ -165,12 +188,20 @@ python -m memory.scripts.rebuild \
 1. Connects to workbench PG, reads `interaction_log` table ordered by timestamp
 2. If `--reset`: calls `POST /admin/reset-graph` on the memory service to wipe Neo4j
 3. For each interaction entry:
-   - Constructs a `TriageRecordRequest` from `triage_card_full` + `option_chosen`
+   - Constructs a `TriageRecordRequest` from `triage_card_full` (full card dict) + `choice_index` (integer)
    - POSTs to `/record/triage`
 4. Polls `GET /admin/queue-depth` between batches to avoid overwhelming the queue
 5. Reports progress to stdout: `Replayed 150/500 interactions, queue depth: 3`
 
 **Not part of the memory service process** — runs as a standalone script with its own PG connection.
+
+### InteractionEntry changes for rebuild support
+
+The interaction log needs two changes to support clean rebuild:
+
+1. **`triage_card_full` stores the full card dict** — Change the triage response handler to store `card.model_dump()` (includes id, options, relevance_score) instead of just `card.card_content`. Existing rows have partial data; the rebuild script handles this gracefully (reconstructs from available fields).
+
+2. **Add `choice_index: int` field** — New integer field storing the numeric choice (1-based index). The triage response handler already knows the index; store it alongside `option_chosen` (the label string). Requires an Alembic migration to add the column to `interaction_log`.
 
 ### Admin endpoints
 
@@ -236,8 +267,8 @@ class QueueDepthResponse(BaseModel):
 | `memory/models.py` | Add EntityRecordRequest, DecisionRecordRequest, EntityResponse, RelationshipsResponse, QueueDepthResponse |
 | `memory/graphiti_layer.py` | Add record_entity(), record_decision(), query_entity(), query_relationships() |
 | `memory/extraction.py` | Add DECISION_EXTRACTION_PROMPT, format_decision_narrative() |
-| `memory/queue.py` | Add `type` column to pending_ingestions, update enqueue/dequeue |
-| `memory/main.py` | Replace 4 stubs with real endpoints, add 2 admin endpoints |
+| `memory/queue.py` | Add `type` column to CREATE TABLE for pending_ingestions |
+| `memory/main.py` | Replace 4 stubs with real endpoints, add 2 admin endpoints, dispatch worker by type |
 | `scripts/rebuild.py` | New CLI rebuild script |
 | `tests/test_graphiti_layer.py` | Add tests for entity/decision/query methods |
 | `tests/test_extraction.py` | Add tests for decision narrative formatting |
@@ -248,13 +279,22 @@ class QueueDepthResponse(BaseModel):
 | File | Change |
 |------|--------|
 | `memory/http.py` | Wire record_entity, record_pipeline_decision, query_entity, query_relationships to HTTP |
+| `providers/enrichment/base.py` | Add `memory: MemoryLayer` parameter to `enrich()` |
+| `providers/enrichment/stub.py` | Accept and ignore memory parameter |
+| `providers/enrichment/github.py` | Check memory before external calls, record entities after |
+| `pipeline/enrichment.py` | Pass memory to enricher |
+| `pipeline/engine.py` | Pass memory to enrich_item() |
+| `pipeline/filter.py` | Query entity/relationships, flatten to Fact, append to scoring context |
+| `models.py` | Add `choice_index: int` to InteractionEntry |
+| `api/triage.py` | Store `card.model_dump()` in triage_card_full, store choice_index |
+| `migrations/` | Alembic migration: add choice_index column to interaction_log |
 | `tests/test_http_memory.py` | Add tests for new HTTP endpoints |
 
 ### Unchanged
 
 - MemoryLayer ABC (`memory/base.py`) — already defines all methods
 - NoopMemoryLayer (`memory/noop.py`) — already has pass/None stubs
-- Pipeline engine (`engine.py`) — already calls record_pipeline_decision
+- LLM provider interface — no signature changes (entity/relationship context flattened to Fact)
 - Config files — no new config sections needed
 
 ## Verification
@@ -265,14 +305,17 @@ Phase 1c is complete when:
 2. Entity recording creates graph nodes queryable via `/query/entity`
 3. Decision recording queues and processes via episode ingestion
 4. Relationship queries return edges connected to entities
-5. Rebuild script replays interaction log and reconstructs the graph
-6. Admin reset-graph wipes Neo4j cleanly
-7. HttpMemoryLayer passes all calls through to the memory service
-8. All existing tests pass (no regressions)
+5. Enricher checks memory before external calls and records entity knowledge
+6. Noise filter uses entity/relationship context for scoring (as flattened Facts)
+7. Rebuild script replays interaction log and reconstructs the graph
+8. Admin reset-graph wipes Neo4j cleanly
+9. HttpMemoryLayer passes all calls through to the memory service
+10. InteractionEntry stores full card dict + choice_index
+11. All existing tests pass (no regressions)
 
 ## Out of Scope
 
-- Triage card context enrichment from memory (Phase 1d)
+- Triage card context enrichment from memory (Phase 1d — specifically, enriching the card content shown to the user with memory insights)
 - Multi-user support
 - Automatic periodic rebuild (manual CLI only)
 - Entity type schemas or validation beyond string types
