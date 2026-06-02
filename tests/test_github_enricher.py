@@ -3,7 +3,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from workbench.providers.enrichment.github import GitHubEnricher
-from workbench.models import ExtractedItem, ItemCategory, RawItem, EnrichmentBudget
+from workbench.models import EntityKnowledge, ExtractedItem, ItemCategory, RawItem, EnrichmentBudget
 
 
 def _make_item(source_type="github", raw_text=None, source_id="gh-pr-owner/repo-42"):
@@ -98,6 +98,84 @@ async def test_enrich_handles_gh_cli_failure(enricher):
     ctx = result["context"]
     # Should still have author from raw_text even if gh view fails
     assert ctx["author"] == "alice"
+
+
+@pytest.fixture
+def mock_memory():
+    m = AsyncMock()
+    m.query_entity = AsyncMock(return_value=None)
+    m.record_entity = AsyncMock()
+    return m
+
+
+@pytest.mark.asyncio
+async def test_enrich_queries_memory_for_author(enricher, mock_memory):
+    item = _make_item()
+    mock_memory.query_entity.return_value = EntityKnowledge(
+        entity_type="person", entity_id="alice", facts={"team": "infra", "role": "tech lead"}
+    )
+    gh_view_output = {
+        "files": [{"path": "auth.py"}],
+        "reviewDecision": "",
+        "labels": [],
+        "statusCheckRollup": [],
+    }
+
+    with patch.object(enricher, "_gh_json", new_callable=AsyncMock, return_value=gh_view_output):
+        result = await enricher.enrich(item, "shallow", EnrichmentBudget(), memory=mock_memory)
+
+    ctx = result["context"]
+    assert ctx["author_team"] == "infra"
+    assert ctx["author_role"] == "tech lead"
+    mock_memory.query_entity.assert_awaited_once_with("person", "alice")
+
+
+@pytest.mark.asyncio
+async def test_enrich_records_entities_in_memory(enricher, mock_memory):
+    item = _make_item()
+    gh_view_output = {
+        "files": [{"path": "auth.py"}],
+        "reviewDecision": "",
+        "labels": [{"name": "security"}],
+        "statusCheckRollup": [],
+    }
+
+    with patch.object(enricher, "_gh_json", new_callable=AsyncMock, return_value=gh_view_output):
+        result = await enricher.enrich(item, "shallow", EnrichmentBudget(), memory=mock_memory)
+
+    # Should record person entity for the author
+    calls = mock_memory.record_entity.await_args_list
+    person_calls = [c for c in calls if c.args[0] == "person"]
+    repo_calls = [c for c in calls if c.args[0] == "repo"]
+
+    assert len(person_calls) == 1
+    assert person_calls[0].args[1] == "alice"
+    assert person_calls[0].args[2]["login"] == "alice"
+
+    assert len(repo_calls) == 1
+    assert repo_calls[0].args[1] == "owner/repo"
+    assert repo_calls[0].args[2]["name"] == "owner/repo"
+    assert repo_calls[0].args[2]["labels"] == "security"
+
+
+@pytest.mark.asyncio
+async def test_enrich_works_without_memory(enricher):
+    """Verify existing behavior is preserved when memory=None."""
+    item = _make_item()
+    gh_view_output = {
+        "files": [{"path": "auth.py"}],
+        "reviewDecision": "APPROVED",
+        "labels": [],
+        "statusCheckRollup": [],
+    }
+
+    with patch.object(enricher, "_gh_json", new_callable=AsyncMock, return_value=gh_view_output):
+        result = await enricher.enrich(item, "shallow", EnrichmentBudget())
+
+    ctx = result["context"]
+    assert ctx["author"] == "alice"
+    assert ctx["files_changed"] == 1
+    assert result["calls_made"] == 1
 
 
 def test_provider_config():

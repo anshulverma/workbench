@@ -23,7 +23,7 @@ class GitHubEnricher(ContextEnricher):
     def __init__(self, config: ProviderConfig = None):
         self.config = config
 
-    async def enrich(self, item: ExtractedItem, depth: str, budget: EnrichmentBudget) -> dict:
+    async def enrich(self, item: ExtractedItem, depth: str, budget: EnrichmentBudget, *, memory=None) -> dict:
         if item.raw_item.source_type != "github":
             return {"calls_made": 0, "time_ms": 0, "context": {}}
 
@@ -42,6 +42,19 @@ class GitHubEnricher(ContextEnricher):
             context["author"] = author.get("login", "unknown")
         elif isinstance(author, str):
             context["author"] = author
+
+        # Query memory for known author context
+        author_login = context.get("author", "unknown")
+        if memory and author_login != "unknown":
+            try:
+                entity = await memory.query_entity("person", author_login)
+                if entity:
+                    if entity.facts.get("team"):
+                        context["author_team"] = entity.facts["team"]
+                    if entity.facts.get("role"):
+                        context["author_role"] = entity.facts["role"]
+            except Exception as e:
+                logger.warning("Memory query_entity failed for %s: %s", author_login, e)
 
         # Determine if this is a PR or issue from the source ID or URL
         source_id = item.raw_item.id
@@ -94,6 +107,25 @@ class GitHubEnricher(ContextEnricher):
                     context["comment_count"] = len(comments)
             except Exception as e:
                 logger.warning("GitHub enrichment failed for %s: %s", source_id, e)
+
+        # After enrichment, record entities in memory
+        if memory and author_login != "unknown":
+            try:
+                author_facts = {"login": author_login}
+                if context.get("author_team"):
+                    author_facts["team"] = context["author_team"]
+                await memory.record_entity("person", author_login, author_facts)
+            except Exception as e:
+                logger.warning("Memory record_entity failed for person %s: %s", author_login, e)
+
+        if memory and repo:
+            try:
+                repo_facts = {"name": repo}
+                if context.get("labels"):
+                    repo_facts["labels"] = context["labels"]
+                await memory.record_entity("repo", repo, repo_facts)
+            except Exception as e:
+                logger.warning("Memory record_entity failed for repo %s: %s", repo, e)
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return {"calls_made": calls_made, "time_ms": elapsed_ms, "context": context}

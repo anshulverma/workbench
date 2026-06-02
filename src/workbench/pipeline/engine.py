@@ -134,7 +134,7 @@ class PipelineEngine:
             )
             await self.stores.items.save_item(item)
 
-            enrichment = await enrich_item(self.enricher, ext_item)
+            enrichment = await enrich_item(self.enricher, ext_item, memory=self.memory)
             card = await generate_card(self.llm, ext_item, enrichment, ext_item.raw_item.source_type)
             card.item_id = item.id
             card.relevance_score = relevance

@@ -11,5 +11,5 @@ class StubEnricher(ContextEnricher):
     def __init__(self, config: ProviderConfig = None):
         self.config = config
 
-    async def enrich(self, item, depth, budget):
+    async def enrich(self, item, depth, budget, *, memory=None):
         return {"calls_made": 0, "time_ms": 0, "context": {}}
