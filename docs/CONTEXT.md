@@ -57,6 +57,15 @@ _Avoid_: "priority hints" (too vague), "metadata" (too generic)
 **Dead Letter**: An ingestion queue entry that has exhausted its retry attempts and permanently failed. Stays in the queue with status `dead_letter` for inspection via `GET /api/queue/dead-letter`. Surfaced in the morning briefing and monitoring dashboard. Not automatically retried or purged — requires manual investigation. Recovery via `POST /api/queue/dead-letter/{id}/retry` (resets to `queued`) or `DELETE /api/queue/dead-letter/{id}` (permanent discard).
 _Avoid_: "failed item" (ambiguous with pipeline failures)
 
+**Connection**: A shared, long-lived handle to an external system (Google APIs, Intern API) that manages authentication and exposes service clients. Declared in the `connections:` config section by name, referenced by adapters and enrichers. Initialized once at startup, injected via two-arg constructor: `cls(config, connection=resolved_connection)`. Connections report health via `is_healthy()` — the scheduler skips adapters whose connection is unhealthy.
+_Avoid_: "client" (ambiguous — could mean HTTP client, API client, or the thin workbench client), "credential" (a connection is more than credentials — it manages lifecycle and health)
+
+**Composite Enricher**: A concrete `ContextEnricher` that routes to source-type-specific enrichers by matching `item.source_type` against a map. Falls back to a default enricher (typically `StubEnricher`) for unmatched types. Constructed from the `enrichment.providers` config list.
+_Avoid_: "enricher chain" (it's routing, not chaining — only one enricher runs per item)
+
+**Entity Ref**: A `(EntityType, entity_id)` tuple identifying an entity referenced in a content item — e.g., `(PERSON, "alice")`, `(REPO, "infra-core")`. Extracted by enrichers and returned in the standardized `entity_refs` field. Used by triage card generation to query entity knowledge and relationships from the memory service. `EntityType` is a fixed enum: `PERSON`, `REPO`, `TEAM`, `SPACE`, `GROUP`.
+_Avoid_: "entity" alone (ambiguous — could mean the stored entity record or the reference)
+
 ### Infrastructure
 
 **Storage Backend**: The pluggable persistence layer behind the repository pattern. PostgreSQL is the default and only backend for Phase 1. A single PostgreSQL instance hosts two databases: `workbench` (application data) and `memory` (memory service queue + entity store), initialized via an `init-db.sh` script mounted into `/docker-entrypoint-initdb.d/`. Schema managed by Alembic migrations, auto-applied via entrypoint script (`alembic upgrade head && exec uvicorn ...`) on every container start.
