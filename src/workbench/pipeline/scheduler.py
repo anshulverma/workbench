@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -28,7 +29,9 @@ class WorkbenchScheduler:
         self.messenger = messenger
         self.config = config
         self.sources = sources or []
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(
+            timezone=ZoneInfo(config.logging.timezone),
+        )
 
     def start(self):
         jobs = [
