@@ -46,6 +46,7 @@ services:
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-workbench}
       MEMORY_PG_DSN: postgres://memory:memory@localhost:5432/memory
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       GRAPHITI_TELEMETRY_ENABLED: "false"
 
   workbench:
