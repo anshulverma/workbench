@@ -19,7 +19,7 @@ Entry point groups:
 | `workbench.llm` | LLM API for extraction, scoring, filtering |
 | `workbench.enrichment` | Entity context gathering |
 | `workbench.doc_reader` | Document content retrieval |
-| `workbench.memory` | Knowledge graph integration (Zep) |
+| `workbench.memory` | Knowledge graph integration (memory service) |
 
 Note: Storage is excluded from the provider pattern — it's a different shape (one backend produces multiple repositories in a `Stores` bundle). Storage keeps its own factory (`create_stores()`).
 

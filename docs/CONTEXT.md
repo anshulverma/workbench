@@ -18,11 +18,15 @@ _Avoid_: "answer", "reaction"
 **Filter Rule**: A natural language pattern matched by the LLM (not regex) to auto-include or auto-drop items. Created explicitly or learned from "never"/"always" triage responses.
 _Avoid_: "filter" alone (ambiguous — could mean the noise filter stage), "rule" alone
 
-**Preference Fact**: A single learned preference extracted by Zep from triage interactions — e.g., "user always prioritizes diffs where reviewers are blocked." Stored in Zep's knowledge graph, queried at scoring time by the noise filter. Replaces the old hand-rolled preference summary.
+**Preference Fact**: A single learned preference extracted by the memory service from triage interactions — e.g., "user always prioritizes diffs where reviewers are blocked." Stored in the memory service's knowledge graph (Graphiti + Neo4j), queried at scoring time by the noise filter. Replaces the old hand-rolled preference summary.
 _Avoid_: "preference" (singular, too vague), "rule" (ambiguous with filter rule — filter rules are explicit and deterministic, preference facts are learned and probabilistic)
 
-**Memory Layer**: A provider (registered in YAML config under `memory:`) for knowledge graph integration. Two implementations: `NoopMemoryLayer` (default) and `ZepMemoryLayer` (production). Records triage interactions, entities, and pipeline decisions; answers preference and relationship queries. Uses the same ProviderConfig + dynamic import pattern as other providers.
+**Memory Layer**: A provider (registered in YAML config under `memory:`) for knowledge graph integration. Two implementations: `NoopMemoryLayer` (default/testing) and `HttpMemoryLayer` (production — thin HTTP client to the memory service). Records triage interactions, entities, and pipeline decisions; answers preference and relationship queries. Uses the same ProviderConfig + dynamic import pattern as other providers.
 _Avoid_: "knowledge base", "brain"
+
+**Fact Ingestion**: The asynchronous process of extracting preference facts from triage interactions. When a user responds to a triage card, the interaction is durably queued in PostgreSQL and processed by an async worker that calls Graphiti's add_episode() with a custom extraction prompt. Two layers: deterministic structured writes (explicit preference/avoids edges) and LLM-based episode extraction (implicit patterns).
+
+**Memory Service**: A standalone FastAPI application (src/memory/) that wraps Graphiti behind a REST API. Workbench talks to it via HttpMemoryLayer. Triage interactions are durably queued in PostgreSQL and processed asynchronously. Neo4j stores the knowledge graph; PostgreSQL (memory database) stores the pending ingestions queue. See ADR 0009.
 
 **Interaction Log**: Append-only record of every triage card shown and the user's response. Source data for preference synthesis. Never pruned.
 _Avoid_: "history", "audit log"
@@ -44,7 +48,7 @@ _Avoid_: "pending list", "backlog"
 **Ingestion Queue**: Durable queue of raw content waiting for pipeline processing, persisted in PostgreSQL (`ingestion_queue` table). Source adapters and `/api/process` enqueue here instead of running the pipeline directly. Items are dedup-checked against the ProcessedStore at enqueue time (manual submissions bypass dedup). Each item gets a lightweight LLM urgency score inline at enqueue time for priority ordering. An in-process async worker (asyncio task with semaphore, default concurrency 2) dequeues items via `SELECT ... FOR UPDATE SKIP LOCKED` ordered by urgency score. Failed items retry with exponential backoff (`2^attempt * base_delay`) up to max_attempts (default 3), then become dead-letter entries. Dead letters are inspectable via `GET /api/queue/dead-letter`, retryable via `POST /api/queue/dead-letter/{id}/retry`, and purgeable via `DELETE /api/queue/dead-letter/{id}`. The queue is an internal mechanism — API clients interact with pipeline jobs, not queue entries.
 _Avoid_: "job queue" (ambiguous with pipeline jobs), "task queue"
 
-**Queue Scorer**: A lightweight LLM call made inline at enqueue time that evaluates raw content + urgency signals to produce a numeric urgency score (0-100). Behind a dedicated `QueueScorer` ABC (separate from `LLMProvider`) — the interface is `async def score_urgency(raw_text, urgency_signals) -> int`. Default implementation uses a cheap model (Haiku) via a `class:` path in `queue.scorer:` config. Determines dequeue ordering only — does not auto-drop items. In Phase 1b+, Zep preference context is injected for learned priority boosting.
+**Queue Scorer**: A lightweight LLM call made inline at enqueue time that evaluates raw content + urgency signals to produce a numeric urgency score (0-100). Behind a dedicated `QueueScorer` ABC (separate from `LLMProvider`) — the interface is `async def score_urgency(raw_text, urgency_signals) -> int`. Default implementation uses a cheap model (Haiku) via a `class:` path in `queue.scorer:` config. Determines dequeue ordering only — does not auto-drop items. In Phase 1b+, memory service preference context is injected for learned priority boosting.
 _Avoid_: "pre-filter" (it doesn't filter), "ranker"
 
 **Urgency Signals**: Structured metadata (`dict[str, Any]`) attached to a RawItem by the source adapter, derived from source-system metadata without LLM calls. Examples: `{"blocking_reviewer": true}`, `{"sender_is_manager": true, "subject_contains_urgent": true}`, `{"priority": "P0"}`. Fed to the queue scorer as context for urgency scoring.
@@ -55,7 +59,7 @@ _Avoid_: "failed item" (ambiguous with pipeline failures)
 
 ### Infrastructure
 
-**Storage Backend**: The pluggable persistence layer behind the repository pattern. PostgreSQL is the default and only backend for Phase 1. A single PostgreSQL instance hosts two databases: `workbench` (application data) and `zep` (knowledge graph), initialized via an `init-db.sh` script mounted into `/docker-entrypoint-initdb.d/`. Schema managed by Alembic migrations, auto-applied via entrypoint script (`alembic upgrade head && exec uvicorn ...`) on every container start.
+**Storage Backend**: The pluggable persistence layer behind the repository pattern. PostgreSQL is the default and only backend for Phase 1. A single PostgreSQL instance hosts two databases: `workbench` (application data) and `memory` (memory service queue), initialized via an `init-db.sh` script mounted into `/docker-entrypoint-initdb.d/`. Schema managed by Alembic migrations, auto-applied via entrypoint script (`alembic upgrade head && exec uvicorn ...`) on every container start.
 _Avoid_: "database" (too specific — the abstraction is the point), "store" alone (ambiguous with repository interfaces)
 
 **Repository**: An interface for a single domain entity (e.g., `ItemStore`, `TriageStore`). Has implementations for each storage backend. The server depends only on the interface.
@@ -98,8 +102,8 @@ _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 - Cards are sent via the configured messenger one at a time; the messenger confirms each response
 - A **Triage Response** updates the linked **Item** (status, priority), creates an **Interaction Log** entry, and may create a **Filter Rule**
 - Skip responses set the **Item** to `archived`
-- The **Interaction Log** is dual-written to the **Memory Layer** (Zep)
-- Zep extracts **Preference Facts** from interactions continuously
+- The **Interaction Log** is dual-written to the **Memory Layer** (memory service)
+- The memory service extracts **Preference Facts** from interactions via **Fact Ingestion**
 - The **Memory Layer** informs the noise filter, enrichment, triage card generation, and queue scoring
 - **Repositories** abstract the **Storage Backend** (PostgreSQL) from all business logic
 - The **Provider Registry** resolves all providers (messenger, LLM, queue_scorer, source, enrichment, doc_reader, memory) from YAML config via dynamic import
@@ -121,15 +125,15 @@ _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 - **Credential encryption** — source adapters reference secrets via env vars or filesystem paths (API keys, certs), not stored in the DB.
 - **Export** — no external doc/wiki export. Dashboard lives in the messenger (morning briefing) and CLI (`/workbench:status`).
 - **Single Messenger** — replaced by pluggable messenger system. The specific messenger is selected via YAML config. Phase 1a interface has `send_triage_card`, `send_notification`, `poll_responses`, `close`.
-- **Preference Summary** (hand-rolled) — replaced by Zep's knowledge graph and automatic fact extraction. See ADR 0004.
-- **SQLite as Phase 1 default** — replaced by PostgreSQL. Zep already requires PostgreSQL in the stack; running SQLite alongside adds complexity for no benefit. See ADR 0006.
+- **Preference Summary** (hand-rolled) — replaced by the memory service's knowledge graph (Graphiti) and automatic fact extraction. See ADR 0004.
+- **SQLite as Phase 1 default** — replaced by PostgreSQL. The memory service already requires PostgreSQL in the stack; running SQLite alongside adds complexity for no benefit. See ADR 0006.
 - **pydantic-settings** — replaced by YAML config with OmegaConf for env var interpolation. All config models are plain `pydantic.BaseModel`, not `BaseSettings`.
 - **Heuristic queue scoring** — replaced by LLM-based queue scoring. Static source-type priority is too blunt; an LLM can weigh contextual urgency signals. See ADR 0007.
 - **POST/DELETE /api/sources** — source creation/deletion is YAML-config-only. API manages runtime state (enable/disable, schedule) via GET and PATCH.
 - **POST /api/reload** — deferred. Config changes require server restart for Phase 1a.
 - **`subprocess.run` for external calls** — replaced by `asyncio.create_subprocess_exec` in all providers to avoid blocking the event loop.
 - **Thread pool executor for pipeline** — unnecessary since all pipeline code is fully async (AsyncAnthropic, asyncpg, async subprocess). Concurrency controlled by asyncio.Semaphore.
-- **Separate PG instances for Workbench and Zep** — consolidated to a single PostgreSQL instance with two databases. See ADR 0006.
+- **Separate PG instances for Workbench and memory service** — consolidated to a single PostgreSQL instance with two databases. See ADR 0006.
 - **`server/` package layout** — replaced by `src/workbench/` for proper Python packaging. Class paths in YAML config use `workbench.providers...` not `server.providers...`. See ADR 0008.
 
 ## Flagged ambiguities
