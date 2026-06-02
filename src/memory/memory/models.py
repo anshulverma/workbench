@@ -27,3 +27,31 @@ class HealthResponse(BaseModel):
 class FactsListResponse(BaseModel):
     facts: list[Fact] = Field(default_factory=list)
     total: int = 0
+
+
+class EntityRecordRequest(BaseModel):
+    entity_type: str
+    entity_id: str
+    facts: dict
+
+
+class DecisionRecordRequest(BaseModel):
+    item_summary: str
+    decision: str  # "auto_include" or "auto_drop"
+    reason: str
+    source_type: str = "unknown"
+
+
+class EntityResponse(BaseModel):
+    entity_type: str
+    entity_id: str
+    facts: dict
+
+
+class RelationshipsResponse(BaseModel):
+    relationships: list[dict]  # [{from_entity, to_entity, relation}]
+
+
+class QueueDepthResponse(BaseModel):
+    depth: int
+    dead_letters: int

@@ -39,3 +39,28 @@ Relevance score: {relevance}
 Options presented:
 {options_text}
 User chose: {choice}. {chosen_label}"""
+
+
+DECISION_EXTRACTION_PROMPT = """You are extracting patterns about pipeline filtering decisions.
+Focus on:
+- What types of items the pipeline consistently includes or drops
+- Source types, topics, or patterns that predict inclusion/exclusion
+- Threshold behaviors (items near the relevance cutoff)
+
+Extract facts in the form: "Pipeline [always/never/usually] [includes/drops] [item pattern] [when condition]"
+"""
+
+
+def format_decision_narrative(
+    item_summary: str,
+    decision: str,
+    reason: str,
+    source_type: str,
+) -> str:
+    now = datetime.now(timezone.utc).isoformat()
+
+    return f"""Pipeline decision at {now}:
+Source type: {source_type}
+Item summary: "{item_summary}"
+Decision: {decision}
+Reason: {reason}"""

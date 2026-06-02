@@ -1,4 +1,9 @@
-from memory.extraction import format_triage_narrative, FACT_INGESTION_PROMPT
+from memory.extraction import (
+    format_triage_narrative,
+    format_decision_narrative,
+    FACT_INGESTION_PROMPT,
+    DECISION_EXTRACTION_PROMPT,
+)
 
 
 def test_format_triage_narrative_add_todo():
@@ -62,3 +67,55 @@ def test_format_triage_narrative_mute():
 
     assert "Never surface emails like this" in narrative
     assert "email" in narrative
+
+
+# --- Decision extraction tests ---
+
+
+def test_decision_extraction_prompt_exists():
+    assert "pipeline filtering decisions" in DECISION_EXTRACTION_PROMPT
+    assert "includes" in DECISION_EXTRACTION_PROMPT
+    assert "drops" in DECISION_EXTRACTION_PROMPT
+    assert "Pipeline" in DECISION_EXTRACTION_PROMPT
+
+
+def test_decision_extraction_prompt_has_patterns():
+    assert "always" in DECISION_EXTRACTION_PROMPT
+    assert "never" in DECISION_EXTRACTION_PROMPT
+    assert "usually" in DECISION_EXTRACTION_PROMPT
+
+
+def test_format_decision_narrative_auto_include():
+    narrative = format_decision_narrative(
+        item_summary="PR #100 rate limiting",
+        decision="auto_include",
+        reason="relevance=85",
+        source_type="github",
+    )
+    assert "PR #100 rate limiting" in narrative
+    assert "auto_include" in narrative
+    assert "relevance=85" in narrative
+    assert "github" in narrative
+
+
+def test_format_decision_narrative_auto_drop():
+    narrative = format_decision_narrative(
+        item_summary="CI bot notification",
+        decision="auto_drop",
+        reason="relevance=10",
+        source_type="github",
+    )
+    assert "CI bot notification" in narrative
+    assert "auto_drop" in narrative
+    assert "relevance=10" in narrative
+
+
+def test_format_decision_narrative_unknown_source():
+    narrative = format_decision_narrative(
+        item_summary="Some item",
+        decision="auto_include",
+        reason="relevance=50",
+        source_type="unknown",
+    )
+    assert "unknown" in narrative
+    assert "Some item" in narrative
