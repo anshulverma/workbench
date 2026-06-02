@@ -83,6 +83,7 @@ class GraphitiMemoryLayer:
             fact=f"User {edge_name} items like: {summary}",
             source_node_uuid=user_node.uuid,
             target_node_uuid=pattern_node.uuid,
+            created_at=datetime.now(timezone.utc),
             attributes=attributes,
             group_id="workbench",
         )
