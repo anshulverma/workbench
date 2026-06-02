@@ -773,6 +773,7 @@ def mock_graphiti():
         nodes=[],
         edges=[MagicMock(fact="User prefers auth diffs", name="prefers")],
     ))
+    g.add_triplet = AsyncMock(return_value=MagicMock(nodes=[], edges=[]))
     g.search = AsyncMock(return_value=[
         MagicMock(fact="User always prioritizes auth diffs", name="prefers"),
     ])
@@ -782,6 +783,70 @@ def mock_graphiti():
 @pytest.fixture
 def layer(mock_graphiti):
     return GraphitiMemoryLayer(graphiti=mock_graphiti)
+
+
+@pytest.mark.asyncio
+async def test_record_triage_creates_structured_preference_edge(layer, mock_graphiti):
+    card = {
+        "id": "c1",
+        "card_content": {"summary": "Fix auth flow", "source_type": "github"},
+        "options": [{"label": "Add todo (P1)", "action": "add_todo", "details": {"priority": "P1"}}],
+        "relevance_score": 45,
+    }
+    response = {"card_id": "c1", "choice": 1}
+
+    await layer.record_triage(card, response)
+
+    # Structured write: add_triplet called for the preference edge
+    mock_graphiti.add_triplet.assert_called_once()
+    call_args = mock_graphiti.add_triplet.call_args
+    source_node = call_args.args[0] if call_args.args else call_args.kwargs["source_node"]
+    edge = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["edge"]
+    target_node = call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs["target_node"]
+    assert source_node.name == "user"
+    assert "prefers" in edge.name
+    assert "Fix auth flow" in target_node.name
+
+
+@pytest.mark.asyncio
+async def test_record_triage_creates_avoids_edge_on_skip(layer, mock_graphiti):
+    card = {
+        "id": "c2",
+        "card_content": {"summary": "CI bot notification", "source_type": "github"},
+        "options": [
+            {"label": "Add todo (P1)", "action": "add_todo", "details": {"priority": "P1"}},
+            {"label": "Skip", "action": "skip"},
+        ],
+        "relevance_score": 20,
+    }
+    response = {"card_id": "c2", "choice": 2}
+
+    await layer.record_triage(card, response)
+
+    call_args = mock_graphiti.add_triplet.call_args
+    edge = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["edge"]
+    assert "avoids" in edge.name
+
+
+@pytest.mark.asyncio
+async def test_record_triage_creates_mute_edge(layer, mock_graphiti):
+    card = {
+        "id": "c3",
+        "card_content": {"summary": "Weekly digest", "source_type": "email"},
+        "options": [
+            {"label": "Skip", "action": "skip"},
+            {"label": "Never surface emails like this", "action": "mute_pattern"},
+        ],
+        "relevance_score": 15,
+    }
+    response = {"card_id": "c3", "choice": 2}
+
+    await layer.record_triage(card, response)
+
+    call_args = mock_graphiti.add_triplet.call_args
+    edge = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["edge"]
+    assert "avoids" in edge.name
+    assert edge.attributes.get("permanent") is True
 
 
 @pytest.mark.asyncio
@@ -797,8 +862,8 @@ async def test_record_triage_calls_add_episode(layer, mock_graphiti):
     await layer.record_triage(card, response)
 
     mock_graphiti.add_episode.assert_called_once()
-    call_kwargs = mock_graphiti.add_episode.call_args
-    assert "Fix auth" in call_kwargs.kwargs.get("episode_body", "") or "Fix auth" in str(call_kwargs)
+    call_kwargs = mock_graphiti.add_episode.call_args.kwargs
+    assert "Fix auth" in call_kwargs["episode_body"]
 
 
 @pytest.mark.asyncio
@@ -848,11 +913,18 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from memory.extraction import FACT_INGESTION_PROMPT, format_triage_narrative
 from memory.models import Fact
 
 logger = logging.getLogger(__name__)
+
+ACTION_TO_EDGE = {
+    "add_todo": "prefers",
+    "skip": "avoids",
+    "mute_pattern": "avoids",
+}
 
 
 class GraphitiMemoryLayer:
@@ -860,9 +932,22 @@ class GraphitiMemoryLayer:
         self.graphiti = graphiti
 
     async def record_triage(self, card: dict, response: dict) -> None:
-        narrative = format_triage_narrative(card, response)
+        content = card.get("card_content", {})
+        summary = content.get("summary", "")
+        source_type = content.get("source_type", "unknown")
         card_id = card.get("id", "unknown")
+        options = card.get("options", [])
+        choice = response.get("choice", 0)
 
+        chosen_option = options[choice - 1] if 1 <= choice <= len(options) else {}
+        action = chosen_option.get("action", "unknown")
+        details = chosen_option.get("details", {})
+
+        # Layer 1: Structured writes (deterministic)
+        await self._create_preference_edge(summary, source_type, action, details)
+
+        # Layer 2: Episode fact ingestion (LLM)
+        narrative = format_triage_narrative(card, response)
         try:
             from graphiti_core.nodes import EpisodeType
             await self.graphiti.add_episode(
@@ -876,6 +961,47 @@ class GraphitiMemoryLayer:
         except Exception as e:
             logger.error("Failed to ingest triage episode: %s", e, exc_info=True)
             raise
+
+    async def _create_preference_edge(
+        self, summary: str, source_type: str, action: str, details: dict
+    ) -> None:
+        from graphiti_core.nodes import EntityNode
+        from graphiti_core.edges import EntityEdge
+
+        edge_name = ACTION_TO_EDGE.get(action, "triaged")
+        attributes = {"action": action, "source_type": source_type}
+        if action == "add_todo":
+            attributes["priority"] = details.get("priority", "P2")
+        if action == "mute_pattern":
+            attributes["permanent"] = True
+
+        user_node = EntityNode(
+            uuid=str(uuid4()),
+            name="user",
+            labels=["User"],
+            group_id="workbench",
+        )
+        pattern_node = EntityNode(
+            uuid=str(uuid4()),
+            name=summary,
+            labels=["Pattern"],
+            attributes={"source_type": source_type},
+            group_id="workbench",
+        )
+        edge = EntityEdge(
+            uuid=str(uuid4()),
+            name=edge_name,
+            fact=f"User {edge_name} items like: {summary}",
+            source_node_uuid=user_node.uuid,
+            target_node_uuid=pattern_node.uuid,
+            attributes=attributes,
+            group_id="workbench",
+        )
+
+        try:
+            await self.graphiti.add_triplet(user_node, edge, pattern_node)
+        except Exception as e:
+            logger.warning("Failed to create structured preference edge: %s", e)
 
     async def query_preferences(self, context: str) -> list[Fact]:
         try:
