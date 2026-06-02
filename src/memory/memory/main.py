@@ -19,8 +19,10 @@ from memory.models import (
     PreferenceQueryResponse,
     TriageRecordRequest,
 )
+from memory.logging import setup_logging
 from memory.queue import PendingIngestionStore
 
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +70,12 @@ async def _run_ingestion_worker(
 async def lifespan(app: FastAPI):
     config = get_config()
     app.state.config = config
+
+    log_cfg = config.logging
+    setup_logging(
+        level=getattr(logging, log_cfg.level.upper(), logging.INFO),
+        timezone=log_cfg.timezone,
+    )
 
     store = PendingIngestionStore(config.storage.postgres_dsn, config.queue.max_attempts)
     await store.initialize()

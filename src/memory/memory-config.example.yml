@@ -32,3 +32,7 @@ queue:
   max_attempts: 3
   base_delay_seconds: 5
   worker_concurrency: 1
+
+logging:
+  level: INFO
+  timezone: America/Los_Angeles

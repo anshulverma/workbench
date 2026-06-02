@@ -43,6 +43,11 @@ class QueueConfig(BaseModel):
     worker_concurrency: int = 1
 
 
+class LoggingConfig(BaseModel):
+    level: str = "INFO"
+    timezone: str = "America/Los_Angeles"
+
+
 class MemoryConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
@@ -50,6 +55,7 @@ class MemoryConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
     queue: QueueConfig = Field(default_factory=QueueConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 
 def load_config(config_path: str, override_path: str | None = None) -> MemoryConfig:
