@@ -31,6 +31,7 @@ class LLMConfig(BaseModel):
 
 class EmbedderConfig(BaseModel):
     embedder_class: str = "memory.embedder.OpenAIEmbedderWrapper"
+    cross_encoder_class: str = ""
     api_key: str = ""
     model: str = "text-embedding-3-small"
     embedding_dim: int = 1536

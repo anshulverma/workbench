@@ -43,23 +43,30 @@ class LocalEmbedder:
                 "Install with: pip install memory-service[local-embedder]"
             ) from None
 
+        from graphiti_core.embedder.client import EmbedderClient
+
         self._model_name = config.model or "all-MiniLM-L6-v2"
         self._model = SentenceTransformer(self._model_name)
         self._dim = config.embedding_dim
 
+        embedder_self = self
+
+        class _Client(EmbedderClient):
+            async def create(self, input_data):
+                if isinstance(input_data, str):
+                    input_data = [input_data]
+                embeddings = embedder_self._model.encode(list(input_data), normalize_embeddings=True)
+                return embeddings[0].tolist()[:embedder_self._dim]
+
+            async def create_batch(self, input_data_list):
+                embeddings = embedder_self._model.encode(input_data_list, normalize_embeddings=True)
+                return [e.tolist()[:embedder_self._dim] for e in embeddings]
+
+        self._client = _Client()
+
     @property
     def client(self):
-        return self
-
-    async def create(self, input_data):
-        if isinstance(input_data, str):
-            input_data = [input_data]
-        embeddings = self._model.encode(list(input_data), normalize_embeddings=True)
-        return embeddings[0].tolist()
-
-    async def create_batch(self, input_data_list):
-        embeddings = self._model.encode(input_data_list, normalize_embeddings=True)
-        return [e.tolist() for e in embeddings]
+        return self._client
 
 
 def create_embedder(config: EmbedderConfig) -> Any:
@@ -80,6 +87,11 @@ def create_embedder(config: EmbedderConfig) -> Any:
 
 
 def create_cross_encoder(config: EmbedderConfig) -> Any:
+    if config.cross_encoder_class:
+        module_path, class_name = config.cross_encoder_class.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        return cls()
     if "Local" in config.embedder_class:
         from graphiti_core.cross_encoder.bge_reranker_client import BGERerankerClient
         return BGERerankerClient()
