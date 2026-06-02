@@ -9,10 +9,10 @@ Personal intelligence feed. Ingests from configurable sources, filters noise ada
 **Item**: A single actionable thing stored in the `items` table — an action item, meeting to schedule, or informational note. One raw input (email, meeting notes) produces multiple independent items via LLM extraction. Created eagerly when the pipeline decides to triage — status starts as `pending_triage`. Status lifecycle: `pending_triage → active` (user accepted or auto-expired), `pending_triage → archived` (user skipped), `active → done`, `active → archived`.
 _Avoid_: "ticket", "entry"
 
-**Triage Card**: A structured, source-type-specific presentation of an item awaiting user decision. Sent via the configured messenger one at a time with numbered options. The user responds by typing a number or clicking a button.
+**Triage Card**: A structured, source-type-specific presentation of an item awaiting user decision. LLM-generated card body explains *why* the item matters using entity knowledge, relationships, and preference facts. Sent via the configured messenger one at a time with numbered options (including a final "Other" option) and a free-text hint. The user responds by typing a number, or by typing free text which is interpreted by the LLM. Status lifecycle: `queued → sent → responded / expired`, with additional states `awaiting_followup` (waiting for free-text after "Other") and `awaiting_confirmation` (waiting for confirmation of destructive action). Cards can be deferred (snoozed) via the `defer` action, setting `deferred_until` — the triage queue skips deferred cards until the snooze expires.
 _Avoid_: "notification" (triage cards are interactive, not just alerts), "message"
 
-**Triage Response**: A user's decision on a triage card (add todo, skip, mute source, etc.). Submitted via messenger reply (primary) or API/CLI.
+**Triage Response**: A user's decision on a triage card. Can be a numbered option selection, "Other" (triggers follow-up), or free text (interpreted by LLM into system actions + user todos). Submitted via messenger reply (primary) or API/CLI.
 _Avoid_: "answer", "reaction"
 
 **Filter Rule**: A natural language pattern matched by the LLM (not regex) to auto-include or auto-drop items. Created explicitly or learned from "never"/"always" triage responses.
@@ -63,8 +63,22 @@ _Avoid_: "client" (ambiguous — could mean HTTP client, API client, or the thin
 **Composite Enricher**: A concrete `ContextEnricher` that routes to source-type-specific enrichers by matching `item.source_type` against a map. Falls back to a default enricher (typically `StubEnricher`) for unmatched types. Constructed from the `enrichment.providers` config list.
 _Avoid_: "enricher chain" (it's routing, not chaining — only one enricher runs per item)
 
-**Entity Ref**: A `(EntityType, entity_id)` tuple identifying an entity referenced in a content item — e.g., `(PERSON, "alice")`, `(REPO, "infra-core")`. Extracted by enrichers and returned in the standardized `entity_refs` field. Used by triage card generation to query entity knowledge and relationships from the memory service. `EntityType` is a fixed enum: `PERSON`, `REPO`, `TEAM`, `SPACE`, `GROUP`.
+**Entity Ref**: A `(EntityType, source_qualified_id)` tuple identifying an entity referenced in a content item — e.g., `(PERSON, "github:alice-gh")`, `(REPO, "github:owner/infra-core")`. Source-qualified IDs use the format `"{source}:{id}"` to support identity resolution across sources. Extracted by enrichers and returned in the standardized `entity_refs` field. Used by triage card generation to query entity knowledge and relationships from the memory service. `EntityType` is a fixed enum: `PERSON`, `REPO`, `TEAM`, `SPACE`, `GROUP`.
 _Avoid_: "entity" alone (ambiguous — could mean the stored entity record or the reference)
+
+**Identity Resolution**: Automatic deduplication of entities across sources. When enrichers record the same real-world entity from different sources (e.g., `github:alice-gh` and `email:alice@meta.com`), the memory service detects the match using signal-tiered identifying attributes and merges facts into a single canonical entity. Lives entirely in the memory service — workbench sends source-qualified IDs and the memory service resolves canonical IDs internally. Backed by the `entity_identities` PG table.
+_Avoid_: "entity matching" (too vague), "dedup" alone (entity resolution includes merge, not just detection)
+
+**Identifying Attribute**: A fact about an entity used for identity resolution. Classified by signal strength: **strong** (email, phone, platform_uid — one match is sufficient for auto-merge), **medium** (name, username — needs 2+ matches), **weak** (first_name, timezone, title — supporting signal only, never sufficient alone). Enrichers include these in entity facts to enable automatic cross-source resolution.
+
+**Canonical Entity**: The merged entity record that accumulates facts from all source-qualified identities that resolve to it. Keyed by `(entity_type, canonical_id)` in the `entities` table. The `canonical_id` is the first-seen source-qualified ID (e.g., `"github:alice-gh"`). All subsequent sources that resolve to the same entity contribute facts to this record.
+_Avoid_: "master record", "primary entity"
+
+**Action Item (User Todo)**: An `Item` with `action_source` set, created from a free-text triage response. Links to the triggering item via `parent_item_id`. Categorized by `action_category` (delegation, communication, scheduling, review, creation, update). In v1, all action items are surfaced as user todos. In v2, an Action Module may execute some automatically.
+_Avoid_: "task" (ambiguous with Meta Tasks source type), "action" alone (too generic)
+
+**Interpreted Response**: The LLM's structured interpretation of a free-text triage reply. Contains `system_actions` (executable now: add_todo, skip, mute_pattern, defer) and `user_todos` (create as action items for the user). Destructive system actions (skip, mute) require user confirmation before execution. All interpreted responses are logged for future model training.
+_Avoid_: "parsed response" (it's LLM interpretation, not parsing)
 
 ### Infrastructure
 
@@ -95,7 +109,7 @@ _Avoid_: "release number", "build number"
 **Enrichment**: Additional context gathered about entities referenced in an item before triage — people (org chart), tasks (parent/subtasks), diffs (test results). Has depth (shallow/deep) and budget controls.
 _Avoid_: "context" alone (too generic), "lookup"
 
-**Morning Briefing**: Daily automated messenger notification summarizing six sections: (1) P0 — Today, (2) P1 — This Week, (3) new items since yesterday by source type, (4) pending triage count + oldest card age, (5) queue health — ingestion queue depth and failed/stuck items (only if non-zero), (6) auto-decisions overnight — cards that expired and were auto-included at P3 (only if non-zero). Sent by the scheduler at a configurable time.
+**Morning Briefing**: Daily automated messenger notification summarizing seven sections: (1) P0 — Today, (2) P1 — This Week, (3) new items since yesterday by source type, (4) pending triage count + oldest card age, (5) queue health — ingestion queue depth and failed/stuck items (only if non-zero), (6) auto-decisions overnight — cards that expired and were auto-included at P3 (only if non-zero), (7) pending actions — user action items grouped by category (only if non-zero). Sent by the scheduler at a configurable time.
 _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 
 ## Relationships

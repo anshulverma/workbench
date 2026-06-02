@@ -1,45 +1,48 @@
-# Phase 1d: Memory-Enriched Triage Cards, Connections, and Source Adapters — Design Spec
+# Phase 1d: Memory-Enriched Triage Cards, Connections, Source Adapters, and Action Items — Design Spec
 
 ## Context
 
 Phase 1c delivered entity knowledge, decision recording, relationship querying, and memory rebuild. The memory service now records entities and pipeline decisions, and the noise filter uses entity/relationship context for scoring. However, triage cards are still template-based — they don't leverage memory context — and only two source adapters exist (GitHub in core, Phabricator in workbench-meta). Content from email, calendar, chat, tasks, workplace, and docs doesn't flow into the system.
 
-Phase 1d fills both gaps with two independent tracks:
+Phase 1d fills these gaps with three independent tracks:
 
 - **Track A** — Source adapters and enrichers for 6 new content sources, built on a shared connection abstraction
-- **Track B** — LLM-generated triage cards that explain *why* an item matters using entity knowledge, relationships, and preference facts
+- **Track B** — LLM-generated triage cards with memory context, identity resolution, free-text responses, and dynamic options
+- **Track C** — Action items system with categorized todo list, surfaced via API, plugin, morning briefing, and React UI
 
 ## Goals
 
 1. **Connections** — First-class config section for shared external system credentials. Adapters and enrichers reference a connection by name instead of managing their own auth.
 2. **Source adapters** — 6 new adapters (3 generic in core, 3 Meta-internal in workbench-meta) so email, calendar, chat, tasks, workplace, and docs flow into the ingestion pipeline.
 3. **Source-specific enrichers** — Each new source type gets a paired enricher that uses the same connection as its adapter. A `CompositeEnricher` routes to the right enricher by source type. All enrichers return a standardized `entity_refs` field.
-4. **Memory-enriched triage cards** — Replace template-based card generation with an LLM call that synthesizes item summary + enrichment context + entity knowledge + relationships + preference facts into a contextual card body with dynamic options.
+4. **Identity resolution** — Automatic entity deduplication across sources using signal-tiered identifying attributes, backed by a PG lookup table in the memory service.
+5. **Memory-enriched triage cards** — Replace template-based card generation with an LLM call that synthesizes item summary + enrichment context + entity knowledge + relationships + preference facts into a contextual card body with dynamic options.
+6. **Free-text triage responses** — Users can type free-text instructions instead of picking a numbered option. An LLM interprets the instruction into system actions and user todos.
+7. **Action items** — User-generated todos from triage responses, linked to parent items, categorized, and surfaced via API, plugin, morning briefing, and a React UI.
 
 ## Architecture
 
-### Two Independent Tracks
+### Three Independent Tracks
 
 ```
-Track A (Sources)                          Track B (Cards)
+Track A (Sources)                Track B (Cards)                  Track C (Actions)
 
-connections:                               Item + Enrichment Context
-├── google (OAuth2)                          + entity_refs from enrichment
-│   ├── GmailAdapter + GmailEnricher         + query_entity() per entity_ref
-│   ├── GCalendarAdapter + GCalEnricher      + query_relationships() per entity_ref
-│   └── GChatAdapter + GChatEnricher         + query_preferences()
-└── meta_intern (Intern API)                      │
-    ├── MetaTasksAdapter + Enricher               ▼
-    ├── WorkplaceAdapter + Enricher        LLM card generation
-    └── MetaDocsAdapter + Enricher         (always LLM, template on failure only)
-         │                                       │
-         ▼                                       ▼
-    RawItem → Ingestion Queue              TriageCard
-                                           (contextual body + dynamic options
-                                            + suggested with fact citation)
+connections:                     Item + Enrichment Context        "add as P3 and assign to bob"
+├── google (OAuth2)                + entity_refs                        │
+│   ├── Gmail + Enricher           + identity resolution                ▼
+│   ├── GCalendar + Enricher       + query_entity (merged)       LLM interprets
+│   └── GChat + Enricher           + query_relationships               │
+└── meta_intern                    + query_preferences           ┌─────┴──────┐
+    ├── MetaTasks + Enricher            │                        │            │
+    ├── Workplace + Enricher            ▼                   System       User todos
+    └── MetaDocs + Enricher      LLM card generation        actions      (new Items)
+         │                       (always LLM)               (execute)         │
+         ▼                             │                                      ▼
+    RawItem → Ingestion Queue          ▼                              Action list UI
+                                 TriageCard                           (React + API +
+                                 + Other / free-text                   briefing + plugin)
+                                 + suggested with fact citation
 ```
-
-Track A produces `RawItem` objects that enter the existing pipeline. Track B consumes `Item` objects that come out of the pipeline. They meet at the ingestion queue — completely decoupled.
 
 ## Connections
 
@@ -358,13 +361,13 @@ Extend the enum when new entity types are needed. Enrichers must use these value
 
 ### Standardized `entity_refs` output
 
-Every enricher returns an `entity_refs` field in its output dict:
+Every enricher returns an `entity_refs` field in its output dict. Entity IDs are source-qualified to support identity resolution:
 
 ```python
 {
     "entity_refs": [
-        (EntityType.PERSON, "alice"),
-        (EntityType.REPO, "infra-core"),
+        (EntityType.PERSON, "github:alice-gh"),
+        (EntityType.REPO, "github:owner/infra-core"),
     ],
     # ...rest of enrichment context
 }
@@ -374,14 +377,37 @@ Entity ref mapping by source type:
 
 | Source type | Entity refs extracted |
 |------------|---------------------|
-| `email` | `(PERSON, sender)`, `(PERSON, each_recipient)` |
-| `github` | `(PERSON, author)`, `(REPO, repo_name)`, `(PERSON, each_reviewer)` |
-| `calendar` | `(PERSON, organizer)`, `(PERSON, each_attendee)` |
-| `gchat_message` | `(PERSON, sender)`, `(SPACE, space_name)` |
-| `task` | `(PERSON, assignee)`, `(PERSON, reporter)` |
-| `workplace` | `(PERSON, author)`, `(GROUP, group_name)` |
-| `doc` | `(PERSON, author)`, `(PERSON, last_editor)` |
-| `diff` | `(PERSON, author)`, `(PERSON, each_reviewer)`, `(REPO, repo_name)` |
+| `email` | `(PERSON, "email:{sender}")`, `(PERSON, "email:{recipient}")` per recipient |
+| `github` | `(PERSON, "github:{author}")`, `(REPO, "github:{repo}")`, `(PERSON, "github:{reviewer}")` per reviewer |
+| `calendar` | `(PERSON, "gcal:{organizer}")`, `(PERSON, "gcal:{attendee}")` per attendee |
+| `gchat_message` | `(PERSON, "gchat:{sender}")`, `(SPACE, "gchat:{space_id}")` |
+| `task` | `(PERSON, "task:{assignee}")`, `(PERSON, "task:{reporter}")` |
+| `workplace` | `(PERSON, "wp:{author}")`, `(GROUP, "wp:{group_id}")` |
+| `doc` | `(PERSON, "doc:{author}")`, `(PERSON, "doc:{last_editor}")` |
+| `diff` | `(PERSON, "diff:{author}")`, `(PERSON, "diff:{reviewer}")` per reviewer, `(REPO, "diff:{repo}")` |
+
+### Enricher identifying attributes
+
+Each enricher extracts identifying attributes as part of entity facts. These are used by the identity resolution system to automatically merge entities across sources:
+
+| Fact key | Signal tier | Description |
+|----------|------------|-------------|
+| `email` | Strong (auto-merge on single match) | Email address |
+| `phone` | Strong | Phone number |
+| `platform_uid` | Strong | Platform-unique ID (PHID, GitHub user ID) |
+| `name` | Medium (needs 2+ medium matches) | Display name / full name |
+| `username` | Medium | Platform username |
+| `first_name` | Weak (supporting only) | First name |
+| `timezone` | Weak | Timezone |
+| `title` | Weak | Job title |
+
+Enrichers include these in the facts dict when available:
+```python
+await memory.record_entity(
+    EntityType.PERSON, "github:alice-gh",
+    {"email": "alice@meta.com", "name": "Alice Smith", "team": "infra", "platform_uid": "gh:12345"}
+)
+```
 
 ### CompositeEnricher
 
@@ -389,14 +415,25 @@ New enricher in `workbench/providers/enrichment/composite.py` that routes to the
 
 ```python
 class CompositeEnricher(ContextEnricher):
-    def __init__(self, enrichers: dict[str, ContextEnricher], default: ContextEnricher | None = None):
+    def __init__(self, enrichers: dict[str, ContextEnricher], default: ContextEnricher | None = None,
+                 budgets: dict[str, EnrichmentBudget] | None = None):
         self.enrichers = enrichers
         self.default = default or StubEnricher()
+        self.budgets = budgets or {}
 
     async def enrich(self, item, depth, budget, memory):
         enricher = self.enrichers.get(item.source_type, self.default)
-        return await enricher.enrich(item, depth, budget, memory)
+        effective_budget = self.budgets.get(item.source_type, budget)
+        return await enricher.enrich(item, depth, effective_budget, memory=memory)
 ```
+
+Constructed by a dedicated `create_composite_enricher(config, connections)` function in `registry.py` — not the generic `create_provider()`. This function:
+1. Iterates over `config.enrichment.providers`
+2. Pops `source_types`, `connection`, `budget` from each entry before building ProviderConfig
+3. Creates each enricher with connection injection
+4. Builds the `{source_type: enricher}` mapping and `{source_type: budget}` mapping
+5. Resolves the default enricher from `config.enrichment.default` (a class path, not a magic string)
+6. Constructs and returns `CompositeEnricher(mapping, default, budgets)`
 
 ### Enrichment Config
 
@@ -410,15 +447,20 @@ enrichment:
     - class: workbench.providers.enrichment.gmail.GmailEnricher
       connection: google
       source_types: ["email"]
+      budget:
+        max_api_calls: 8
+        max_seconds: 20
     - class: workbench.providers.enrichment.github.GitHubEnricher
       source_types: ["github"]
+      # uses global default budget: max_api_calls=3, max_seconds=10
     - class: workbench.providers.enrichment.gcalendar.GCalendarEnricher
       connection: google
       source_types: ["calendar"]
     - class: workbench.providers.enrichment.gchat.GChatEnricher
       connection: google
       source_types: ["gchat_message"]
-  default: stub
+  default:
+    class: workbench.providers.enrichment.stub.StubEnricher
 ```
 
 In `config.py`:
@@ -426,10 +468,8 @@ In `config.py`:
 ```python
 class EnrichmentConfig(BaseModel):
     providers: list[dict] = []
-    default: str = "stub"
+    default: dict = Field(default_factory=lambda: {"class": "workbench.providers.enrichment.stub.StubEnricher"})
 ```
-
-The pipeline engine constructs a `CompositeEnricher` from the list, mapping each provider's `source_types` to the enricher instance. The `default` field selects the fallback enricher for unmatched source types.
 
 ### Enricher Details
 
@@ -449,9 +489,113 @@ Each enricher follows the `ContextEnricher` ABC: `async def enrich(self, item, d
 
 Per Phase 1c design, enrichers now accept a `memory: MemoryLayer` parameter. Source-specific enrichers:
 1. Query `memory.query_entity()` for known context about referenced entities (authors, repos, teams) before making external calls
-2. Record `memory.record_entity()` with newly discovered facts after enrichment
+2. Record `memory.record_entity()` with newly discovered facts after enrichment — including identifying attributes for identity resolution
 
 This applies to all new enrichers, not just GitHubEnricher.
+
+## Identity Resolution
+
+### Overview
+
+Automatic entity deduplication across sources. When `GmailEnricher` records `(PERSON, "email:alice@meta.com")` and `GitHubEnricher` records `(PERSON, "github:alice-gh")`, the system detects they're the same person (matching email address) and merges their facts into a single canonical entity.
+
+Identity resolution lives in the **memory service** — the workbench side just sends source-qualified IDs and facts. The memory service handles resolution, merging, and canonical ID management internally.
+
+### Schema
+
+New table in the memory database:
+
+```sql
+CREATE TABLE entity_identities (
+    entity_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    canonical_id TEXT NOT NULL,
+    resolved_by TEXT NOT NULL,       -- "heuristic", "llm", "manual"
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entity_type, source_id)
+);
+CREATE INDEX idx_entity_identities_canonical ON entity_identities(entity_type, canonical_id);
+```
+
+The existing `entities` table is keyed by `(entity_type, entity_id)` where `entity_id` = `canonical_id`.
+
+### Resolution algorithm
+
+When `POST /record/entity` receives `(PERSON, "github:alice-gh", {email: "alice@meta.com", name: "Alice Smith", team: "infra"})`:
+
+1. **Check identity table** for `(PERSON, "github:alice-gh")` → if found, use existing `canonical_id`, skip to step 3
+
+2. **Search for matches** using identifying attributes with signal-tiered scoring:
+
+   ```
+   score = 0
+   For each fact in the new entity:
+     Search existing entities for matching fact values:
+       strong match (email, phone, platform_uid): +10 points each
+       medium match (name, username): +5 points each
+       weak match (first_name, timezone, title): +1 point each
+
+   if score >= 10 → auto-merge (one strong, or two medium)
+   ```
+
+   - **Match found** → use that entity's `canonical_id`, insert identity mapping `(PERSON, "github:alice-gh") → canonical_id`
+   - **No match** → new `canonical_id` = `"github:alice-gh"` (first-seen source_id), insert identity mapping
+
+3. **UPSERT facts** into `entities` table under `(PERSON, canonical_id)` via JSONB `||` merge
+
+4. **Update Neo4j graph** — create/update node under the canonical identity
+
+### Query path
+
+```python
+async def query_entity(self, entity_type, source_id):
+    canonical = await self._resolve_canonical(entity_type, source_id)
+    return await self._fetch_entity(entity_type, canonical or source_id)
+```
+
+`query_entity(PERSON, "email:alice@meta.com")` resolves through the identity table to the canonical entity and returns all merged facts from all sources.
+
+### Late discovery merge
+
+When a new identifying attribute is discovered that links two previously separate canonical entities (e.g., you learn on day 5 that `github:alice-gh` has email `alice@meta.com`, matching an existing `email:alice@meta.com` canonical entity):
+
+1. Pick one canonical ID as the survivor (the one with more facts)
+2. Repoint all `entity_identities` rows from the absorbed canonical to the survivor
+3. Merge facts from the absorbed entity into the survivor via JSONB `||`
+4. Merge Neo4j graph nodes
+5. Delete the absorbed entity row from the `entities` table
+
+### Manual override
+
+Two admin endpoints for correcting wrong merges:
+
+- `POST /admin/merge-entities` — manually merge two entities. Same process as late discovery merge.
+- `POST /admin/split-entity` — split a source_id out of a canonical entity into its own canonical entity. Creates a new entity with only the facts from that source, repoints the identity mapping.
+
+Both operations update the identity table, entities table, and Neo4j graph atomically.
+
+### Example lifecycle
+
+```
+Day 1: GitHub PR from alice-gh
+  record_entity(PERSON, "github:alice-gh", {email: "alice@meta.com", name: "Alice Smith", team: "infra"})
+  → no existing match → canonical_id = "github:alice-gh"
+  → identity: (PERSON, "github:alice-gh") → "github:alice-gh"
+  → entities: (PERSON, "github:alice-gh") = {email, name, team}
+
+Day 2: Email from alice@meta.com
+  record_entity(PERSON, "email:alice@meta.com", {email: "alice@meta.com", name: "Alice Smith"})
+  → search: PERSON with email="alice@meta.com"? Yes → canonical_id = "github:alice-gh"
+  → identity: (PERSON, "email:alice@meta.com") → "github:alice-gh"
+  → entities: facts merged (team preserved from day 1)
+
+Day 3: Phabricator diff from alice
+  record_entity(PERSON, "diff:alice", {name: "Alice Smith", reviews: ["infra-core"]})
+  → search: PERSON with name="Alice Smith"? Yes, score=5 (medium). Need 10. Not enough alone.
+  → BUT if alice has username="alice" matching... depends on available facts.
+  → If no auto-merge: new canonical_id = "diff:alice", separate entity
+  → If later alice's PHID is discovered matching: late discovery merge kicks in
+```
 
 ## Track B: Memory-Enriched Triage Cards
 
@@ -467,7 +611,7 @@ This applies to all new enrichers, not just GitHubEnricher.
 `generate_card()` gains a `memory: MemoryLayer` parameter. The flow:
 
 1. **Extract entity references** from the enrichment context's `entity_refs` field
-2. **Query memory** for each referenced entity in parallel:
+2. **Query memory** for each referenced entity in parallel (entity IDs resolve through identity table to canonical entities):
 
 ```python
 entity_ids = enrichment_context.get("entity_refs", [])
@@ -519,11 +663,11 @@ Generate a JSON response with:
 2. "options": A list of 3-5 triage options, each with:
    - "label": Short action phrase
    - "action": One of "add_todo", "skip", "mute_pattern", "defer"
-   - "details": Optional context (e.g., priority level for add_todo, snooze duration for defer)
+   - "details": Optional context (e.g., priority level for add_todo, snooze hours for defer)
    - "suggested_fact_index": Integer index into the preference_facts list that justifies suggesting this option, or null if no fact supports a suggestion
 ```
 
-The LLM returns structured JSON via tool use.
+The LLM returns structured JSON via tool use with `action` constrained to an enum of `["add_todo", "skip", "mute_pattern", "defer"]`. If the LLM returns invalid JSON or fails schema validation, retry up to 2 times. If all retries fail, fall back to template options.
 
 ### Suggestion Validation
 
@@ -539,46 +683,166 @@ This ensures suggestions are always grounded in a real preference fact. The LLM 
 
 LLM-generated option dicts are converted to `TriageOption` objects and stored in `card.options` (the model field). The `card_content` stores the full LLM response including the card body, but the canonical options list is always `card.options: list[TriageOption]`.
 
-`TriageOption` gains two new fields:
+`TriageOption` gains new fields:
 
 ```python
 class TriageOption(BaseModel):
     label: str
     action: str
-    details: str = ""
+    details: dict = Field(default_factory=dict)
     suggested: bool = False
     suggestion_reason: str | None = None
 ```
 
+An **"Other"** option is always appended as the last option after LLM generation:
+```python
+TriageOption(label="Other — tell me what you'd like to do", action="other")
+```
+
 This means:
-- Response handling code is unchanged — always reads `card.options[i].action`
+- Response handling code always reads `card.options[i].action` — no dual-path handling
 - `format_card_for_chat()` reads `card.card_content["card_body"]` for the body and `card.options` for the list
-- One source of truth for options, no dual-path handling
+- One source of truth for options
 
 ### Defer Action (Snooze)
 
 A new triage action `defer` puts the card back in the queue with a delay. Implementation:
 
 - Add `deferred_until: datetime | None` column to the `triage_cards` table (Alembic migration)
-- When the user selects `defer`, set `deferred_until` to now + snooze duration (default 4 hours, configurable via option `details`)
+- When the user selects `defer`, set `deferred_until` to now + snooze duration (from `option.details.get("hours", 4)`)
 - The triage queue skips cards where `deferred_until > now()`
 - When the snooze expires, the card re-enters the queue at its original relevance score
 - Item remains in `pending_triage` status throughout
+- Deferred cards pause their expiry clock (expiry is not checked while `deferred_until > now()`)
+
+### Free-Text Triage Responses
+
+Users can respond to triage cards in two ways beyond numbered options:
+
+1. **Pick "Other"** (the last numbered option) → system replies "What would you like to do?" → card enters `awaiting_followup` status → next message is interpreted by LLM
+2. **Type free text directly** (instead of a number) → interpreted by LLM immediately, no extra round-trip
+
+Both paths route to the same LLM interpreter.
+
+**Card status lifecycle (updated):**
+
+```
+queued → sent → responded / expired
+                 ↘ awaiting_followup → responded / expired
+```
+
+**Card rendering includes a free-text hint:**
+
+```
+1. Add todo P1 (suggested: you usually prioritize alice's PRs)
+2. Add todo P2
+3. Skip
+4. Defer (snooze 4h)
+5. Other — tell me what you'd like to do
+Or just reply with what you'd like to do.
+```
+
+**Response handler logic:**
+
+```python
+if card.status == "awaiting_followup":
+    interpreted = await llm.interpret_triage_response(card, message_text)
+    await execute_interpreted_response(interpreted, card, stores)
+
+elif message_text.strip().isdigit():
+    choice = int(message_text.strip())
+    option = card.options[choice - 1]
+    if option.action == "other":
+        card.status = "awaiting_followup"
+        await stores.triage.save_card(card)
+        await messenger.send_notification("What would you like to do?")
+        return
+    await execute_option(option, card, stores)
+
+else:
+    interpreted = await llm.interpret_triage_response(card, message_text)
+    await execute_interpreted_response(interpreted, card, stores)
+```
+
+### Interpret Triage Response
+
+New `LLMProvider` method: `interpret_triage_response(card: TriageCard, raw_text: str) -> InterpretedResponse`
+
+```python
+class SystemAction(BaseModel):
+    action: str          # constrained to "add_todo", "skip", "mute_pattern", "defer"
+    details: dict = {}
+
+class UserTodo(BaseModel):
+    summary: str
+    action_category: str  # "delegation", "communication", "scheduling", "review", "creation", "update"
+
+class InterpretedResponse(BaseModel):
+    system_actions: list[SystemAction]
+    user_todos: list[UserTodo]
+    explanation: str     # what the LLM understood
+```
+
+Example: "add as P3 and assign to bob" →
+```json
+{
+  "system_actions": [{"action": "add_todo", "details": {"priority": "P3"}}],
+  "user_todos": [{"summary": "Assign task to bob", "action_category": "delegation"}],
+  "explanation": "Adding as P3 todo. Created an action item to assign to bob."
+}
+```
+
+**Confirmation flow:**
+- Additive actions (`add_todo`, `defer`, user todos) → execute immediately, show explanation
+- Destructive actions (`skip`, `mute_pattern`) → show confirmation: "I understood: Skip this item and mute similar items. Reply 'yes' to confirm." Card enters `awaiting_confirmation` status.
+
+**Executing user todos:** Each `UserTodo` creates a new `Item`:
+```python
+Item(
+    summary=todo.summary,
+    category="action_item",
+    status="active",
+    priority="P2",
+    parent_item_id=card.item_id,
+    action_source="triage_response",
+    action_category=todo.action_category,
+)
+```
+
+### Interaction Logging for Training
+
+All interpreted responses are logged for future model training (v2):
+
+```python
+InteractionEntry(
+    type="interpreted_response",
+    raw_text="add as P3 and assign to bob",
+    interpreted={
+        "system_actions": [...],
+        "user_todos": [...],
+    },
+    confirmed=True,
+    card_id="...",
+    item_id="...",
+)
+```
+
+This provides a clean training dataset: `(raw_text, card_context) → (actions, todos)`.
 
 ### Fallback Behavior
 
-Card generation always attempts the LLM call. If the LLM call fails (timeout, API error, malformed response):
-- Fall back to the existing template behavior (static card body + hardcoded options)
+Card generation always attempts the LLM call. If the LLM call fails (timeout, API error, all retries exhausted):
+- Fall back to the existing template behavior (static card body + hardcoded options + "Other" option)
 - Log the error
 - The card is still created and queued — just without memory context or LLM-generated body
 
 ### Cost
 
-One additional LLM call per triaged item. Auto-included and auto-dropped items don't get cards. The call uses the same model as extraction and scoring — no new provider needed. For a typical day with 10-20 triaged items, this adds 10-20 LLM calls.
+One additional LLM call per triaged item for card generation. One LLM call per free-text response for interpretation. Auto-included and auto-dropped items don't get cards. For a typical day with 10-20 triaged items, this adds 10-20 card generation calls plus occasional interpretation calls.
 
 ### Changes to format_card_for_chat()
 
-With LLM-generated cards, the card body is pre-formatted. `format_card_for_chat()` reads the card body from `card_content["card_body"]` and options from `card.options`:
+`format_card_for_chat()` reads the card body from `card_content["card_body"]` and options from `card.options`:
 
 ```python
 def format_card_for_chat(card: TriageCard) -> str:
@@ -587,10 +851,115 @@ def format_card_for_chat(card: TriageCard) -> str:
     for i, opt in enumerate(card.options, 1):
         suggested = f" _(suggested: {opt.suggestion_reason})_" if opt.suggested else ""
         lines.append(f"{i}. {opt.label}{suggested}")
+    lines.append("")
+    lines.append("_Or just reply with what you'd like to do._")
     return "\n".join(lines)
 ```
 
 Always reads from `card.options` (TriageOption objects) — no dual-path handling.
+
+## Track C: Action Items
+
+### Data Model
+
+User-generated action items from triage responses are `Item` objects with additional fields:
+
+```python
+class Item(BaseModel):
+    # ... existing fields ...
+    parent_item_id: str | None = None       # links to the triggering item
+    action_source: str | None = None        # "triage_response", "pipeline", "manual"
+    action_category: str | None = None      # "delegation", "communication", "scheduling", "review", "creation", "update"
+```
+
+**Action categories:**
+
+| Category | Examples |
+|----------|---------|
+| `delegation` | "Assign to bob", "Ask alice to review" |
+| `communication` | "Forward to alice", "Reply to thread" |
+| `scheduling` | "Schedule follow-up", "Block 30min for this" |
+| `review` | "Review by Friday", "Read the RFC" |
+| `creation` | "Create task for this", "File a bug" |
+| `update` | "Update the doc", "Fix the config" |
+
+### API Endpoint
+
+`GET /api/actions` — returns active action items grouped by category:
+
+```json
+{
+  "categories": {
+    "delegation": [
+      {
+        "id": "...",
+        "summary": "Assign task to bob",
+        "priority": "P2",
+        "parent_item": {"id": "...", "summary": "PR #200 rate limiting"},
+        "action_source": "triage_response",
+        "created_at": "2026-06-02T10:00:00Z"
+      }
+    ],
+    "review": [...],
+    "communication": [...]
+  },
+  "total": 12
+}
+```
+
+Supports query params: `?status=active`, `?priority=P1`, `?category=delegation`.
+
+`POST /api/actions/{id}/done` — marks an action item as done.
+
+`POST /api/actions/{id}/priority` — changes priority. Body: `{"priority": "P1"}`.
+
+`POST /api/actions/{id}/snooze` — snoozes an action item. Body: `{"hours": 4}`.
+
+### Plugin Command
+
+`/workbench:actions` — renders the categorized list in the CLI. Calls the API endpoint.
+
+### Morning Briefing
+
+Add a "Pending actions" section to the daily morning briefing, after the existing P0/P1/P2 sections:
+
+```
+Pending actions (5)
+  Delegation (2):
+    - Assign task to bob — from PR #200 rate limiting
+    - Ask alice to review — from infra-core doc update
+  Review (2):
+    - Review by Friday — from compliance audit
+    - Read the RFC — from storage migration proposal
+  Communication (1):
+    - Reply to thread — from incident #456 discussion
+```
+
+### React UI
+
+A simple single-page app served by the FastAPI server at `/ui/actions`.
+
+**Stack:** Vite + React, built as static assets, served by FastAPI's `StaticFiles`. Multi-stage Docker build: Node stage builds React, Python stage copies built assets. During dev, Vite dev server proxies API calls to FastAPI.
+
+**Location:** `ui/` directory at project root.
+
+**Features:**
+- Categorized list with collapsible sections
+- Each item shows: summary, priority badge, parent item link, age
+- Actions per item: "Mark done", "Change priority", "Snooze"
+- Filter bar: by category, priority, action source
+- Responsive — works on mobile for quick checks
+
+**No state management library** — React hooks + fetch are sufficient for a single-page categorized list.
+
+### v2 Hook: Action Module
+
+In v2, user todos will go to an action queue instead of directly creating Items. An Action Module will:
+- Pick up items from the action queue
+- Execute automatable actions (assign tasks, send messages, create calendar events) on behalf of the user
+- Surface non-automatable actions as user todos (same as v1)
+
+The `action_source` field on Items and the `InterpretedResponse` logging provide the data model and training data for this transition. The v1 architecture doesn't need to change — the Action Module is an additional consumer of the same data.
 
 ## File Changes
 
@@ -607,26 +976,36 @@ Always reads from `card.options` (TriageOption objects) — no dual-path handlin
 | `providers/enrichment/gmail.py` | `GmailEnricher` — full thread, sender info, attachment content |
 | `providers/enrichment/gcalendar.py` | `GCalendarEnricher` — attendees, linked docs |
 | `providers/enrichment/gchat.py` | `GChatEnricher` — thread context, space metadata |
-| `providers/enrichment/composite.py` | `CompositeEnricher` — routes by source_type |
-| `models.py` | `EntityType` enum |
+| `providers/enrichment/composite.py` | `CompositeEnricher` — routes by source_type with per-enricher budgets |
+| `api/actions.py` | Action items API endpoints |
+| `ui/` | React app (Vite + React, static assets served by FastAPI) |
 
 ### Core `workbench/` — Modified Files
 
 | File | Change |
 |------|--------|
+| `models.py` | Add `EntityType` enum; add `suggested`, `suggestion_reason` to `TriageOption`; add `deferred_until` to `TriageCard`; add `parent_item_id`, `action_source`, `action_category` to `Item`; add `awaiting_followup` and `awaiting_confirmation` to card status; add `InterpretedResponse`, `SystemAction`, `UserTodo` models |
 | `config.py` | Add `connections:` section, new `EnrichmentConfig` model (breaking change from `dict \| None`), bump config version to `0.2.0` |
-| `main.py` | Initialize connections at startup, pass to provider registry with two-arg constructor, close on shutdown |
-| `registry.py` | Support two-arg constructor: `cls(config, connection=resolved_connection)` when config has `connection:` field |
-| `pipeline/triage.py` | `generate_card()` accepts `memory`, extracts entity_refs, gathers memory context, passes to LLM; always LLM, template on failure only; simplify `format_card_for_chat()` |
+| `main.py` | Initialize connections at startup, pass to provider registry with two-arg constructor, use `create_composite_enricher`, serve static UI assets, close on shutdown |
+| `registry.py` | Support two-arg constructor for connection injection; add `create_composite_enricher()` function that pops `source_types`/`connection`/`budget` and builds CompositeEnricher |
+| `pipeline/triage.py` | `generate_card()` accepts `memory`, extracts entity_refs, gathers memory context (resolved through identity), passes to LLM; always append "Other" option; always LLM, template on failure only; simplify `format_card_for_chat()` with free-text hint |
 | `pipeline/engine.py` | Pass `self.memory` to `generate_card()` |
-| `providers/llm/base.py` | Add `memory_context: dict \| None = None` parameter to `generate_triage_card()` |
-| `providers/llm/anthropic.py` | LLM card generation prompt with indexed preference facts; suggestion validation; template fallback on LLM failure only |
+| `providers/llm/base.py` | Add `memory_context: dict \| None = None` to `generate_triage_card()`; add `interpret_triage_response()` method |
+| `providers/llm/anthropic.py` | LLM card generation prompt with indexed preference facts and tool use enum constraint; suggestion validation; `interpret_triage_response()` with InterpretedResponse schema; template fallback on LLM failure only |
 | `providers/enrichment/base.py` | Document that enrichers receive connections via two-arg constructor; document `entity_refs` output requirement |
-| `models.py` | Add `suggested: bool = False` and `suggestion_reason: str \| None = None` to `TriageOption`; add `deferred_until: datetime \| None` to `TriageCard` |
 | `config.example.yml` | Add `connections:` section, Gmail/Calendar/GChat source examples, new enrichment provider list format |
-| `pipeline/scheduler.py` | Error isolation per adapter (try/except around each `source.poll()`), check `connection.is_healthy()` before polling |
-| `migrations/` | Alembic migration: add `deferred_until` column to `triage_cards` table |
-| `api/triage.py` or `pipeline/scheduler.py` | Triage queue skips cards where `deferred_until > now()` |
+| `pipeline/scheduler.py` | Error isolation per adapter (try/except around each `source.poll()`); check `connection.is_healthy()` before polling; triage queue skips cards with `deferred_until > now()`; skip expiry check for deferred cards; add "Pending actions" section to morning briefing |
+| `api/triage.py` | Add `defer` action handler; add `other` action handler (set `awaiting_followup`); handle `awaiting_followup` and `awaiting_confirmation` states; execute `InterpretedResponse` (system actions + user todos); confirmation flow for destructive actions; log interpreted responses |
+| `migrations/` | Alembic migration: add `deferred_until` to `triage_cards`; add `parent_item_id`, `action_source`, `action_category` to `items` |
+
+### Memory service (`src/memory/`) — Modified Files
+
+| File | Change |
+|------|--------|
+| `queue.py` | Add `entity_identities` table creation in `initialize()` |
+| `graphiti_layer.py` | Identity resolution in `record_entity()`: check identity table, score identifying attributes, auto-merge or create new canonical; late discovery merge logic; update `query_entity()` to resolve through identity table |
+| `main.py` | Add `POST /admin/merge-entities` and `POST /admin/split-entity` endpoints |
+| `models.py` | Add signal tier constants for identifying attributes |
 
 ### `workbench-meta/` — New Files
 
@@ -646,7 +1025,7 @@ Always reads from `card.options` (TriageOption objects) — no dual-path handlin
 | File | Change |
 |------|--------|
 | config files | Add `connections:` section, Meta-internal source and enricher entries, full enricher provider list (core + meta) |
-| `providers/llm/meta_anthropic.py` | Inherits LLM card generation from parent — no changes needed |
+| `providers/llm/meta_anthropic.py` | Inherits LLM card generation and interpret_triage_response from parent — no changes needed |
 
 ### Tests
 
@@ -656,26 +1035,13 @@ Always reads from `card.options` (TriageOption objects) — no dual-path handlin
 | `tests/test_gmail_adapter.py` | Poll with label filters, MIME extraction, attachment metadata, RawItem construction, dedup |
 | `tests/test_gcalendar_adapter.py` | Poll with lookahead, meaningful-field hash dedup, recurring event signals |
 | `tests/test_gchat_adapter.py` | Thread subscription lifecycle (enter/exit/re-enter), track modes, bot message filtering |
-| `tests/test_composite_enricher.py` | Routing by source_type, default fallback |
-| `tests/test_entity_refs.py` | Each enricher returns correct entity_refs with EntityType enum values |
+| `tests/test_composite_enricher.py` | Routing by source_type, per-enricher budgets, default fallback |
+| `tests/test_entity_refs.py` | Each enricher returns correct entity_refs with EntityType enum values and source-qualified IDs |
+| `tests/test_identity_resolution.py` | Signal-tiered matching, auto-merge on strong match, no merge on weak-only, late discovery merge, manual merge/split |
 | `tests/test_triage_card_enrichment.py` | LLM card generation with/without memory context, suggestion validation (valid index, invalid index, null), template fallback on LLM failure, defer action |
-| `tests/test_registry_connection.py` | Two-arg constructor injection, single-arg backward compatibility |
-
-### ABC Changes
-
-- **New ABC:** `Connection` with `initialize()`, `close()`, `is_healthy()`
-- **New enum:** `EntityType` with `PERSON`, `REPO`, `TEAM`, `SPACE`, `GROUP`
-- **Modified:** `LLMProvider.generate_triage_card()` — add optional `memory_context: dict | None = None`
-- **Modified:** `TriageOption` — add `suggested: bool = False`, `suggestion_reason: str | None = None`
-- **Modified:** `TriageCard` — add `deferred_until: datetime | None = None`
-- **New class:** `CompositeEnricher` (concrete, not ABC) wrapping multiple enrichers
-
-### Config Schema Changes
-
-- **New section:** `connections:` — dict of named connections, each with `class:` and connection-specific config
-- **Modified section:** `sources:` entries gain optional `connection:` field (name reference)
-- **Breaking change:** `enrichment:` changes from `dict | None` to `EnrichmentConfig` model with `providers: list[dict]` and `default: str`. Existing configs must be migrated.
-- **Config version:** `0.1.0` → `0.2.0` (minor bump; enrichment change is breaking and requires manual config update)
+| `tests/test_free_text_response.py` | Free-text interpretation, "Other" flow, awaiting_followup state, confirmation for destructive actions, user todo creation |
+| `tests/test_actions_api.py` | GET /api/actions categorization, done/priority/snooze endpoints |
+| `tests/test_registry_connection.py` | Two-arg constructor injection, single-arg backward compatibility, create_composite_enricher |
 
 ## Open Questions
 
@@ -695,31 +1061,59 @@ Phase 1d is complete when:
 3. All 3 Google adapters (`Gmail`, `GCalendar`, `GChat`) return `list[RawItem]` from `poll(since)` using the shared connection
 4. All 3 Meta adapters (`MetaTasks`, `Workplace`, `MetaDocs`) return `list[RawItem]` from `poll(since)` using the shared connection
 5. Each adapter produces correct `source_type`, `source_id`, `raw_text`, and `urgency_signals`
-6. Gmail adapter correctly extracts multipart MIME bodies and captures attachment metadata
-7. Calendar adapter deduplicates by meaningful-field hash (RSVP changes don't trigger re-ingestion)
-8. GChat adapter implements thread subscription with configurable track mode and bot message filtering
+6. Gmail adapter correctly extracts multipart MIME bodies and captures attachment metadata (including inline images)
+7. Calendar adapter deduplicates by meaningful-field hash (RSVP changes don't trigger re-ingestion); recurring events include `recurring_event_id` in urgency signals
+8. GChat adapter implements thread subscription with configurable track mode, thread re-entry on participation, and bot message filtering
 9. Dedup works correctly for each adapter (unique `source_id` per item, modifications detected where applicable)
 10. Scheduler polls all configured adapters on schedule with error isolation (one failure doesn't block others)
-11. `CompositeEnricher` routes to the correct enricher by source type
-12. Each enricher returns useful context using the shared connection and includes `entity_refs` with `EntityType` enum values
-13. All new adapters and enrichers work end-to-end: poll → enqueue → extract → filter → enrich → triage card
+11. `CompositeEnricher` routes to the correct enricher by source type with per-enricher budget overrides
+12. Each enricher returns useful context using the shared connection and includes `entity_refs` with `EntityType` enum values and source-qualified IDs
+13. Each enricher extracts identifying attributes (email, name, platform_uid) for identity resolution
+14. All new adapters and enrichers work end-to-end: poll → enqueue → extract → filter → enrich → triage card
 
-### Track B
-14. Triage cards are always LLM-generated (template only on LLM failure)
-15. Card body uses enrichment context, entity knowledge, relationships, and preference context from memory
-16. Card body explains *why* the item matters based on memory
-17. LLM options are converted to `TriageOption` objects with `suggested` and `suggestion_reason` fields
-18. Suggestion validation: `suggested_fact_index` checked against preference_facts bounds; invalid indices strip the suggestion
-19. `defer` action sets `deferred_until` and the triage queue respects it
-20. `format_card_for_chat()` renders card body + options with suggestion markers
-21. No regression in card rendering for existing GitHub/Phabricator sources
+### Track B — Identity Resolution
+15. `entity_identities` table created and indexed
+16. `record_entity` resolves source-qualified IDs to canonical IDs using signal-tiered scoring
+17. Strong matches (email, phone, platform_uid) auto-merge on single match
+18. Medium matches (name, username) require 2+ to auto-merge
+19. Weak matches (first_name, timezone, title) are supporting only, never sufficient alone
+20. Late discovery merge correctly repoints identities, merges facts, and merges graph nodes
+21. `query_entity` resolves through identity table and returns merged facts
+22. Admin merge/split endpoints work correctly
 
-### Both
-22. `connections:` config section is parsed, validated, and connections are initialized at startup
-23. Registry supports two-arg constructor for connection injection
-24. `EnrichmentConfig` model replaces old `dict | None` config
-25. Config version is bumped to `0.2.0`
-26. All existing tests pass (no regressions)
+### Track B — Cards and Free-Text
+23. Triage cards are always LLM-generated (template only on LLM failure, with up to 2 retries)
+24. Card body uses enrichment context, entity knowledge (resolved through identity), relationships, and preference context
+25. Card body explains *why* the item matters based on memory
+26. LLM options use tool use with enum constraint for action types; invalid actions are retried, not silently accepted
+27. LLM options are converted to `TriageOption` objects with `suggested` and `suggestion_reason` fields
+28. Suggestion validation: `suggested_fact_index` checked against preference_facts bounds; invalid indices strip the suggestion
+29. "Other" option is always appended as the last option
+30. Free text (direct or via "Other") routes to `llm.interpret_triage_response()`
+31. `InterpretedResponse` correctly separates system actions from user todos
+32. Destructive actions (skip, mute) require confirmation; additive actions execute immediately
+33. User todos create `Item` objects with `parent_item_id`, `action_source`, and `action_category`
+34. Interpreted responses are logged for future model training
+35. `defer` action sets `deferred_until` and the triage queue respects it; deferred cards pause expiry
+36. `format_card_for_chat()` renders card body + options with suggestion markers + free-text hint
+37. No regression in card rendering for existing GitHub/Phabricator sources
+
+### Track C
+38. `GET /api/actions` returns active action items grouped by `action_category`
+39. Action API supports done, priority change, and snooze operations
+40. `/workbench:actions` plugin command renders categorized list
+41. Morning briefing includes "Pending actions" section grouped by category
+42. React UI at `/ui/actions` renders categorized action list with mark done, change priority, and snooze
+43. React UI is built with Vite, served as static assets by FastAPI
+
+### All Tracks
+44. `connections:` config section is parsed, validated, and connections are initialized at startup
+45. Registry supports two-arg constructor for connection injection
+46. `create_composite_enricher()` correctly pops `source_types`/`connection`/`budget` and builds CompositeEnricher
+47. `EnrichmentConfig` model replaces old `dict | None` config (breaking change documented)
+48. Config version is bumped to `0.2.0`
+49. `Item` model has `parent_item_id`, `action_source`, `action_category` fields (Alembic migration)
+50. All existing tests pass (no regressions)
 
 ## Out of Scope
 
@@ -728,5 +1122,7 @@ Phase 1d is complete when:
 - Multi-account support for Google adapters (single account per adapter)
 - Real-time/webhook ingestion (poll-based only)
 - Meta-specific overrides of Google adapters (MetaGmailAdapter, etc.) — deferred until needed
-- Enricher depth/budget tuning per source type (use global enrichment config)
 - Card template customization per source type (LLM generates source-appropriate cards)
+- Action Module for automated action execution (v2 — user todos are manual in v1)
+- User preference model training from interaction logs (v2)
+- Full entity resolution heuristics beyond signal-tiered attribute matching (v2)
