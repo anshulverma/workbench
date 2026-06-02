@@ -22,6 +22,7 @@ src/memory/
 │   ├── main.py                         FastAPI app, lifespan, routes
 │   ├── config.py                       MemoryConfig + config loader
 │   ├── llm.py                          DefaultLLMClient (wraps Graphiti AnthropicClient)
+│   ├── embedder.py                     OpenAIEmbedderWrapper + LocalEmbedder
 │   ├── graphiti_layer.py               GraphitiMemoryLayer (structured writes + episodes)
 │   ├── extraction.py                   Fact ingestion prompt + narrative formatting
 │   ├── queue.py                        PendingIngestionStore + async worker
@@ -86,6 +87,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+local-embedder = [
+    "sentence-transformers>=3.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -242,6 +246,13 @@ class LLMConfig(BaseModel):
     model: str = "claude-haiku-4-5-20251001"
 
 
+class EmbedderConfig(BaseModel):
+    embedder_class: str = "memory.embedder.OpenAIEmbedderWrapper"
+    api_key: str = ""
+    model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
+
+
 class QueueConfig(BaseModel):
     max_attempts: int = 3
     base_delay_seconds: int = 5
@@ -253,6 +264,7 @@ class MemoryConfig(BaseModel):
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
     queue: QueueConfig = Field(default_factory=QueueConfig)
 
 
@@ -292,6 +304,18 @@ llm:
   api_key: ${oc.env:ANTHROPIC_API_KEY}
   base_url: https://api.anthropic.com
   model: claude-haiku-4-5-20251001
+
+# Embedder — OpenAI (default) or local sentence-transformers
+embedder:
+  embedder_class: memory.embedder.OpenAIEmbedderWrapper
+  api_key: ${oc.env:OPENAI_API_KEY}
+  model: text-embedding-3-small
+  embedding_dim: 1536
+# Local embedder (no API key needed, uses sentence-transformers):
+# embedder:
+#   embedder_class: memory.embedder.LocalEmbedder
+#   model: all-MiniLM-L6-v2
+#   embedding_dim: 384
 
 queue:
   max_attempts: 3
@@ -749,6 +773,115 @@ git commit -m "feat(memory): add pluggable LLM client with dynamic import"
 
 ---
 
+## Task 5b: Pluggable Embedder
+
+**Files:**
+- Create: `src/memory/memory/embedder.py`
+
+Two embedder implementations: `OpenAIEmbedderWrapper` (default, uses OpenAI API) and `LocalEmbedder` (uses `sentence-transformers` for offline embedding). Loaded via dynamic import from the `embedder_class` config field. The local embedder downloads the model from Hugging Face on first use (~80MB for `all-MiniLM-L6-v2`).
+
+- [ ] **Step 1: Write `embedder.py`**
+
+```python
+# src/memory/memory/embedder.py
+from __future__ import annotations
+
+import importlib
+import logging
+from typing import Any
+
+from memory.config import EmbedderConfig
+
+logger = logging.getLogger(__name__)
+
+
+class OpenAIEmbedderWrapper:
+    """Wraps Graphiti's OpenAIEmbedder. Default for OSS deployments with OpenAI API key."""
+
+    def __init__(self, config: EmbedderConfig):
+        from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+
+        embedder_config = OpenAIEmbedderConfig(
+            embedding_model=config.model,
+            api_key=config.api_key,
+            embedding_dim=config.embedding_dim,
+        )
+        self._client = OpenAIEmbedder(embedder_config)
+
+    @property
+    def client(self):
+        return self._client
+
+
+class LocalEmbedder:
+    """Uses sentence-transformers for local embedding. No API key needed.
+    
+    Install with: pip install memory-service[local-embedder]
+    Model is downloaded from Hugging Face on first use (~80MB for all-MiniLM-L6-v2).
+    """
+
+    def __init__(self, config: EmbedderConfig):
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is required for LocalEmbedder. "
+                "Install with: pip install memory-service[local-embedder]"
+            ) from None
+
+        self._model_name = config.model or "all-MiniLM-L6-v2"
+        self._model = SentenceTransformer(self._model_name)
+        self._dim = config.embedding_dim
+
+    @property
+    def client(self):
+        return self
+
+    async def create(self, input_data):
+        if isinstance(input_data, str):
+            input_data = [input_data]
+        embeddings = self._model.encode(list(input_data), normalize_embeddings=True)
+        return embeddings[0].tolist()
+
+    async def create_batch(self, input_data_list):
+        embeddings = self._model.encode(input_data_list, normalize_embeddings=True)
+        return [e.tolist() for e in embeddings]
+
+
+def create_embedder(config: EmbedderConfig) -> Any:
+    class_path = config.embedder_class
+    module_path, class_name = class_path.rsplit(".", 1)
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        raise ImportError(
+            f"Cannot import embedder '{class_path}': {e}. "
+            f"Check that the package is installed."
+        ) from e
+    cls = getattr(module, class_name, None)
+    if cls is None:
+        raise ImportError(f"Class '{class_name}' not found in module '{module_path}'")
+    instance = cls(config)
+    return instance.client if hasattr(instance, "client") else instance
+
+
+def create_cross_encoder(config: EmbedderConfig) -> Any:
+    if "Local" in config.embedder_class:
+        from graphiti_core.cross_encoder.bge_reranker_client import BGERerankerClient
+        return BGERerankerClient()
+    else:
+        from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
+        return OpenAIRerankerClient()
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git commit -m "feat(memory): add pluggable embedder — OpenAI wrapper + local sentence-transformers"
+```
+
+---
+
 ## Task 6: GraphitiMemoryLayer
 
 **Files:**
@@ -1121,8 +1254,15 @@ async def lifespan(app: FastAPI):
     await store.initialize()
     app.state.store = store
 
-    # Initialize Graphiti
+    # Initialize LLM client and embedder
     llm_client = create_llm_client(config.llm)
+
+    from memory.embedder import create_embedder
+    embedder = create_embedder(config.embedder)
+
+    from memory.embedder import create_embedder, create_cross_encoder
+    embedder = create_embedder(config.embedder)
+    cross_encoder = create_cross_encoder(config.embedder)
 
     from graphiti_core import Graphiti
     graphiti = Graphiti(
@@ -1130,6 +1270,8 @@ async def lifespan(app: FastAPI):
         user=config.neo4j.user,
         password=config.neo4j.password,
         llm_client=llm_client,
+        embedder=embedder,
+        cross_encoder=cross_encoder,
     )
     try:
         await graphiti.build_indices_and_constraints()
@@ -1550,6 +1692,7 @@ services:
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j}
       MEMORY_PG_DSN: postgres://memory:memory@localhost:5432/memory
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GRAPHITI_TELEMETRY_ENABLED: "false"
 
   workbench:
     build: .
@@ -1704,6 +1847,7 @@ After all 12 tasks:
 | 3. Pending queue | Durable PG-backed ingestion queue |
 | 4. Extraction | Fact ingestion prompt + narrative formatting |
 | 5. LLM client | Pluggable Graphiti AnthropicClient wrapper |
+| 5b. Embedder | Pluggable embedder — OpenAI wrapper + local sentence-transformers |
 | 6. GraphitiMemoryLayer | Core: structured writes + episode ingestion |
 | 7. FastAPI app | Routes, lifespan, ingestion worker |
 | 8. Dockerfile | Container build for memory service |

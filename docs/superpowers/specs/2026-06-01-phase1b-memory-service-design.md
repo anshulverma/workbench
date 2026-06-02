@@ -50,7 +50,8 @@ Phase 1b adds a **memory service** that learns user preferences from triage inte
 - **Fire-and-forget writes with durable queue.** `record_triage()` returns 202 immediately. The triage payload is written to a `pending_ingestions` table in PostgreSQL (`memory` database), then processed asynchronously by an in-process worker. If the memory service restarts mid-ingestion, pending entries are recovered and retried. The triage loop is never blocked by fact ingestion.
 - **Graceful degradation.** If the memory service is down, `HttpMemoryLayer` catches the error and the noise filter falls back to explicit filter rules only. The pipeline never crashes.
 - **Pluggable LLM client.** The memory service uses Graphiti's `AnthropicClient` by default, configured via a `client_class:` field in the memory service config. The client class is loaded via dynamic import (same pattern as workbench's provider registry). For Meta internal, workbench-meta overrides this with a Plugboard-aware client that adds mTLS + api-key-helper. The memory service never knows which LLM backend it's talking to.
-- **Config layering.** The memory service supports `--config` + `--override`, same pattern as workbench. OSS uses `memory-config.yml`. Meta internal overlays `memory-config.meta.yml` for Plugboard LLM and credentials.
+- **Pluggable embedder.** Graphiti requires an embedding model for vector search. The memory service supports two embedders via `embedder_class:` config: `OpenAIEmbedderWrapper` (default, uses OpenAI's text-embedding-3-small) and `LocalEmbedder` (uses sentence-transformers, downloads model from Hugging Face on first use, no API key needed). Meta internal uses the local embedder.
+- **Config layering.** The memory service supports `--config` + `--override`, same pattern as workbench. OSS uses `memory-config.yml`. Meta internal overlays `memory-config.meta.yml` for Plugboard LLM, local embedder, and credentials.
 
 ## Memory Service API
 
