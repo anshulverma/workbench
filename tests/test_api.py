@@ -183,6 +183,35 @@ async def test_item_not_found(client):
 
 
 @pytest.mark.asyncio
+async def test_triage_respond_stores_full_card_and_choice_index(client, app_with_state):
+    stores = app_with_state.state.stores
+    card = TriageCard(
+        card_content={"summary": "Fix auth flow", "source_type": "github"},
+        options=[
+            TriageOption(label="Add todo (P1)", action="add_todo", details={"priority": "P1"}),
+            TriageOption(label="Skip", action="skip"),
+        ],
+        relevance_score=45,
+    )
+    await stores.triage.save_card(card)
+
+    r = await client.post(
+        "/api/triage/respond",
+        json={"card_id": card.id, "choice": 1},
+    )
+    assert r.status_code == 200
+    assert r.json()["action"] == "add_todo"
+
+    entries = await stores.interactions.get_all()
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.choice_index == 1
+    assert entry.triage_card_full.get("id") == card.id
+    assert entry.triage_card_full.get("relevance_score") == 45
+    assert "options" in entry.triage_card_full
+
+
+@pytest.mark.asyncio
 async def test_process_creates_queue_entry(client, app_with_state):
     """Verify /api/process enqueues to the ingestion queue."""
     r = await client.post(

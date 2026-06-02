@@ -60,9 +60,10 @@ async def respond_to_triage(response: TriageResponse, request: Request):
     entry = InteractionEntry(
         source_type=card.card_content.get("source_type", "unknown"),
         item_summary=card.card_content.get("summary", ""),
-        triage_card_full=card.card_content,
+        triage_card_full=card.model_dump(),
         options_presented=[o.model_dump() for o in card.options],
         option_chosen=option.label,
+        choice_index=response.choice,
     )
     await stores.interactions.append(entry)
     await memory.record_triage(card, response)
