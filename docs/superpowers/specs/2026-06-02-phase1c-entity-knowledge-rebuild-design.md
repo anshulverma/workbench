@@ -79,6 +79,10 @@ Implementation (synchronous, no queue):
 
 Repeated calls merge facts — `record_entity("person", "alice", {repos: ["new-repo"]})` adds `repos` without losing `team`.
 
+**Graph failure behavior:** If `add_triplet` fails (Neo4j down), the entire request returns 500. The PG write is not committed. The enricher catches the 500 and continues enrichment without recording the entity — consistent with the "fail fast, caller handles" principle. The entity will be recorded on the next enrichment pass when Neo4j is available.
+
+**Cold start:** The first time an item from a new source flows through the pipeline, there's no entity knowledge yet. The filter's `query_entity` and `query_relationships` return empty — scoring uses only preference facts from semantic search. Entity context builds up incrementally as enrichment records entities from subsequent items.
+
 ### Read: `GET /query/entity`
 
 Request: `?entity_type=person&entity_id=alice`
@@ -159,7 +163,7 @@ The ABC signature stays unchanged. The memory service API takes flat fields. The
 
 ### Read: `GET /query/relationships`
 
-Request: `?entity_id=alice`
+Request: `?entity_type=person&entity_id=alice`
 
 Response: `200 OK` with:
 ```json
@@ -177,7 +181,7 @@ MATCH (n:Entity {uuid: $uuid})-[e:RELATES_TO]-(m:Entity)
 RETURN n.name AS from_entity, m.name AS to_entity, e.name AS relation, e.fact AS fact
 ```
 
-The entity's `graph_uuid` (stored in the PG entities table) is used to look up the Neo4j node. If the entity has no `graph_uuid` in PG, returns empty list.
+The endpoint first looks up the entity in PG by `(entity_type, entity_id)` to get `graph_uuid`, then runs the Cypher query. If the entity has no `graph_uuid` (not yet recorded, or cleared after reset-graph), returns empty list.
 
 ### How relationships emerge
 
@@ -215,6 +219,8 @@ python -m memory.scripts.rebuild \
 
 **Rebuild scope: triage-only.** Entity knowledge survives in the memory service's PG entities table (not affected by Neo4j wipe). Pipeline decision patterns re-learn organically from new pipeline runs. Triage preferences are the primary learning signal — high-signal, low-volume.
 
+**Old interaction log rows** (pre-Phase 1c) have partial data: `triage_card_full = card.card_content` (not full card) and no `choice_index`. The rebuild script skips these rows with a warning log. Preferences from old interactions are re-learned from new triage responses.
+
 ### InteractionEntry changes for rebuild support
 
 1. **`triage_card_full` stores the full card dict** — Change to `card.model_dump()` (includes id, options, relevance_score) instead of just `card.card_content`.
@@ -222,7 +228,7 @@ python -m memory.scripts.rebuild \
 
 ### Admin endpoints
 
-**`POST /admin/reset-graph`** — Wipes all nodes and edges from Neo4j. Only when `MEMORY_ADMIN_ENABLED=true`. Returns `403` when disabled.
+**`POST /admin/reset-graph`** — Wipes all nodes and edges from Neo4j AND clears `graph_uuid` on all PG entities (prevents stale UUID references). Only when `MEMORY_ADMIN_ENABLED=true`. Returns `403` when disabled.
 
 **`GET /admin/queue-depth`** — Returns `{"depth": N, "dead_letters": M}`. Always available.
 
@@ -306,10 +312,14 @@ class QueueDepthResponse(BaseModel):
 | `migrations/` | Alembic migration: add choice_index column to interaction_log |
 | `tests/test_http_memory.py` | Add tests for new HTTP endpoints |
 
+### ABC changes
+
+- `MemoryLayer.query_relationships(entity_type: str, entity_id: str)` — add `entity_type` parameter (was `entity_id` only). Needed because the PG entities table uses `(entity_type, entity_id)` as the primary key.
+- `NoopMemoryLayer` — update signature to match
+- `HttpMemoryLayer` — update signature, pass `entity_type` as query param
+
 ### Unchanged
 
-- MemoryLayer ABC — already defines all methods
-- NoopMemoryLayer — already has pass/None stubs
 - LLM provider interface — no signature changes
 - Config files — no new config sections
 
