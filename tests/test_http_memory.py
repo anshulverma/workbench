@@ -1,7 +1,17 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from workbench.memory.http import HttpMemoryLayer
-from workbench.models import TriageCard, TriageOption, TriageResponse
+from workbench.models import (
+    EntityKnowledge,
+    Item,
+    ItemCategory,
+    ItemOrigin,
+    Priority,
+    Relationship,
+    TriageCard,
+    TriageOption,
+    TriageResponse,
+)
 
 
 @pytest.fixture
@@ -123,3 +133,176 @@ def test_registry_can_create_http_memory_layer():
         "base_url": "http://localhost:8422",
     })
     assert isinstance(layer, HttpMemoryLayer)
+
+
+# --- record_entity tests ---
+
+
+@pytest.mark.asyncio
+async def test_record_entity_posts_to_memory_service(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 202
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.post.return_value = mock_response
+
+    await layer.record_entity("person", "alice", {"role": "eng", "team": "infra"})
+
+    mock_http_client.post.assert_called_once()
+    call_args = mock_http_client.post.call_args
+    assert "/record/entity" in call_args[0][0]
+    payload = call_args[1]["json"]
+    assert payload == {
+        "entity_type": "person",
+        "entity_id": "alice",
+        "facts": {"role": "eng", "team": "infra"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_record_entity_does_not_raise_on_failure(layer, mock_http_client):
+    mock_http_client.post.side_effect = Exception("Connection refused")
+
+    # Should not raise — graceful degradation
+    await layer.record_entity("person", "alice", {"role": "eng"})
+
+
+# --- record_pipeline_decision tests ---
+
+
+@pytest.mark.asyncio
+async def test_record_pipeline_decision_posts_to_memory_service(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 202
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.post.return_value = mock_response
+
+    item = Item(
+        source_type="github",
+        source_id="PR-100",
+        summary="PR #100 rate limiting",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.AUTO_INCLUDED,
+        priority=Priority.P1,
+    )
+
+    await layer.record_pipeline_decision(item, "include", "high priority PR")
+
+    mock_http_client.post.assert_called_once()
+    call_args = mock_http_client.post.call_args
+    assert "/record/decision" in call_args[0][0]
+    payload = call_args[1]["json"]
+    assert payload == {
+        "item_summary": "PR #100 rate limiting",
+        "decision": "include",
+        "reason": "high priority PR",
+        "source_type": "github",
+    }
+
+
+@pytest.mark.asyncio
+async def test_record_pipeline_decision_does_not_raise_on_failure(layer, mock_http_client):
+    mock_http_client.post.side_effect = Exception("Connection refused")
+
+    item = Item(
+        source_type="github",
+        source_id="PR-100",
+        summary="PR #100 rate limiting",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.AUTO_INCLUDED,
+        priority=Priority.P1,
+    )
+
+    # Should not raise — graceful degradation
+    await layer.record_pipeline_decision(item, "drop", "noise")
+
+
+# --- query_entity tests ---
+
+
+@pytest.mark.asyncio
+async def test_query_entity_returns_entity_knowledge(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "entity_type": "person",
+        "entity_id": "alice",
+        "facts": {"role": "eng", "team": "infra"},
+    }
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.get.return_value = mock_response
+
+    result = await layer.query_entity("person", "alice")
+
+    assert result is not None
+    assert isinstance(result, EntityKnowledge)
+    assert result.entity_type == "person"
+    assert result.entity_id == "alice"
+    assert result.facts == {"role": "eng", "team": "infra"}
+
+    mock_http_client.get.assert_called_once()
+    call_args = mock_http_client.get.call_args
+    assert "/query/entity" in call_args[0][0]
+    assert call_args[1]["params"] == {"entity_type": "person", "entity_id": "alice"}
+
+
+@pytest.mark.asyncio
+async def test_query_entity_returns_none_on_404(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 404
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.get.return_value = mock_response
+
+    result = await layer.query_entity("person", "unknown")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_query_entity_returns_none_on_failure(layer, mock_http_client):
+    mock_http_client.get.side_effect = Exception("Connection refused")
+
+    result = await layer.query_entity("person", "alice")
+
+    assert result is None
+
+
+# --- query_relationships tests ---
+
+
+@pytest.mark.asyncio
+async def test_query_relationships_returns_relationships(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "relationships": [
+            {"from_entity": "person:alice", "to_entity": "team:infra", "relation": "member_of"},
+            {"from_entity": "person:alice", "to_entity": "person:bob", "relation": "reports_to"},
+        ]
+    }
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.get.return_value = mock_response
+
+    result = await layer.query_relationships("person", "alice")
+
+    assert len(result) == 2
+    assert all(isinstance(r, Relationship) for r in result)
+    assert result[0].from_entity == "person:alice"
+    assert result[0].to_entity == "team:infra"
+    assert result[0].relation == "member_of"
+    assert result[1].from_entity == "person:alice"
+    assert result[1].to_entity == "person:bob"
+    assert result[1].relation == "reports_to"
+
+    mock_http_client.get.assert_called_once()
+    call_args = mock_http_client.get.call_args
+    assert "/query/relationships" in call_args[0][0]
+    assert call_args[1]["params"] == {"entity_type": "person", "entity_id": "alice"}
+
+
+@pytest.mark.asyncio
+async def test_query_relationships_returns_empty_on_failure(layer, mock_http_client):
+    mock_http_client.get.side_effect = Exception("Connection refused")
+
+    result = await layer.query_relationships("person", "alice")
+
+    assert result == []

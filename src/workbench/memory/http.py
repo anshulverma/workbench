@@ -42,10 +42,27 @@ class HttpMemoryLayer(MemoryLayer):
             logger.warning("Memory service record_triage failed: %s", e)
 
     async def record_entity(self, entity_type: str, entity_id: str, facts: dict) -> None:
-        pass
+        try:
+            await self._client.post(
+                f"{self._base_url}/record/entity",
+                json={"entity_type": entity_type, "entity_id": entity_id, "facts": facts},
+            )
+        except Exception as e:
+            logger.warning("Memory service record_entity failed: %s", e)
 
     async def record_pipeline_decision(self, item: Item, decision: str, reason: str) -> None:
-        pass
+        try:
+            await self._client.post(
+                f"{self._base_url}/record/decision",
+                json={
+                    "item_summary": item.summary,
+                    "decision": decision,
+                    "reason": reason,
+                    "source_type": item.source_type,
+                },
+            )
+        except Exception as e:
+            logger.warning("Memory service record_pipeline_decision failed: %s", e)
 
     async def query_preferences(self, context: str) -> list[Fact]:
         try:
@@ -61,10 +78,43 @@ class HttpMemoryLayer(MemoryLayer):
             return []
 
     async def query_entity(self, entity_type: str, entity_id: str) -> EntityKnowledge | None:
-        return None
+        try:
+            resp = await self._client.get(
+                f"{self._base_url}/query/entity",
+                params={"entity_type": entity_type, "entity_id": entity_id},
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+            return EntityKnowledge(
+                entity_type=data["entity_type"],
+                entity_id=data["entity_id"],
+                facts=data.get("facts", {}),
+            )
+        except Exception as e:
+            logger.warning("Memory service query_entity failed: %s", e)
+            return None
 
     async def query_relationships(self, entity_type: str, entity_id: str) -> list[Relationship]:
-        return []
+        try:
+            resp = await self._client.get(
+                f"{self._base_url}/query/relationships",
+                params={"entity_type": entity_type, "entity_id": entity_id},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return [
+                Relationship(
+                    from_entity=r["from_entity"],
+                    to_entity=r["to_entity"],
+                    relation=r["relation"],
+                )
+                for r in data.get("relationships", [])
+            ]
+        except Exception as e:
+            logger.warning("Memory service query_relationships failed: %s", e)
+            return []
 
     async def is_available(self) -> bool:
         try:
