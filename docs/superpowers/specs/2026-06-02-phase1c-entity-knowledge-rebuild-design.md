@@ -6,24 +6,24 @@ Phase 1b delivered the memory service with triage interaction recording (structu
 
 ## Goals
 
-1. **Entity knowledge** — Record facts about people, repos, teams as graph nodes. Query them to enrich triage context and inform noise filter scoring.
-2. **Pipeline decision recording** — Record why the pipeline included/dropped items. Full LLM episode extraction to learn patterns like "pipeline consistently drops CI notifications."
-3. **Relationship querying** — Query the graph for relationships between entities (emergent from episode extraction, not explicitly created).
-4. **Memory rebuild** — CLI script to replay the interaction log from workbench PG into the memory service, reconstructing the graph from scratch.
-5. **Pipeline integration** — Wire entity/relationship queries into both the noise filter and enricher so memory context actually influences scoring and triage cards.
+1. **Entity knowledge** — Record facts about people, repos, teams. Query them to enrich triage context and inform noise filter scoring.
+2. **Pipeline decision recording** — Record why the pipeline included/dropped items. Full LLM episode extraction to learn patterns.
+3. **Relationship querying** — Query the graph for relationships between entities (emergent from episode extraction).
+4. **Memory rebuild** — CLI script to replay the interaction log from workbench PG into the memory service.
+5. **Pipeline integration** — Wire entity/relationship queries into both the noise filter and enricher.
 
 ## Architecture
 
-No new services or databases. Phase 1c extends the existing memory service with new methods on GraphitiMemoryLayer, new endpoints in main.py, and wires HttpMemoryLayer to call them. The pipeline gains entity/relationship awareness in both the filter and enrichment stages.
+No new services or databases. Phase 1c extends the existing memory service. The key architectural decision is **dual storage for entities**: PostgreSQL for fast key-value lookups, Neo4j graph for relationship traversal.
 
 ```
 Workbench Pipeline
-  ├─ Enrichment stage ─── POST /record/entity (sync)
-  │                       GET /query/entity (check memory before external calls)
+  ├─ Enrichment stage ─── POST /record/entity (sync, PG + graph dual-write)
+  │                       GET /query/entity (reads PG only — fast)
   ├─ Engine ──────────── POST /record/decision (queued, async)
   ├─ Noise filter ────── GET /query/preferences (existing)
-  │                      GET /query/entity (flatten to Fact)
-  │                      GET /query/relationships (flatten to Fact)
+  │                      GET /query/entity (flatten to Fact for LLM scoring)
+  │                      GET /query/relationships (custom Cypher, flatten to Fact)
   └─ Triage ──────────── POST /record/triage (existing)
 
 Rebuild script ──── reads workbench PG interaction_log
@@ -31,6 +31,31 @@ Rebuild script ──── reads workbench PG interaction_log
 ```
 
 ## Entity Knowledge
+
+### Storage: PG + Graph Dual-Write
+
+Entities use two storage backends optimized for different access patterns:
+
+**PostgreSQL `entities` table** (in memory database) — fast key-value CRUD:
+```sql
+CREATE TABLE IF NOT EXISTS entities (
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    facts JSONB NOT NULL DEFAULT '{}',
+    graph_uuid TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entity_type, entity_id)
+)
+```
+
+- `graph_uuid` stores the Neo4j node UUID returned by `add_triplet`, enabling fast relationship lookups via `EntityEdge.get_by_node_uuid()`
+- `facts` uses JSONB merge on upsert: `UPDATE SET facts = entities.facts || $new_facts` — keys in the new facts win, existing keys are preserved
+
+**Neo4j graph** — relationship traversal:
+- `add_triplet()` creates entity nodes connected to fact nodes
+- Relationships emerge from triage/decision episode extraction
+- Queried via custom Cypher for `query_relationships`
 
 ### Write: `POST /record/entity`
 
@@ -45,29 +70,22 @@ Request:
 
 Response: `200 OK` with `{"status": "recorded"}`
 
-Implementation: GraphitiMemoryLayer creates graph nodes via `add_triplet()`:
-- Source node: `(entity_type:entity_id)` e.g., `(person:alice)`
-- For each fact key-value: `(person:alice) --[has_fact {key}]--> (value)`
-- Graphiti's entity resolution deduplicates — repeated calls update existing nodes
+Implementation (synchronous, no queue):
+1. UPSERT into PG `entities` table (merge facts via `||`)
+2. Create/update graph nodes via `add_triplet()`:
+   - Source node: `(entity_type:entity_id)` e.g., `(person:alice)`
+   - For each fact key-value: `(person:alice) --[has_fact {key}]--> (value)`
+3. Store the resolved node UUID from `add_triplet` result back into PG `graph_uuid`
 
-This is **synchronous** — no queue. Entity writes are simple structured operations without LLM calls, typically called during enrichment (not the hot triage path).
+Repeated calls merge facts — `record_entity("person", "alice", {repos: ["new-repo"]})` adds `repos` without losing `team`.
 
 ### Read: `GET /query/entity`
 
 Request: `?entity_type=person&entity_id=alice`
 
-Response: `200 OK` with:
-```json
-{
-  "entity_type": "person",
-  "entity_id": "alice",
-  "facts": {"team": "infra", "role": "tech lead"}
-}
-```
+Response: `200 OK` with `{"entity_type": "person", "entity_id": "alice", "facts": {...}}` or `404`.
 
-Or `404` if the entity is not found.
-
-Implementation: GraphitiMemoryLayer searches Graphiti for a node matching `entity_type:entity_id` and returns its connected fact edges.
+Implementation: reads from PG `entities` table — indexed lookup by `(entity_type, entity_id)`. Does NOT touch Neo4j. Sub-millisecond latency.
 
 ### Where workbench calls it
 
@@ -75,13 +93,9 @@ Implementation: GraphitiMemoryLayer searches Graphiti for a node matching `entit
 1. Checks memory first via `query_entity()` before making external API calls (e.g., if we already know alice's team, skip the `gh` CLI call)
 2. Records new entity knowledge via `record_entity()` as a side effect of enrichment
 
-This requires changing the `ContextEnricher` ABC: `async def enrich(self, item, depth, budget, memory)`. `StubEnricher` ignores the memory parameter. `GitHubEnricher` uses it.
-
-The pipeline engine passes `self.memory` when calling `enrich_item()`.
+This requires changing the `ContextEnricher` ABC: `async def enrich(self, item, depth, budget, memory)`. `StubEnricher` ignores the memory parameter. `GitHubEnricher` uses it. The pipeline engine passes `self.memory` when calling `enrich_item()`.
 
 **Noise filter** — `score_and_decide()` queries `query_entity()` for entities mentioned in the item, flattens results to `Fact(content="alice is tech lead on infra team", source="entity")`, and appends them to the preference_facts list passed to `llm.score_relevance()`. No change to the LLM provider interface.
-
-HttpMemoryLayer wires `record_entity()` → `POST /record/entity` and `query_entity()` → `GET /query/entity`.
 
 ## Pipeline Decision Recording
 
@@ -118,7 +132,7 @@ Extract facts in the form: "Pipeline [always/never/usually] [includes/drops] [it
 
 ### Queue changes
 
-The `pending_ingestions` table `CREATE TABLE IF NOT EXISTS` adds a `type TEXT NOT NULL DEFAULT 'triage'` column. The worker dispatches to the appropriate handler based on type. No ALTER TABLE — users with existing data wipe the memory PG data dir (the memory database is derived and rebuildable).
+The `pending_ingestions` table `CREATE TABLE IF NOT EXISTS` adds a `type TEXT NOT NULL DEFAULT 'triage'` column. The worker dispatches to the appropriate handler based on type. No ALTER TABLE — users with existing data wipe the memory PG data dir (the memory database is derived and rebuildable via the rebuild script, and entities survive in the PG entities table).
 
 ### HttpMemoryLayer wiring
 
@@ -133,11 +147,7 @@ async def record_pipeline_decision(self, item, decision, reason):
     })
 ```
 
-The ABC signature stays unchanged. The memory service API takes flat fields. Clean separation — the memory service never knows about the Item model.
-
-### Where workbench calls it
-
-Already called in `engine.py:110,116`. Currently a no-op in HttpMemoryLayer. Phase 1c wires it to `POST /record/decision`.
+The ABC signature stays unchanged. The memory service API takes flat fields. The memory service never knows about the Item model.
 
 ## Relationship Querying
 
@@ -155,7 +165,13 @@ Response: `200 OK` with:
 }
 ```
 
-Implementation: GraphitiMemoryLayer searches Graphiti for all edges connected to the entity node, returning them as `Relationship` objects.
+Implementation: Custom Cypher query via `graphiti.driver.execute_query()`:
+```cypher
+MATCH (n:Entity {uuid: $uuid})-[e:RELATES_TO]-(m:Entity)
+RETURN n.name AS from_entity, m.name AS to_entity, e.name AS relation, e.fact AS fact
+```
+
+The entity's `graph_uuid` (stored in the PG entities table) is used to look up the Neo4j node. If the entity has no `graph_uuid` in PG, returns empty list.
 
 ### How relationships emerge
 
@@ -163,8 +179,6 @@ No explicit "create relationship" endpoint. Relationships are inferred by Graphi
 1. **Triage episodes** — "user always prioritizes alice's PRs" → relationship between user and alice
 2. **Entity facts** — recording that alice works on infra-core creates an implicit relationship
 3. **Decision episodes** — "pipeline always includes items from infra-core" → relationship between pipeline and repo
-
-Graphiti handles entity resolution — two mentions of "alice" in different episodes converge to the same node.
 
 ### Where workbench calls it
 
@@ -174,7 +188,7 @@ Graphiti handles entity resolution — two mentions of "alice" in different epis
 
 ### CLI script: `src/memory/scripts/rebuild.py`
 
-A standalone script that reconstructs the knowledge graph from the interaction log in workbench's PostgreSQL database.
+Reconstructs the knowledge graph from the interaction log in workbench's PostgreSQL.
 
 **Usage:**
 ```bash
@@ -193,23 +207,18 @@ python -m memory.scripts.rebuild \
 4. Polls `GET /admin/queue-depth` between batches to avoid overwhelming the queue
 5. Reports progress to stdout: `Replayed 150/500 interactions, queue depth: 3`
 
-**Not part of the memory service process** — runs as a standalone script with its own PG connection.
+**Rebuild scope: triage-only.** Entity knowledge survives in the memory service's PG entities table (not affected by Neo4j wipe). Pipeline decision patterns re-learn organically from new pipeline runs. Triage preferences are the primary learning signal — high-signal, low-volume.
 
 ### InteractionEntry changes for rebuild support
 
-The interaction log needs two changes to support clean rebuild:
-
-1. **`triage_card_full` stores the full card dict** — Change the triage response handler to store `card.model_dump()` (includes id, options, relevance_score) instead of just `card.card_content`. Existing rows have partial data; the rebuild script handles this gracefully (reconstructs from available fields).
-
-2. **Add `choice_index: int` field** — New integer field storing the numeric choice (1-based index). The triage response handler already knows the index; store it alongside `option_chosen` (the label string). Requires an Alembic migration to add the column to `interaction_log`.
+1. **`triage_card_full` stores the full card dict** — Change to `card.model_dump()` (includes id, options, relevance_score) instead of just `card.card_content`.
+2. **Add `choice_index: int` field** — Numeric choice (1-based). Requires Alembic migration.
 
 ### Admin endpoints
 
-Two new endpoints for rebuild support and monitoring:
+**`POST /admin/reset-graph`** — Wipes all nodes and edges from Neo4j. Only when `MEMORY_ADMIN_ENABLED=true`. Returns `403` when disabled.
 
-**`POST /admin/reset-graph`** — Wipes all nodes and edges from Neo4j. Returns `200 OK`. Only available when `MEMORY_ADMIN_ENABLED=true` (env var, default false). Returns `403` when disabled.
-
-**`GET /admin/queue-depth`** — Returns `{"depth": N, "dead_letters": M}`. Always available. Useful for rebuild progress monitoring and general health checking.
+**`GET /admin/queue-depth`** — Returns `{"depth": N, "dead_letters": M}`. Always available.
 
 ## API Summary
 
@@ -217,16 +226,16 @@ Two new endpoints for rebuild support and monitoring:
 
 | Method | Path | Sync/Async | Description |
 |--------|------|-----------|-------------|
-| POST | `/record/entity` | Sync (200) | Record entity facts via add_triplet |
-| POST | `/record/decision` | Async (202) | Queue pipeline decision for episode ingestion |
-| GET | `/query/entity` | Sync (200) | Query entity facts |
-| GET | `/query/relationships` | Sync (200) | Query entity relationships |
+| POST | `/record/entity` | Sync (200) | PG upsert + graph add_triplet |
+| POST | `/record/decision` | Async (202) | Queue for episode ingestion |
+| GET | `/query/entity` | Sync (200) | PG indexed lookup |
+| GET | `/query/relationships` | Sync (200) | Custom Cypher via graph_uuid |
 
 ### New admin endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/admin/reset-graph` | Wipe Neo4j graph (requires MEMORY_ADMIN_ENABLED) |
+| POST | `/admin/reset-graph` | Wipe Neo4j (requires MEMORY_ADMIN_ENABLED) |
 | GET | `/admin/queue-depth` | Queue depth + dead letter count |
 
 ## Request/Response Models
@@ -267,11 +276,12 @@ class QueueDepthResponse(BaseModel):
 | `memory/models.py` | Add EntityRecordRequest, DecisionRecordRequest, EntityResponse, RelationshipsResponse, QueueDepthResponse |
 | `memory/graphiti_layer.py` | Add record_entity(), record_decision(), query_entity(), query_relationships() |
 | `memory/extraction.py` | Add DECISION_EXTRACTION_PROMPT, format_decision_narrative() |
-| `memory/queue.py` | Add `type` column to CREATE TABLE for pending_ingestions |
+| `memory/queue.py` | Add `type` column to CREATE TABLE, add `entities` table creation in initialize() |
 | `memory/main.py` | Replace 4 stubs with real endpoints, add 2 admin endpoints, dispatch worker by type |
 | `scripts/rebuild.py` | New CLI rebuild script |
 | `tests/test_graphiti_layer.py` | Add tests for entity/decision/query methods |
 | `tests/test_extraction.py` | Add tests for decision narrative formatting |
+| `tests/test_queue.py` | Add tests for entity CRUD in PG |
 | `tests/test_rebuild.py` | Test rebuild script logic (mocked HTTP) |
 
 ### Workbench (`src/workbench/`)
@@ -292,30 +302,30 @@ class QueueDepthResponse(BaseModel):
 
 ### Unchanged
 
-- MemoryLayer ABC (`memory/base.py`) — already defines all methods
-- NoopMemoryLayer (`memory/noop.py`) — already has pass/None stubs
-- LLM provider interface — no signature changes (entity/relationship context flattened to Fact)
-- Config files — no new config sections needed
+- MemoryLayer ABC — already defines all methods
+- NoopMemoryLayer — already has pass/None stubs
+- LLM provider interface — no signature changes
+- Config files — no new config sections
 
 ## Verification
 
 Phase 1c is complete when:
 
 1. All 4 former-501 endpoints return real responses
-2. Entity recording creates graph nodes queryable via `/query/entity`
+2. Entity recording dual-writes to PG + graph, queryable via PG
 3. Decision recording queues and processes via episode ingestion
-4. Relationship queries return edges connected to entities
+4. Relationship queries return edges with entity names via custom Cypher
 5. Enricher checks memory before external calls and records entity knowledge
 6. Noise filter uses entity/relationship context for scoring (as flattened Facts)
 7. Rebuild script replays interaction log and reconstructs the graph
 8. Admin reset-graph wipes Neo4j cleanly
-9. HttpMemoryLayer passes all calls through to the memory service
-10. InteractionEntry stores full card dict + choice_index
-11. All existing tests pass (no regressions)
+9. InteractionEntry stores full card dict + choice_index
+10. All existing tests pass (no regressions)
 
 ## Out of Scope
 
-- Triage card context enrichment from memory (Phase 1d — specifically, enriching the card content shown to the user with memory insights)
+- Triage card context enrichment from memory (Phase 1d)
 - Multi-user support
 - Automatic periodic rebuild (manual CLI only)
 - Entity type schemas or validation beyond string types
+- Pipeline decision persistence for rebuild (decisions re-learn from new runs)
