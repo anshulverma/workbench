@@ -12,14 +12,14 @@ storage:
 
 llm:
   client_class: memory.llm.DefaultLLMClient
-  api_key: ${oc.env:ANTHROPIC_API_KEY}
+  api_key: ${oc.env:ANTHROPIC_API_KEY,}
   base_url: https://api.anthropic.com
   model: claude-haiku-4-5-20251001
 
 # Embedder — OpenAI (default) or local sentence-transformers
 embedder:
   embedder_class: memory.embedder.OpenAIEmbedderWrapper
-  api_key: ${oc.env:OPENAI_API_KEY}
+  api_key: ${oc.env:OPENAI_API_KEY,}
   model: text-embedding-3-small
   embedding_dim: 1536
 # Local embedder (no API key needed, uses sentence-transformers):
