@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS entities (
 )
 ```
 
-- `graph_uuid` stores the Neo4j node UUID returned by `add_triplet`, enabling fast relationship lookups via `EntityEdge.get_by_node_uuid()`
+- `graph_uuid` stores the Neo4j node UUID returned by `add_triplet`, updated on every write (Graphiti's node resolution may change the UUID). Enables fast relationship lookups via custom Cypher
 - `facts` uses JSONB merge on upsert: `UPDATE SET facts = entities.facts || $new_facts` — keys in the new facts win, existing keys are preserved
 
 **Neo4j graph** — relationship traversal:
@@ -89,13 +89,19 @@ Implementation: reads from PG `entities` table — indexed lookup by `(entity_ty
 
 ### Where workbench calls it
 
-**Enrichment stage** — The `ContextEnricher.enrich()` signature changes to accept `MemoryLayer`. The enricher:
-1. Checks memory first via `query_entity()` before making external API calls (e.g., if we already know alice's team, skip the `gh` CLI call)
-2. Records new entity knowledge via `record_entity()` as a side effect of enrichment
+**Enrichment stage** — The `ContextEnricher.enrich()` signature changes to accept `MemoryLayer`. The GitHub enricher:
+1. Queries `query_entity("person", author_login)` for known author context (team, role) — adds to enrichment context alongside gh CLI results
+2. Still makes the `gh pr view` / `gh issue view` call — memory augments PR detail enrichment, doesn't replace it
+3. After enrichment, records `record_entity("person", author_login, {...})` and `record_entity("repo", repo, {...})` with newly discovered facts
 
 This requires changing the `ContextEnricher` ABC: `async def enrich(self, item, depth, budget, memory)`. `StubEnricher` ignores the memory parameter. `GitHubEnricher` uses it. The pipeline engine passes `self.memory` when calling `enrich_item()`.
 
-**Noise filter** — `score_and_decide()` queries `query_entity()` for entities mentioned in the item, flattens results to `Fact(content="alice is tech lead on infra team", source="entity")`, and appends them to the preference_facts list passed to `llm.score_relevance()`. No change to the LLM provider interface.
+**Noise filter** — `score_and_decide()` runs three memory queries **in parallel via `asyncio.gather`**:
+1. `query_preferences(item.summary)` — existing semantic search over all facts (unchanged)
+2. `query_entity(item.source_type, item.source_id)` — deterministic PG lookup for the source entity
+3. `query_relationships(item.source_id)` — custom Cypher for relationships connected to the source
+
+Entity knowledge and relationships are flattened to `Fact(content="...", source="entity"/"relationship")` and appended to the preference_facts list. No change to the LLM provider interface. Total filter latency stays dominated by `query_preferences` (~100-500ms) since the other two are fast (<20ms each).
 
 ## Pipeline Decision Recording
 

@@ -59,7 +59,7 @@ _Avoid_: "failed item" (ambiguous with pipeline failures)
 
 ### Infrastructure
 
-**Storage Backend**: The pluggable persistence layer behind the repository pattern. PostgreSQL is the default and only backend for Phase 1. A single PostgreSQL instance hosts two databases: `workbench` (application data) and `memory` (memory service queue), initialized via an `init-db.sh` script mounted into `/docker-entrypoint-initdb.d/`. Schema managed by Alembic migrations, auto-applied via entrypoint script (`alembic upgrade head && exec uvicorn ...`) on every container start.
+**Storage Backend**: The pluggable persistence layer behind the repository pattern. PostgreSQL is the default and only backend for Phase 1. A single PostgreSQL instance hosts two databases: `workbench` (application data) and `memory` (memory service queue + entity store), initialized via an `init-db.sh` script mounted into `/docker-entrypoint-initdb.d/`. Schema managed by Alembic migrations, auto-applied via entrypoint script (`alembic upgrade head && exec uvicorn ...`) on every container start.
 _Avoid_: "database" (too specific — the abstraction is the point), "store" alone (ambiguous with repository interfaces)
 
 **Repository**: An interface for a single domain entity (e.g., `ItemStore`, `TriageStore`). Has implementations for each storage backend. The server depends only on the interface.
