@@ -104,6 +104,8 @@ class WorkbenchScheduler:
         if sent_cards:
             card = sent_cards[0]
             responses = await self.messenger.poll_responses(card.bot_message_id)
+            if responses:
+                logger.info("Got %d responses for card %s (msg=%s)", len(responses), card.id, card.bot_message_id)
             for resp in responses:
                 text = resp.get("text", "").strip().lower()
                 if text in ("skip all", "skip remaining"):

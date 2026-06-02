@@ -1,7 +1,7 @@
 # docker-compose.yml
 services:
   postgres:
-    image: postgres:17
+    image: docker.io/library/postgres:17
     network_mode: host
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
@@ -12,15 +12,16 @@ services:
       POSTGRES_DB: postgres
 
   neo4j:
-    image: neo4j:5-community
+    image: docker.io/library/neo4j:5-community
     network_mode: host
     volumes:
       - ./data/neo4j:/data
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-neo4j}
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-workbench}
       NEO4J_PLUGINS: '["apoc"]'
 
   memory:
+    image: workbench_memory
     build:
       context: ./src/memory
     network_mode: host
@@ -28,7 +29,7 @@ services:
       - postgres
       - neo4j
     environment:
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-workbench}
       MEMORY_PG_DSN: postgres://memory:memory@localhost:5432/memory
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GRAPHITI_TELEMETRY_ENABLED: "false"
