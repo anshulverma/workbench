@@ -10,3 +10,4 @@ docker-compose.override.yml
 internal/
 *.egg-info/
 build/
+neo4j-user-logs.xml
