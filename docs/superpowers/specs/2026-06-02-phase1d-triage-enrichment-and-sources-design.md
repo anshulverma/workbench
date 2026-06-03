@@ -120,6 +120,8 @@ class GoogleConnection(Connection):
 
 **First-time setup:** Requires a one-time interactive OAuth consent flow. The adapter raises a clear error with instructions if `token_path` doesn't exist. Token refresh is automatic thereafter.
 
+**Token persistence in Docker:** The `token_path` must point to a mounted volume, not a container-internal path. Set `GOOGLE_TOKEN_PATH` to a path on the data volume (same volume where PG data lives) so the token survives container restarts.
+
 **Scopes:** Combined into a single OAuth consent. Adding a new Google adapter doesn't require re-consent unless it needs a new scope.
 
 **Async wrapping:** The Google API client library (`google-api-python-client`) is synchronous. All API calls are wrapped in `asyncio.to_thread()` to avoid blocking the event loop. This applies to all adapters and enrichers using the connection.
@@ -249,10 +251,11 @@ Inline images (embedded in HTML body) are captured with `inline: true`. Actual a
 - class: workbench.providers.source.gchat.GChatAdapter
   connection: google
   spaces: ["spaces/AAAA..."]
+  exclude_spaces: ["spaces/JARVIS..."]   # exclude the messenger/bot space
   track: "participating"   # "participating" | "mentioned" | "all"
 ```
 
-**Important distinction:** This is the *ingestion* side — reading messages from spaces you want to monitor. The *messenger* provider (sending triage cards via Google Chat) is a separate interface with its own auth, already in workbench-meta as WIB Google Chat. They do NOT share a connection.
+**Important distinction:** This is the *ingestion* side — reading messages from spaces you want to monitor. The *messenger* provider (sending triage cards via Google Chat) is a separate interface with its own auth, already in workbench-meta as WIB Google Chat. They do NOT share a connection. The `exclude_spaces` list should include the jarvis bot / triage card space to prevent ingesting triage-related messages. If `spaces` is set to `"all"`, the adapter fetches all spaces the user is in via the Chat API and filters out `exclude_spaces`.
 
 **Track modes:**
 - `participating` (default) — track threads where you've posted a message or been @mentioned
@@ -632,7 +635,12 @@ memory_context = {
 }
 ```
 
-4. **Call LLM** for card generation — always, regardless of memory availability. If memory is unavailable, `memory_context` is empty but the LLM still generates a card body from the enrichment context alone. Template fallback is used only when the LLM call itself fails.
+4. **Cap memory context** to keep the LLM prompt manageable:
+   - Top 5 entity_refs by relevance (item author/sender first, then others)
+   - Max 10 relationship entries total
+   - Max 20 preference facts
+
+5. **Call LLM** for card generation — always, regardless of memory availability. If memory is unavailable, `memory_context` is empty but the LLM still generates a card body from the enrichment context alone. Template fallback is used only when the LLM call itself fails.
 
 ### LLM Card Generation
 
@@ -729,7 +737,10 @@ Both paths route to the same LLM interpreter.
 ```
 queued → sent → responded / expired
                  ↘ awaiting_followup → responded / expired
+                 ↘ awaiting_confirmation → responded / expired
 ```
+
+**Timeout on pending states:** If no follow-up or confirmation arrives within 1 hour (configurable), the card reverts to `sent` status with response `"timed_out"` and the triage queue advances to the next card. This prevents a forgotten follow-up from blocking the entire triage pipeline. The card can be re-triaged later.
 
 **Card rendering includes a free-text hint:**
 
@@ -872,16 +883,21 @@ class Item(BaseModel):
     action_category: str | None = None      # "delegation", "communication", "scheduling", "review", "creation", "update"
 ```
 
-**Action categories:**
+**Action categories** — fixed enum, constrained via LLM tool use:
 
-| Category | Examples |
-|----------|---------|
-| `delegation` | "Assign to bob", "Ask alice to review" |
-| `communication` | "Forward to alice", "Reply to thread" |
-| `scheduling` | "Schedule follow-up", "Block 30min for this" |
-| `review` | "Review by Friday", "Read the RFC" |
-| `creation` | "Create task for this", "File a bug" |
-| `update` | "Update the doc", "Fix the config" |
+```python
+class ActionCategory(str, Enum):
+    DELEGATION = "delegation"       # "Assign to bob", "Ask alice to review"
+    COMMUNICATION = "communication" # "Forward to alice", "Reply to thread"
+    SCHEDULING = "scheduling"       # "Schedule follow-up", "Block 30min for this"
+    REVIEW = "review"               # "Review by Friday", "Read the RFC"
+    CREATION = "creation"           # "Create task for this", "File a bug"
+    UPDATE = "update"               # "Update the doc", "Fix the config"
+```
+
+If the LLM produces an unsupported category (shouldn't happen with tool use constraint, but as a safety net): the user action fails with a message "I couldn't categorize that action. It's been logged for review." The unsupported category is logged with a structured marker (`unsupported_action_category`) for the developer to review and potentially extend the enum.
+
+**Action lifecycle logging:** Action item state changes (created, done, snoozed, priority changed, archived) are logged to the interaction log, same as triage responses. The memory service can extract patterns like "user rarely completes review action items" as preference facts via the normal fact ingestion process. No extra LLM calls needed.
 
 ### API Endpoint
 
@@ -951,6 +967,8 @@ A simple single-page app served by the FastAPI server at `/ui/actions`.
 - Responsive — works on mobile for quick checks
 
 **No state management library** — React hooks + fetch are sufficient for a single-page categorized list.
+
+**Authentication:** No login page. This is a single-user tool on a devgpu. FastAPI injects the API bearer token into the HTML via a `<meta>` tag at page serve time. The React app reads it and passes it as an Authorization header on all fetch calls. If the tool is ever exposed externally, proper auth can be added then.
 
 ### v2 Hook: Action Module
 
