@@ -6,7 +6,31 @@
 
 **Architecture:** Three independent tracks (Sources, Cards, Actions) built on cross-cutting foundations. Cross-cutting first, then A→B→C.
 
-**Tech Stack:** Python 3.12, FastAPI, asyncpg, PostgreSQL, Google API client, Vite + React, pytest + pytest-asyncio
+**Tech Stack:** Python 3.12, FastAPI, asyncpg, PostgreSQL, Google API client, Vite + React + Tailwind CSS, pdfplumber, pytest + pytest-asyncio
+
+**Grilling Decisions Applied (2026-06-02):** This plan incorporates 34 design decisions from the grilling session. Key changes from the original spec:
+1. Response handling consolidated into shared `execute_triage_response()` in `pipeline/triage.py`
+2. GChat thread state via `adapter_state` PG table + `AdapterStateStore` + `state_store` constructor injection
+3. UUID canonical entity IDs (not first-seen source_id)
+4. PG-first, Neo4j best-effort for merge atomicity
+5. Timeout on `awaiting_*` states reverts to `queued` (not `sent`)
+6. No caps on memory context (entity_refs, relationships, preference facts — send all)
+7. Re-score deferred cards on snooze expiry via LLM
+8. 8 action categories: delegation, communication, scheduling, review, creation, update, decision, investigation
+9. Full attachment processing: images via Claude vision API, PDFs via pdfplumber
+10. Config version 0.3.0 (from 0.2.1)
+11. Connection init failure = hard startup error (no degraded mode)
+12. Defense-in-depth for GChat feedback loop (bot filter + exclude_spaces validation + triage response filtering)
+13. Entity admin endpoints proxied through workbench
+14. Workplace uses own Graph API (shared InternConnection auth)
+15. InternConnection auth must be resolved before Meta adapter work
+16. All-day calendar events included with `is_all_day: true`
+17. TEAM entity refs extracted from Meta sources
+18. Re-generate queued cards on upgrade (one-time migration script)
+19. `snoozed_until` and `completed_at` on Item model
+20. Tailwind CSS for React UI
+21. `describe_attachment(bytes, mime_type, context)` on LLMProvider
+22. Full context (card + enrichment + memory) for interpret_triage_response, stored on card
 
 **Test commands:**
 - Workbench: make test
@@ -52,6 +76,8 @@ def test_action_category_enum():
     assert ActionCategory.REVIEW == "review"
     assert ActionCategory.CREATION == "creation"
     assert ActionCategory.UPDATE == "update"
+    assert ActionCategory.DECISION == "decision"
+    assert ActionCategory.INVESTIGATION == "investigation"
 
 
 def test_triage_option_suggested_fields():
@@ -148,6 +174,8 @@ class ActionCategory(str, Enum):
     REVIEW = "review"
     CREATION = "creation"
     UPDATE = "update"
+    DECISION = "decision"
+    INVESTIGATION = "investigation"
 ```
 
 Modify `TriageOption` -- add two fields after `details`:
@@ -165,11 +193,13 @@ Modify `TriageCard` -- add field after `response`:
     deferred_until: datetime | None = None
 ```
 
-Modify `Item` -- add three fields after `updated_at`:
+Modify `Item` -- add five fields after `updated_at`:
 ```python
     parent_item_id: str | None = None
     action_source: str | None = None
     action_category: str | None = None
+    snoozed_until: datetime | None = None
+    completed_at: datetime | None = None
 ```
 
 Modify `TriageResponse` -- make `choice` optional:
@@ -252,11 +282,22 @@ def upgrade() -> None:
     # Triage cards: deferred snooze support
     op.add_column("triage_cards", sa.Column("deferred_until", sa.DateTime(timezone=True), nullable=True))
 
-    # Items: action item hierarchy
+    # Items: action item hierarchy + snooze/completion tracking
     op.add_column("items", sa.Column("parent_item_id", sa.Text(), nullable=True))
     op.add_column("items", sa.Column("action_source", sa.Text(), nullable=True))
     op.add_column("items", sa.Column("action_category", sa.Text(), nullable=True))
+    op.add_column("items", sa.Column("snoozed_until", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("items", sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True))
     op.create_index("idx_items_action_source", "items", ["action_source"], postgresql_where=sa.text("action_source IS NOT NULL"))
+
+    # Adapter state persistence
+    op.execute("""
+        CREATE TABLE adapter_state (
+            adapter_name TEXT PRIMARY KEY,
+            state JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
 
     # Interaction log: free-text interpretation
     op.add_column("interaction_log", sa.Column("type", sa.Text(), nullable=True))
@@ -265,10 +306,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DROP TABLE IF EXISTS adapter_state")
     op.drop_column("interaction_log", "confirmed")
     op.drop_column("interaction_log", "interpreted")
     op.drop_column("interaction_log", "type")
     op.drop_index("idx_items_action_source", "items")
+    op.drop_column("items", "completed_at")
+    op.drop_column("items", "snoozed_until")
     op.drop_column("items", "action_category")
     op.drop_column("items", "action_source")
     op.drop_column("items", "parent_item_id")
@@ -898,7 +942,7 @@ from workbench.config import AppConfig, EnrichmentConfig, load_config_from_strin
 
 def test_connections_section_parsed():
     yaml_str = """
-version: "0.2.1"
+version: "0.3.0"
 storage:
   postgres_dsn: postgres://localhost/workbench
 llm:
@@ -919,7 +963,7 @@ connections:
 
 def test_connections_section_optional():
     yaml_str = """
-version: "0.2.1"
+version: "0.3.0"
 storage:
   postgres_dsn: postgres://localhost/workbench
 llm:
@@ -932,7 +976,7 @@ llm:
 
 def test_enrichment_config_new_shape():
     yaml_str = """
-version: "0.2.1"
+version: "0.3.0"
 storage:
   postgres_dsn: postgres://localhost/workbench
 llm:
@@ -954,7 +998,7 @@ enrichment:
 
 def test_enrichment_config_defaults():
     yaml_str = """
-version: "0.2.1"
+version: "0.3.0"
 storage:
   postgres_dsn: postgres://localhost/workbench
 llm:
@@ -970,7 +1014,7 @@ llm:
 def test_enrichment_backward_compat_dict():
     """Old-style enrichment: {class: ...} still loads (converted to EnrichmentConfig)."""
     yaml_str = """
-version: "0.2.1"
+version: "0.3.0"
 storage:
   postgres_dsn: postgres://localhost/workbench
 llm:
@@ -1054,7 +1098,7 @@ class EnrichmentConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    version: str = "0.2.1"
+    version: str = "0.3.0"
     server: ServerConfig = Field(default_factory=ServerConfig)
     storage: StorageConfig
     llm: dict
