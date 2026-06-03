@@ -83,8 +83,17 @@ The skill accepts two input modes, detected automatically:
 /deep-plan phase2-memory-system                    → start from scratch
 /deep-plan docs/specs/phase2-spec.md               → grill existing spec
 /deep-plan docs/specs/phase2-spec.md --skip-plan   → grill spec only, no plan
+/deep-plan docs/specs/phase2-spec.md --plan-only   → plan from grilled spec
+/deep-plan docs/specs/phase2-spec.md --resume      → continue interrupted session
 /deep-plan docs/specs/phase2-spec.md --redo "use SQLite instead of PostgreSQL"
 ```
+
+**`--plan-only` with UNRESOLVED markers:** If the input spec contains `UNRESOLVED:` markers (from a previous max-iterations run), the skill lists them and offers three options: (a) plan around them with `BLOCKED` markers on affected tasks, (b) run grilling first to resolve them, (c) abort.
+
+**File collision handling:** Before writing artifacts, the skill checks for existing files at the target path:
+- If a state file exists for the same topic → ask "resume existing session or start fresh?"
+- If artifacts exist but no state file (completed session) → ask "overwrite or create a new version?" New versions get a `-v2`, `-v3` suffix.
+- No existing files → proceed normally.
 
 ## User Model
 
@@ -194,8 +203,9 @@ The orchestrator writes preferences inline as they're discovered — when the us
 Skipped when the input is an existing spec file.
 
 1. Read the topic description
-2. Identify what's unclear — purpose, constraints, success criteria, scope boundaries, key trade-offs
-3. Check the user model for answers (maybe memory already says "this project is single-user, devgpu-deployed, Meta-internal")
+2. If invoked mid-conversation, scan the **last 10 messages** for relevant context about the planning topic (what they want to build, constraints mentioned, approaches discussed). Unrelated messages are ignored — if the last 10 messages don't relate to the topic, treat as a fresh invocation.
+3. Identify what's unclear — purpose, constraints, success criteria, scope boundaries, key trade-offs
+4. Check the user model for answers (maybe memory already says "this project is single-user, devgpu-deployed, Meta-internal")
 4. Auto-answer what it can (only at `very-high` confidence — explicit match in memory/ADR/CLAUDE.md)
 5. Prompt for everything else, one question at a time
 6. Once confident: propose 2-3 architectural approaches if the design space is open, or proceed to skeleton if the approach is obvious
@@ -288,7 +298,7 @@ All branches resolved + all artifacts pass their grill passes + final verificati
 | Type | Purpose | Model |
 |------|---------|-------|
 | **Griller** | Deep-dive one branch of the design tree using the distilled grill-with-docs protocol | Opus |
-| **Researcher** | Explore codebase or external docs to answer a specific question. Uses whatever search and exploration tools are available in the environment (meta_codesearch, search_files MCP, Explore agent, Read, Bash — no hardcoded tool names). | Sonnet / Explore agent |
+| **Researcher** | Explore codebase or external docs to answer a specific question. Uses whatever search and exploration tools are available in the environment (meta_codesearch, search_files MCP, Read, Bash — no hardcoded tool names). Dispatched as general-purpose agent (not Explore) for full tool access; the prompt constrains to read-only behavior. | Sonnet |
 | **Writer** | Produce an artifact (spec, ADR, plan) | Opus |
 | **Reviewer** | Grill a completed artifact against an explicit checklist | Opus |
 
@@ -411,7 +421,7 @@ The orchestrator maintains state **on disk** at `docs/deep-plan/reports/YYYY-MM-
 - Enables `--redo` — invalidate specific decisions and re-grill affected branches
 - Becomes the data source for the planning report
 
-**Deleted at session end** (the planning report captures the same information in human-readable form). Kept if session is interrupted.
+**Always kept** alongside the report. Required for `--redo` and `--resume` (both need the decision log and branch tree). The planning report is the human-readable view; the state file is the machine-readable source of truth.
 
 ## Redo Support
 
@@ -519,6 +529,7 @@ Invoked as: `/deep-plan <topic or spec-path> [--flags]`
 | `--plan-only` | `false` | Skip grilling, go straight to plan writing from existing spec. Requires spec file input. |
 | `--dry-run` | `false` | Show the skeleton and detected branches, don't start grilling |
 | `--auto-commit` | `false` | Commit each artifact automatically after it passes review. When false, the skill asks once at the start of Phase 3. |
+| `--resume` | `false` | Resume an interrupted session from the state file. If a state file exists for the spec, loads it and continues from where it left off. |
 | `--redo` | none | Change a decision and re-grill affected branches. Value is the new constraint (e.g., `--redo "use SQLite instead of PostgreSQL"`) |
 
 **Phase matrix by flag combination:**
@@ -529,6 +540,7 @@ Invoked as: `/deep-plan <topic or spec-path> [--flags]`
 | `--skip-plan` | 0 → 0.5 → 1 → 2 → 3 (no plan) → 4 | CONTEXT.md, spec, ADRs |
 | `--plan-only` | 0 → 3 (plan only) → 4 | plan |
 | `--dry-run` | 0 → 0.5 → 1 | nothing (shows skeleton + branches) |
+| `--resume` | load state → continue from interrupted phase | remaining artifacts |
 | `--redo` | load state → 2 → 3 → 4 | updated artifacts for affected branches |
 
 `--plan-only` requires a spec file as input. Error if given a topic string.
@@ -661,6 +673,8 @@ digraph planning {
   FINAL-REVIEW-CHECKLIST.md         # Checklist for final cross-cutting Reviewer
 ```
 
+**Loading strategy:** Only SKILL.md loads into the orchestrator's context at invocation. Supporting files are read on-demand when dispatching specific sub-agent types (e.g., read `GRILLER-PROTOCOL.md` when dispatching a Griller). SKILL.md does **not** use `@` references to force-load supporting files.
+
 ## Output File Layout
 
 ```
@@ -673,7 +687,7 @@ docs/deep-plan/
     YYYY-MM-DD-<topic>-report.md
     YYYY-MM-DD-<topic>-tree.dot
     YYYY-MM-DD-<topic>-tree.png     # best-effort, if graphviz available
-    YYYY-MM-DD-<topic>-state.json   # deleted on completion, kept on interruption
+    YYYY-MM-DD-<topic>-state.json   # always kept, enables --redo and --resume
 
 docs/adr/                           # ADRs (shared with rest of project)
   NNNN-<slug>.md
@@ -725,6 +739,18 @@ docs/adr/                           # ADRs (shared with rest of project)
 29. **Commit strategy:** Skill asks once at start of Phase 3 ("commit each artifact? OK?"). Also `--auto-commit` flag for fully autonomous runs.
 30. **Mid-conversation invocation:** Orchestrator reads conversation context as implicit input. Phase 0.5 checks existing context before re-asking questions. Sub-agents get distilled context, not raw conversation.
 
+## Resolved Questions (from Grilling Session 2026-06-03 — Round 3)
+
+31. **Empty preference store with `--confidence-threshold low`:** Let it run. Produces best-judgment plan, transparent about assumptions (`source: "no signal, best judgment"`). Corrections become first preferences.
+32. **State file retention:** Always kept (not deleted on completion). Required for `--redo` and `--resume`. Small file (~5KB), lives alongside the report.
+33. **`--plan-only` on spec with UNRESOLVED markers:** Check for markers, offer three options: (a) plan with BLOCKED tasks, (b) resolve first, (c) abort.
+34. **Mid-conversation context scope:** Scan last 10 messages for relevant context. Unrelated messages ignored — treated as fresh invocation.
+35. **8 supporting files — context bloat:** No risk. Only SKILL.md loads initially. Protocol files read on-demand per sub-agent type. No `@` force-loading.
+36. **`--redo` cascade with overlapping dependencies:** Works as-is. Re-grill whole branch from scratch with updated constraints. Redundant calls acceptable for correctness.
+37. **Researcher sub-agent type:** General-purpose agent (not Explore). Full tool access; prompt constrains to read-only behavior.
+38. **`--resume` moved to v1:** Subset of `--redo` implementation (load state, continue without invalidation). Inconsistent to exclude when `--redo` is in scope.
+39. **Same topic planned twice:** Check for existing files. State file exists → offer resume. Completed artifacts exist → offer overwrite or version suffix (`-v2`).
+
 ## Verification
 
 The deep-plan skill is working correctly when:
@@ -770,6 +796,13 @@ The deep-plan skill is working correctly when:
 39. `depends_on` inferred by orchestrator from constraints passed, not declared by Griller
 40. `--auto-commit` commits artifacts without asking; default behavior asks once at Phase 3 start
 41. Mid-conversation context used as implicit input; Phase 0.5 doesn't re-ask answered questions
+42. State file always kept (not deleted on completion); enables `--redo` and `--resume`
+43. `--resume` loads state file and continues from interrupted phase
+44. `--plan-only` checks for UNRESOLVED markers and offers plan-around/resolve/abort options
+45. Conversation context scoped to last 10 messages; unrelated messages ignored
+46. Supporting files read on-demand, not force-loaded via `@` references
+47. Researcher dispatched as general-purpose agent with full tool access
+48. File collision detection: offer resume (if state exists) or version suffix (if completed artifacts exist)
 
 ## Out of Scope
 
@@ -778,4 +811,4 @@ The deep-plan skill is working correctly when:
 - Automatic execution of the produced plan (that's subagent-driven-development's job)
 - Multi-project planning (plan one feature at a time; the skill suggests decomposition if the input is too large)
 - Real-time collaboration (single user, single session)
-- `--resume` (the state file enables it, but the flag is not implemented in v1 — the user re-runs `/deep-plan <spec-path>` to continue)
+- Automatic preference migration from Claude Code memory to workbench API (manual sync until workbench preference storage is built)
