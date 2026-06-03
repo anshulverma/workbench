@@ -1002,7 +1002,7 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 
 | File | Change |
 |------|--------|
-| `models.py` | Add `EntityType` enum; add `suggested`, `suggestion_reason` to `TriageOption`; add `deferred_until` to `TriageCard`; add `parent_item_id`, `action_source`, `action_category` to `Item`; add `awaiting_followup` and `awaiting_confirmation` to card status; add `InterpretedResponse`, `SystemAction`, `UserTodo` models |
+| `models.py` | Add `EntityType` enum, `ActionCategory` enum; add `suggested`, `suggestion_reason` to `TriageOption`; add `deferred_until` to `TriageCard`; add `parent_item_id`, `action_source`, `action_category` to `Item`; add `awaiting_followup` and `awaiting_confirmation` to card status; add `InterpretedResponse`, `SystemAction`, `UserTodo` models; change `TriageResponse.choice` from `int` to `int \| None = None` (free-text responses have `choice=None`, `raw_text` populated); add `type`, `interpreted`, `confirmed` fields to `InteractionEntry` |
 | `config.py` | Add `connections:` section, new `EnrichmentConfig` model (breaking change from `dict \| None`), bump config version to `0.2.0` |
 | `main.py` | Initialize connections at startup, pass to provider registry with two-arg constructor, use `create_composite_enricher`, serve static UI assets, close on shutdown |
 | `registry.py` | Support two-arg constructor for connection injection; add `create_composite_enricher()` function that pops `source_types`/`connection`/`budget` and builds CompositeEnricher |
@@ -1013,7 +1013,9 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 | `providers/enrichment/base.py` | Document that enrichers receive connections via two-arg constructor; document `entity_refs` output requirement |
 | `config.example.yml` | Add `connections:` section, Gmail/Calendar/GChat source examples, new enrichment provider list format |
 | `pipeline/scheduler.py` | Error isolation per adapter (try/except around each `source.poll()`); check `connection.is_healthy()` before polling; triage queue skips cards with `deferred_until > now()`; skip expiry check for deferred cards; add "Pending actions" section to morning briefing |
-| `api/triage.py` | Add `defer` action handler; add `other` action handler (set `awaiting_followup`); handle `awaiting_followup` and `awaiting_confirmation` states; execute `InterpretedResponse` (system actions + user todos); confirmation flow for destructive actions; log interpreted responses |
+| `api/triage.py` | Handle `choice=None` as free-text path; add `defer` action handler; add `other` action handler (set `awaiting_followup`); handle `awaiting_followup` and `awaiting_confirmation` states; execute `InterpretedResponse` (system actions + user todos); confirmation flow for destructive actions; log interpreted responses |
+| `storage/postgres/triage.py` | Update `get_pending()` to include `awaiting_followup`/`awaiting_confirmation` in status IN clause; update `get_next_unsent()` to add `AND (deferred_until IS NULL OR deferred_until <= NOW())`; update `expire_old_cards()` to exclude `awaiting_followup`/`awaiting_confirmation` (they have their own 1h timeout) |
+| `storage/postgres/interactions.py` | Update INSERT and `_row_to_entry()` deserializer for new InteractionEntry fields (`type`, `interpreted`, `confirmed`) |
 | `migrations/` | Alembic migration: add `deferred_until` to `triage_cards`; add `parent_item_id`, `action_source`, `action_category` to `items` |
 
 ### Memory service (`src/memory/`) — Modified Files
