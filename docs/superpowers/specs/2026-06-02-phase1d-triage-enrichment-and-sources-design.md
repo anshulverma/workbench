@@ -124,7 +124,11 @@ class GoogleConnection(Connection):
 
 **Scopes:** Combined into a single OAuth consent. Adding a new Google adapter doesn't require re-consent unless it needs a new scope.
 
-**Async wrapping:** The Google API client library (`google-api-python-client`) is synchronous. All API calls are wrapped in `asyncio.to_thread()` to avoid blocking the event loop. This applies to all adapters and enrichers using the connection.
+**Async wrapping:** The Google API client library (`google-api-python-client`) is synchronous. Each Google adapter wraps its entire `poll()` and `enrich()` method body in a single `asyncio.to_thread()` call — one thread per adapter per cycle. Internal methods `_poll_sync(since)` and `_enrich_sync(item, ...)` contain all synchronous Google API work; the async public methods delegate to them via `asyncio.to_thread(self._poll_sync, since)`. Per-API-call wrapping is unnecessary since Google API calls within a single poll are sequential (pagination).
+
+**Startup failure:** If `initialize()` fails (bad credentials, expired token, network error), the server refuses to start with a clear error message. Connections must initialize successfully — there is no degraded startup mode. Runtime health checks (`is_healthy()`) handle mid-run failures gracefully (adapters skipped, morning briefing notes unhealthy connections).
+
+**Token expiry recovery:** If the OAuth refresh token expires mid-run (rare — Google refresh tokens last until revoked), `is_healthy()` returns `False`, adapters are skipped, and the morning briefing warns about the unhealthy connection. Recovery: run `workbench init --reauth google` and restart the server.
 
 ### InternConnection (workbench-meta)
 
@@ -132,7 +136,7 @@ class GoogleConnection(Connection):
 
 Wraps Intern API / GraphQL authentication. Shared by Meta Tasks, Workplace, and Docs adapters.
 
-**Open question:** The specific auth mechanism (cookie-based, service token, or other) will be determined during implementation based on what's available on devgpu.
+**Auth mechanism:** Must be resolved before implementing Meta adapters. Investigate what auth mechanisms are available on devgpu for Intern API and Workplace Graph API. Determine if `meta` CLI authentication can be reused. Implement `InternConnection` with the real auth mechanism before proceeding with Meta adapter implementation. Google adapters and Tracks B+C can proceed in parallel.
 
 ### Config
 
@@ -162,7 +166,7 @@ sources:
 
 ### Config version bump
 
-Adding the `connections:` section and changing the `enrichment:` section shape are config schema changes. Bump config version from `0.1.0` to `0.2.0`. The `enrichment:` change is a **breaking change** — existing configs with the old single-enricher `dict` format must be migrated to the new `EnrichmentConfig` shape (see Enrichment Config section). Configs without a `connections:` section are valid — adapters that don't need a connection are unaffected.
+Adding the `connections:` section and changing the `enrichment:` section shape are config schema changes. Bump config version to `0.3.0` (from current `0.2.1`). The `enrichment:` change has a backward-compat normalizer (`_normalize_enrichment` model validator) so old-style `{class: ...}` configs still load, but the version bump signals the config evolution. Configs without a `connections:` section are valid — adapters that don't need a connection are unaffected.
 
 ## Track A: Source Adapters
 
@@ -171,6 +175,30 @@ All adapters implement the existing `SourceAdapter` ABC: `poll(since: datetime |
 ### Adapter error isolation
 
 The scheduler wraps each `source.poll()` call in a try/except, logs the error, and continues to the next adapter. A broken Gmail adapter does not prevent GitHub or Phabricator from polling. Failed adapters retry on the next poll cycle. The scheduler checks `connection.is_healthy()` before polling and skips adapters whose connection is unhealthy with a warning log.
+
+### Adapter state persistence
+
+Adapters that need persistent state across restarts (e.g., GChat's `tracked_threads` map) use an `adapter_state` PG table:
+
+```sql
+CREATE TABLE adapter_state (
+    adapter_name TEXT PRIMARY KEY,
+    state JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+A new `AdapterStateStore` interface provides `get_state(name) -> dict | None` and `save_state(name, state: dict)`. PG implementation uses the table above.
+
+Adapters that need state declare a `state_store` parameter in their constructor:
+
+```python
+class GChatAdapter(SourceAdapter):
+    def __init__(self, config: ProviderConfig, connection=None, state_store=None):
+        self._state_store = state_store
+```
+
+The registry inspects the constructor signature (same pattern as `connection`) and injects the `state_store` if declared.
 
 ### Gmail (core)
 
@@ -240,6 +268,8 @@ Inline images (embedded in HTML body) are captured with `inline: true`. Actual a
 
 **Recurring events:** Each instance of a recurring event has a unique `event_id` with a different start time, so each instance hashes differently and is ingested once. Subsequent instances of "weekly standup" will be auto-dropped by the noise filter as the memory service learns the pattern. `is_recurring: true` and `recurring_event_id` in urgency signals give the filter signal to learn faster.
 
+**All-day events:** Events with `date` instead of `dateTime` are included with adapted signals. Start time is treated as midnight of the event date. `starts_within_hours` is calculated from midnight. Urgency signals include `is_all_day: true`. The noise filter learns from user responses whether all-day events (typically holidays, birthdays, reminders) should be dropped.
+
 ### Google Chat (core)
 
 `workbench/providers/source/gchat.py`
@@ -279,7 +309,13 @@ Inline images (embedded in HTML body) are captured with `inline: true`. Actual a
 - `raw_text`: JSON with all thread messages (text, sender, timestamp), space name, thread name, annotations
 - `urgency_signals`: `{is_mention: bool, is_direct_message: bool, thread_depth: int, sender: str, space_name: str}`
 
-**Thread state persistence:** The adapter persists its `tracked_threads` map across restarts. Implementation approach to be determined during planning (options: config store via stores access, or state file on disk).
+**Thread state persistence:** The adapter persists its `tracked_threads` map via the `AdapterStateStore` PG table. On each poll, the adapter saves the current `tracked_threads` map as JSON. On startup, it loads from the store (or starts fresh if no state exists).
+
+**Feedback loop prevention (defense-in-depth):** Three layers prevent the GChat adapter from ingesting triage card messages:
+1. `exclude_spaces` config — the messenger/bot space must be listed
+2. **Startup validation** — the adapter warns if the messenger space is not in `exclude_spaces`
+3. **Bot message filtering** — messages from the bot's own identity are always filtered out
+4. **Triage response filtering** — purely numeric messages (1-9) are skipped as likely triage responses
 
 ### Meta Tasks (workbench-meta)
 
@@ -321,7 +357,7 @@ Inline images (embedded in HTML body) are captured with `inline: true`. Actual a
 - `raw_text`: JSON with content, author, group name, permalink, attachments
 - `urgency_signals`: `{author: str, group_name: str, comment_count: int, is_mention: bool, reaction_count: int}`
 
-**Open question:** Whether to use Workplace's own Graph API or Intern API. To be determined during implementation.
+**API:** Uses Workplace's own Graph API for data access. Auth is shared via `InternConnection` — the connection provides the auth token/cookie, and the adapter uses it to call Workplace's Graph API endpoints.
 
 ### Internal Docs/Wiki (workbench-meta)
 
@@ -384,8 +420,8 @@ Entity ref mapping by source type:
 | `github` | `(PERSON, "github:{author}")`, `(REPO, "github:{repo}")`, `(PERSON, "github:{reviewer}")` per reviewer |
 | `calendar` | `(PERSON, "gcal:{organizer}")`, `(PERSON, "gcal:{attendee}")` per attendee |
 | `gchat_message` | `(PERSON, "gchat:{sender}")`, `(SPACE, "gchat:{space_id}")` |
-| `task` | `(PERSON, "task:{assignee}")`, `(PERSON, "task:{reporter}")` |
-| `workplace` | `(PERSON, "wp:{author}")`, `(GROUP, "wp:{group_id}")` |
+| `task` | `(PERSON, "task:{assignee}")`, `(PERSON, "task:{reporter}")`, `(TEAM, "task:{team_tag}")` per team tag |
+| `workplace` | `(PERSON, "wp:{author}")`, `(GROUP, "wp:{group_id}")`, `(TEAM, "wp:{group_name}")` when group maps to a team |
 | `doc` | `(PERSON, "doc:{author}")`, `(PERSON, "doc:{last_editor}")` |
 | `diff` | `(PERSON, "diff:{author}")`, `(PERSON, "diff:{reviewer}")` per reviewer, `(REPO, "diff:{repo}")` |
 
@@ -427,7 +463,15 @@ class CompositeEnricher(ContextEnricher):
     async def enrich(self, item, depth, budget, memory):
         enricher = self.enrichers.get(item.source_type, self.default)
         effective_budget = self.budgets.get(item.source_type, budget)
-        return await enricher.enrich(item, depth, effective_budget, memory=memory)
+        try:
+            return await enricher.enrich(item, depth, effective_budget, memory=memory)
+        except Exception:
+            logger.warning("enricher_failure", extra={
+                "source_type": item.source_type,
+                "enricher_class": type(enricher).__name__,
+                "item_id": item.id,
+            }, exc_info=True)
+            return {}
 ```
 
 Constructed by a dedicated `create_composite_enricher(config, connections)` function in `registry.py` — not the generic `create_provider()`. This function:
@@ -478,7 +522,7 @@ class EnrichmentConfig(BaseModel):
 
 | Enricher | Connection | What it fetches |
 |----------|-----------|-----------------|
-| `GmailEnricher` | `google` | Full thread (other messages in thread), sender contact info, attachment content (images → description, PDFs → text extraction) |
+| `GmailEnricher` | `google` | Full thread (other messages in thread), sender contact info, attachment content via `llm.describe_attachment()`: images described via Claude vision API, PDFs text-extracted via pdfplumber (first 5 pages, configurable). Attachments over 10MB skipped with a note in enrichment context. |
 | `GCalendarEnricher` | `google` | Attendee org info (if available), related documents linked in description, recurring event pattern |
 | `GChatEnricher` | `google` | Full thread context (prior messages), space description, linked resources |
 | `MetaTasksEnricher` | `meta_intern` | Subtask list, blocker details, related diffs, parent task context |
@@ -520,7 +564,7 @@ CREATE TABLE entity_identities (
 CREATE INDEX idx_entity_identities_canonical ON entity_identities(entity_type, canonical_id);
 ```
 
-The existing `entities` table is keyed by `(entity_type, entity_id)` where `entity_id` = `canonical_id`.
+The existing `entities` table is keyed by `(entity_type, entity_id)` where `entity_id` = `canonical_id` (a generated UUID, not a source-qualified ID — see Resolution Algorithm below).
 
 ### Resolution algorithm
 
@@ -542,11 +586,11 @@ When `POST /record/entity` receives `(PERSON, "github:alice-gh", {email: "alice@
    ```
 
    - **Match found** → use that entity's `canonical_id`, insert identity mapping `(PERSON, "github:alice-gh") → canonical_id`
-   - **No match** → new `canonical_id` = `"github:alice-gh"` (first-seen source_id), insert identity mapping
+   - **No match** → generate a new UUID as `canonical_id`, insert identity mapping
 
 3. **UPSERT facts** into `entities` table under `(PERSON, canonical_id)` via JSONB `||` merge
 
-4. **Update Neo4j graph** — create/update node under the canonical identity
+4. **Update Neo4j graph** (best-effort) — create/update node under the canonical identity. If Neo4j fails, log warning and continue — PG is the source of truth for identity resolution.
 
 ### Query path
 
@@ -563,40 +607,41 @@ async def query_entity(self, entity_type, source_id):
 When a new identifying attribute is discovered that links two previously separate canonical entities (e.g., you learn on day 5 that `github:alice-gh` has email `alice@meta.com`, matching an existing `email:alice@meta.com` canonical entity):
 
 1. Pick one canonical ID as the survivor (the one with more facts)
-2. Repoint all `entity_identities` rows from the absorbed canonical to the survivor
-3. Merge facts from the absorbed entity into the survivor via JSONB `||`
-4. Merge Neo4j graph nodes
-5. Delete the absorbed entity row from the `entities` table
+2. In a single PG transaction:
+   a. Repoint all `entity_identities` rows from the absorbed canonical to the survivor
+   b. Merge facts from the absorbed entity into the survivor via JSONB `||`
+   c. Delete the absorbed entity row from the `entities` table
+3. After PG transaction commits, merge Neo4j graph nodes (best-effort). If Neo4j fails, log warning with both canonical IDs. The query path resolves through PG's identity table, so queries return correct merged facts even if Neo4j is stale.
 
 ### Manual override
 
-Two admin endpoints for correcting wrong merges:
+Two admin endpoints for correcting wrong merges, exposed on both the memory service and proxied through workbench for a single API surface:
 
-- `POST /admin/merge-entities` — manually merge two entities. Same process as late discovery merge.
-- `POST /admin/split-entity` — split a source_id out of a canonical entity into its own canonical entity. Creates a new entity with only the facts from that source, repoints the identity mapping.
+- `POST /api/admin/merge-entities` — manually merge two entities. Same process as late discovery merge.
+- `POST /api/admin/split-entity` — split a source_id out of a canonical entity into its own canonical entity. Creates a new entity with only the facts from that source, repoints the identity mapping.
 
-Both operations update the identity table, entities table, and Neo4j graph atomically.
+Both operations update the identity table and entities table in a single PG transaction, then update Neo4j best-effort. The `HttpMemoryLayer` interface gains `merge_entities()` and `split_entity()` methods. Workbench proxies these calls to the memory service.
 
 ### Example lifecycle
 
 ```
 Day 1: GitHub PR from alice-gh
   record_entity(PERSON, "github:alice-gh", {email: "alice@meta.com", name: "Alice Smith", team: "infra"})
-  → no existing match → canonical_id = "github:alice-gh"
-  → identity: (PERSON, "github:alice-gh") → "github:alice-gh"
-  → entities: (PERSON, "github:alice-gh") = {email, name, team}
+  → no existing match → canonical_id = uuid("a1b2c3d4-...") (generated UUID)
+  → identity: (PERSON, "github:alice-gh") → "a1b2c3d4-..."
+  → entities: (PERSON, "a1b2c3d4-...") = {email, name, team}
 
 Day 2: Email from alice@meta.com
   record_entity(PERSON, "email:alice@meta.com", {email: "alice@meta.com", name: "Alice Smith"})
-  → search: PERSON with email="alice@meta.com"? Yes → canonical_id = "github:alice-gh"
-  → identity: (PERSON, "email:alice@meta.com") → "github:alice-gh"
+  → search: PERSON with email="alice@meta.com"? Yes → canonical_id = "a1b2c3d4-..."
+  → identity: (PERSON, "email:alice@meta.com") → "a1b2c3d4-..."
   → entities: facts merged (team preserved from day 1)
 
 Day 3: Phabricator diff from alice
   record_entity(PERSON, "diff:alice", {name: "Alice Smith", reviews: ["infra-core"]})
   → search: PERSON with name="Alice Smith"? Yes, score=5 (medium). Need 10. Not enough alone.
   → BUT if alice has username="alice" matching... depends on available facts.
-  → If no auto-merge: new canonical_id = "diff:alice", separate entity
+  → If no auto-merge: new canonical_id = uuid("e5f6g7h8-..."), separate entity
   → If later alice's PHID is discovered matching: late discovery merge kicks in
 ```
 
@@ -635,12 +680,11 @@ memory_context = {
 }
 ```
 
-4. **Cap memory context** to keep the LLM prompt manageable:
-   - Top 5 entity_refs by relevance (item author/sender first, then others)
-   - Max 10 relationship entries total
-   - Max 20 preference facts
+4. **No caps on memory context** — send all entity_refs, all relationships, and all preference facts to the LLM. For a single-user tool with bounded daily throughput (10-20 items), prompt sizes are manageable. The LLM decides what's relevant.
 
-5. **Call LLM** for card generation — always, regardless of memory availability. If memory is unavailable, `memory_context` is empty but the LLM still generates a card body from the enrichment context alone. Template fallback is used only when the LLM call itself fails.
+5. **Store memory context on card** — save the `memory_context` dict in `card_content["memory_context"]` at generation time. This is used later by `interpret_triage_response()` so the interpreter has the same context the user saw.
+
+6. **Call LLM** for card generation — always, regardless of memory availability. If memory is unavailable, `memory_context` is empty but the LLM still generates a card body from the enrichment context alone. Template fallback is used only when the LLM call itself fails.
 
 ### LLM Card Generation
 
@@ -719,8 +763,8 @@ A new triage action `defer` puts the card back in the queue with a delay. Implem
 - Add `deferred_until: datetime | None` column to the `triage_cards` table (Alembic migration)
 - When the user selects `defer`, set `deferred_until` to now + snooze duration (from `option.details.get("hours", 4)`)
 - The triage queue skips cards where `deferred_until > now()`
-- When the snooze expires, the card re-enters the queue at its original relevance score
-- Item remains in `pending_triage` status throughout
+- When the snooze expires, the scheduler detects cards with `deferred_until <= now()`, re-scores them via `llm.score_relevance()`, and updates `relevance_score`. If the new score falls below `drop_threshold`, the card is auto-skipped (item archived). Otherwise the card status is set to `queued` with the new score, and it re-enters the normal queue ordering.
+- Item remains in `pending_triage` status throughout (until auto-skipped or re-triaged)
 - Deferred cards pause their expiry clock (expiry is not checked while `deferred_until > now()`)
 
 ### Free-Text Triage Responses
@@ -740,7 +784,7 @@ queued → sent → responded / expired
                  ↘ awaiting_confirmation → responded / expired
 ```
 
-**Timeout on pending states:** If no follow-up or confirmation arrives within 1 hour (configurable), the card reverts to `sent` status with response `"timed_out"` and the triage queue advances to the next card. This prevents a forgotten follow-up from blocking the entire triage pipeline. The card can be re-triaged later.
+**Timeout on pending states:** If no follow-up or confirmation arrives within 1 hour (configurable), the card reverts to `queued` status — `sent_at` and `bot_message_id` are cleared so the card gets re-sent with fresh options when it re-enters the queue. A log entry records the timeout event (useful for learning — "user didn't follow up on this type of card"). The card's `relevance_score` stays the same, so it re-enters at its original priority position.
 
 **Card rendering includes a free-text hint:**
 
@@ -753,7 +797,9 @@ queued → sent → responded / expired
 Or just reply with what you'd like to do.
 ```
 
-**Response handler logic:**
+**Consolidated response handling:** All triage response logic (numbered options, free text, defer, other, confirmation) is consolidated into a shared `execute_triage_response(card, message_text, stores, llm, memory, messenger)` function in `pipeline/triage.py`. Both the API endpoint (`api/triage.py`) and the scheduler (`pipeline/scheduler.py`) call this shared function. This eliminates the current duplication of response handling logic between the two paths.
+
+**Response handler logic (inside `execute_triage_response`):**
 
 ```python
 if card.status == "awaiting_followup":
@@ -779,6 +825,8 @@ else:
 
 New `LLMProvider` method: `interpret_triage_response(card: TriageCard, raw_text: str) -> InterpretedResponse`
 
+The interpreter receives the full context used during card generation: card body, options, enrichment context, entity knowledge, relationships, and preference facts — all read from `card.card_content["memory_context"]` (stored at generation time). This ensures the interpreter has the same context the user saw, enabling nuanced interpretations like "handle this the same way I handled alice's last PR."
+
 ```python
 class SystemAction(BaseModel):
     action: str          # constrained to "add_todo", "skip", "mute_pattern", "defer"
@@ -792,6 +840,11 @@ class InterpretedResponse(BaseModel):
     system_actions: list[SystemAction]
     user_todos: list[UserTodo]
     explanation: str     # what the LLM understood
+
+# triage_cards.response column stores:
+# - For numbered options: the option dict (as before)
+# - For free-text: the raw text string
+# The structured InterpretedResponse is stored in InteractionEntry.interpreted
 ```
 
 Example: "add as P3 and assign to bob" →
@@ -880,10 +933,12 @@ class Item(BaseModel):
     # ... existing fields ...
     parent_item_id: str | None = None       # links to the triggering item
     action_source: str | None = None        # "triage_response", "pipeline", "manual"
-    action_category: str | None = None      # "delegation", "communication", "scheduling", "review", "creation", "update"
+    action_category: str | None = None      # one of ActionCategory enum values
+    snoozed_until: datetime | None = None   # action item snooze — GET /api/actions excludes snoozed items
+    completed_at: datetime | None = None    # when the action was marked done (alongside status="done")
 ```
 
-**Action categories** — fixed enum, constrained via LLM tool use:
+**Action categories** — fixed enum (8 values), constrained via LLM tool use:
 
 ```python
 class ActionCategory(str, Enum):
@@ -893,6 +948,8 @@ class ActionCategory(str, Enum):
     REVIEW = "review"               # "Review by Friday", "Read the RFC"
     CREATION = "creation"           # "Create task for this", "File a bug"
     UPDATE = "update"               # "Update the doc", "Fix the config"
+    DECISION = "decision"           # "Decline the meeting", "Approve the request"
+    INVESTIGATION = "investigation" # "Investigate why this failed", "Look into the regression"
 ```
 
 If the LLM produces an unsupported category (shouldn't happen with tool use constraint, but as a safety net): the user action fails with a message "I couldn't categorize that action. It's been logged for review." The unsupported category is logged with a structured marker (`unsupported_action_category`) for the developer to review and potentially extend the enum.
@@ -923,13 +980,13 @@ If the LLM produces an unsupported category (shouldn't happen with tool use cons
 }
 ```
 
-Supports query params: `?status=active`, `?priority=P1`, `?category=delegation`.
+Supports query params: `?status=active`, `?priority=P1`, `?category=delegation`. Excludes items where `snoozed_until > now()` unless `?include_snoozed=true`.
 
-`POST /api/actions/{id}/done` — marks an action item as done.
+`POST /api/actions/{id}/done` — marks an action item as done. Sets `status = "done"` and `completed_at = now()`.
 
 `POST /api/actions/{id}/priority` — changes priority. Body: `{"priority": "P1"}`.
 
-`POST /api/actions/{id}/snooze` — snoozes an action item. Body: `{"hours": 4}`.
+`POST /api/actions/{id}/snooze` — snoozes an action item. Body: `{"hours": 4}`. Sets `snoozed_until = now() + hours`. When the snooze expires, the item reappears in the active actions list automatically (query-time filter, no background task).
 
 ### Plugin Command
 
@@ -937,7 +994,7 @@ Supports query params: `?status=active`, `?priority=P1`, `?category=delegation`.
 
 ### Morning Briefing
 
-Add a "Pending actions" section to the daily morning briefing, after the existing P0/P1/P2 sections:
+Add a "Pending actions" section to the daily morning briefing at position 5 (after new items by source, before queue health). Updated briefing order: (1) P0 Today, (2) P1 This Week, (3) new items since yesterday, (4) pending triage, (5) **pending actions**, (6) queue health, (7) auto-decisions overnight.
 
 ```
 Pending actions (5)
@@ -955,7 +1012,7 @@ Pending actions (5)
 
 A simple single-page app served by the FastAPI server at `/ui/actions`.
 
-**Stack:** Vite + React, built as static assets, served by FastAPI's `StaticFiles`. Multi-stage Docker build: Node stage builds React, Python stage copies built assets. During dev, Vite dev server proxies API calls to FastAPI.
+**Stack:** Vite + React + Tailwind CSS, built as static assets, served by FastAPI's `StaticFiles`. Multi-stage Docker build: Node stage builds React, Python stage copies built assets. During dev, two processes: `make dev-ui` starts Vite dev server with API proxy to FastAPI, `make up` starts FastAPI via Docker.
 
 **Location:** `ui/` directory at project root.
 
@@ -964,7 +1021,10 @@ A simple single-page app served by the FastAPI server at `/ui/actions`.
 - Each item shows: summary, priority badge, parent item link, age
 - Actions per item: "Mark done", "Change priority", "Snooze"
 - Filter bar: by category, priority, action source
+- "Recently completed" section showing items with `completed_at` in the last 24 hours
 - Responsive — works on mobile for quick checks
+
+**Styling:** Tailwind CSS via `tailwindcss` dev dependency. Vite integrates Tailwind out of the box.
 
 **No state management library** — React hooks + fetch are sufficient for a single-page categorized list.
 
@@ -1002,21 +1062,23 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 
 | File | Change |
 |------|--------|
-| `models.py` | Add `EntityType` enum, `ActionCategory` enum; add `suggested`, `suggestion_reason` to `TriageOption`; add `deferred_until` to `TriageCard`; add `parent_item_id`, `action_source`, `action_category` to `Item`; add `awaiting_followup` and `awaiting_confirmation` to card status; add `InterpretedResponse`, `SystemAction`, `UserTodo` models; change `TriageResponse.choice` from `int` to `int \| None = None` (free-text responses have `choice=None`, `raw_text` populated); add `type`, `interpreted`, `confirmed` fields to `InteractionEntry` |
-| `config.py` | Add `connections:` section, new `EnrichmentConfig` model (breaking change from `dict \| None`), bump config version to `0.2.0` |
+| `models.py` | Add `EntityType` enum, `ActionCategory` enum (8 values incl. decision, investigation); add `suggested`, `suggestion_reason` to `TriageOption`; add `deferred_until` to `TriageCard`; add `parent_item_id`, `action_source`, `action_category`, `snoozed_until`, `completed_at` to `Item`; add `awaiting_followup` and `awaiting_confirmation` to card status; add `InterpretedResponse`, `SystemAction`, `UserTodo` models; change `TriageResponse.choice` from `int` to `int \| None = None` (free-text responses have `choice=None`, `raw_text` populated); add `type`, `interpreted`, `confirmed` fields to `InteractionEntry` |
+| `config.py` | Add `connections:` section, new `EnrichmentConfig` model (with backward-compat normalizer), bump config version to `0.3.0` |
 | `main.py` | Initialize connections at startup, pass to provider registry with two-arg constructor, use `create_composite_enricher`, serve static UI assets, close on shutdown |
 | `registry.py` | Support two-arg constructor for connection injection; add `create_composite_enricher()` function that pops `source_types`/`connection`/`budget` and builds CompositeEnricher |
-| `pipeline/triage.py` | `generate_card()` accepts `memory`, extracts entity_refs, gathers memory context (resolved through identity), passes to LLM; always append "Other" option; always LLM, template on failure only; simplify `format_card_for_chat()` with free-text hint |
+| `pipeline/triage.py` | `generate_card()` accepts `memory`, extracts entity_refs, gathers memory context (no caps), stores on card, passes to LLM; always append "Other" option; always LLM, template on failure only; simplify `format_card_for_chat()` with free-text hint; add shared `execute_triage_response()` function (consolidates response handling from api/triage.py and scheduler) |
 | `pipeline/engine.py` | Pass `self.memory` to `generate_card()` |
-| `providers/llm/base.py` | Add `memory_context: dict \| None = None` to `generate_triage_card()`; add `interpret_triage_response()` method |
-| `providers/llm/anthropic.py` | LLM card generation prompt with indexed preference facts and tool use enum constraint; suggestion validation; `interpret_triage_response()` with InterpretedResponse schema; template fallback on LLM failure only |
+| `providers/llm/base.py` | Add `memory_context: dict \| None = None` to `generate_triage_card()`; add `interpret_triage_response()` method; add `describe_attachment(content: bytes, mime_type: str, context: str) -> str` method |
+| `providers/llm/anthropic.py` | LLM card generation prompt with all entity_refs/relationships/preference facts (no caps) and tool use enum constraint; suggestion validation; `interpret_triage_response()` with full context from card; `describe_attachment()` routing: `image/*` via Claude vision API, `application/pdf` via pdfplumber text extraction; template fallback on LLM failure only |
 | `providers/enrichment/base.py` | Document that enrichers receive connections via two-arg constructor; document `entity_refs` output requirement |
 | `config.example.yml` | Add `connections:` section, Gmail/Calendar/GChat source examples, new enrichment provider list format |
-| `pipeline/scheduler.py` | Error isolation per adapter (try/except around each `source.poll()`); check `connection.is_healthy()` before polling; triage queue skips cards with `deferred_until > now()`; skip expiry check for deferred cards; add "Pending actions" section to morning briefing |
-| `api/triage.py` | Handle `choice=None` as free-text path; add `defer` action handler; add `other` action handler (set `awaiting_followup`); handle `awaiting_followup` and `awaiting_confirmation` states; execute `InterpretedResponse` (system actions + user todos); confirmation flow for destructive actions; log interpreted responses |
+| `pipeline/scheduler.py` | Error isolation per adapter (try/except around each `source.poll()`); check `connection.is_healthy()` before polling; re-score deferred cards on snooze expiry (auto-skip if below drop_threshold); timeout handling (revert awaiting cards to queued); add "Pending actions" section to morning briefing (position 5) |
+| `api/triage.py` | Delegates to shared `execute_triage_response()` from `pipeline/triage.py`; handle `choice=None` as free-text path; all new actions (defer, other, free-text, confirmation) via the shared function |
 | `storage/postgres/triage.py` | Update `get_pending()` to include `awaiting_followup`/`awaiting_confirmation` in status IN clause; update `get_next_unsent()` to add `AND (deferred_until IS NULL OR deferred_until <= NOW())`; update `expire_old_cards()` to exclude `awaiting_followup`/`awaiting_confirmation` (they have their own 1h timeout) |
 | `storage/postgres/interactions.py` | Update INSERT and `_row_to_entry()` deserializer for new InteractionEntry fields (`type`, `interpreted`, `confirmed`) |
-| `migrations/` | Alembic migration: add `deferred_until` to `triage_cards`; add `parent_item_id`, `action_source`, `action_category` to `items` |
+| `migrations/` | Alembic migration: add `deferred_until` to `triage_cards`; add `parent_item_id`, `action_source`, `action_category`, `snoozed_until`, `completed_at` to `items`; create `adapter_state` table |
+| `scripts/regenerate_cards.py` | One-time migration script: re-generates all `queued` cards with new LLM flow (including memory context). Runs after Alembic migration, before server starts. |
+| `storage/adapter_state.py` | `AdapterStateStore` interface + `PgAdapterStateStore` implementation |
 
 ### Memory service (`src/memory/`) — Modified Files
 
@@ -1024,7 +1086,7 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 |------|--------|
 | `queue.py` | Add `entity_identities` table creation in `initialize()` |
 | `graphiti_layer.py` | Identity resolution in `record_entity()`: check identity table, score identifying attributes, auto-merge or create new canonical; late discovery merge logic; update `query_entity()` to resolve through identity table |
-| `main.py` | Add `POST /admin/merge-entities` and `POST /admin/split-entity` endpoints |
+| `main.py` | Add `POST /admin/merge-entities` and `POST /admin/split-entity` endpoints; UUID generation for canonical IDs |
 | `models.py` | Add signal tier constants for identifying attributes |
 
 ### `workbench-meta/` — New Files
@@ -1063,13 +1125,11 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 | `tests/test_actions_api.py` | GET /api/actions categorization, done/priority/snooze endpoints |
 | `tests/test_registry_connection.py` | Two-arg constructor injection, single-arg backward compatibility, create_composite_enricher |
 
-## Open Questions
+## Resolved Questions (from Grilling Session 2026-06-02)
 
-To be resolved during implementation:
-
-1. **Workplace API:** Whether to use Workplace's own Graph API or Intern API for polling posts.
-2. **InternConnection auth:** Specific auth mechanism for Intern API from devgpu (cookie-based, service token, or other).
-3. **GChat thread state persistence:** Whether to use the config store (requires stores access in adapter) or a state file on disk.
+1. **Workplace API:** → Workplace's own Graph API, with auth shared via InternConnection.
+2. **InternConnection auth:** → Must be resolved before implementing Meta adapters. Investigate devgpu auth mechanisms first. Google adapters and Tracks B+C can proceed in parallel.
+3. **GChat thread state persistence:** → New `adapter_state` PG table with `AdapterStateStore` interface. Injected via `state_store` constructor arg using `inspect.signature` pattern.
 
 ## Verification
 
@@ -1114,7 +1174,7 @@ Phase 1d is complete when:
 32. Destructive actions (skip, mute) require confirmation; additive actions execute immediately
 33. User todos create `Item` objects with `parent_item_id`, `action_source`, and `action_category`
 34. Interpreted responses are logged for future model training
-35. `defer` action sets `deferred_until` and the triage queue respects it; deferred cards pause expiry
+35. `defer` action sets `deferred_until`; deferred cards pause expiry; on snooze expiry, cards are re-scored via LLM and auto-skipped if below drop_threshold
 36. `format_card_for_chat()` renders card body + options with suggestion markers + free-text hint
 37. No regression in card rendering for existing GitHub/Phabricator sources
 
@@ -1130,10 +1190,20 @@ Phase 1d is complete when:
 44. `connections:` config section is parsed, validated, and connections are initialized at startup
 45. Registry supports two-arg constructor for connection injection
 46. `create_composite_enricher()` correctly pops `source_types`/`connection`/`budget` and builds CompositeEnricher
-47. `EnrichmentConfig` model replaces old `dict | None` config (breaking change documented)
-48. Config version is bumped to `0.2.0`
-49. `Item` model has `parent_item_id`, `action_source`, `action_category` fields (Alembic migration)
+47. `EnrichmentConfig` model replaces old `dict | None` config (backward-compat normalizer for old format)
+48. Config version is bumped to `0.3.0`
+49. `Item` model has `parent_item_id`, `action_source`, `action_category`, `snoozed_until`, `completed_at` fields (Alembic migration)
 50. All existing tests pass (no regressions)
+51. `adapter_state` PG table created; `AdapterStateStore` interface + PG implementation
+52. GChat adapter uses `state_store` for thread state persistence
+53. Triage response handling consolidated into shared `execute_triage_response()` function
+54. `describe_attachment()` on `LLMProvider` handles images (vision API) and PDFs (pdfplumber)
+55. Entity admin endpoints (merge/split) proxied through workbench API
+56. Connection initialization failure is a hard startup error
+57. Queued cards re-generated with new LLM format on upgrade (one-time migration script)
+58. GChat adapter has defense-in-depth: bot message filtering + exclude_spaces validation + triage response filtering
+59. All-day calendar events included with `is_all_day: true` in urgency signals
+60. ActionCategory enum has 8 values including decision and investigation
 
 ## Out of Scope
 
