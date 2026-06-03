@@ -1131,19 +1131,36 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 2. **InternConnection auth:** → Must be resolved before implementing Meta adapters. Investigate devgpu auth mechanisms first. Google adapters and Tracks B+C can proceed in parallel.
 3. **GChat thread state persistence:** → New `adapter_state` PG table with `AdapterStateStore` interface. Injected via `state_store` constructor arg using `inspect.signature` pattern.
 
+## Resolved Questions (from Grilling Session 2026-06-03)
+
+4. **Track independence:** → Tracks are independent for dev parallelism (separate engineers can work each track concurrently), but integration testing requires A before B. Track B can be built with mock entity_refs and tested in isolation, but end-to-end testing requires at least one Track A enricher.
+5. **Identity resolution enricher coverage:** → Built a per-enricher identifying attribute matrix. Gmail/Calendar are the strongest identity anchors (always have emails). GitHubEnricher makes one extra `gh api users/{login}` call to fetch profile email and numeric user ID as `platform_uid`. GChatEnricher extracts `platform_uid` from the sender's user resource name (`users/{userId}`). Meta sources reliably have platform UIDs.
+6. **execute_triage_response consolidation:** → Drop `messenger` parameter entirely. Function is pure: updates state, executes actions, returns `TriageResponseResult(explanation, prompt, followup_status, actions_executed)`. API endpoint returns the result as JSON. Scheduler checks result and sends prompt via messenger if needed. No risk of duplicate messages.
+7. **Deferred card expiry:** → Add `AND (deferred_until IS NULL OR deferred_until <= NOW())` to `expire_old_cards()`. Deferred cards are excluded from expiry while snoozed.
+8. **Deferred card re-scoring:** → Removed. Don't re-score deferred cards on snooze expiry. The user explicitly chose to defer — preserve the original `relevance_score`. Just set the card back to `queued`. Use a separate, longer timeout (30 days) for stale-deferred cleanup rather than re-scoring.
+9. **GoogleConnection thread safety:** → `GoogleConnection` uses a `build_service(api, version)` factory method that creates a fresh, thread-local API service with its own `Http` instance per call. Google's `httplib2.Http` is not thread-safe — pre-built service properties would break under concurrent enrichment (worker dequeues 2+ items in parallel, each calling `asyncio.to_thread()` on the same connection).
+10. **Enricher return format:** → `entity_refs` is a top-level key in the enricher return dict, alongside existing `calls_made`, `time_ms`, `context`. Metrics are preserved. Card generation extracts via `enrichment_context.get("entity_refs", [])`.
+11. **regenerate_cards.py migration script:** → Dropped. Old template-based cards degrade gracefully: `format_card_for_chat()` falls back from `card_body` to `summary`, old options lack `suggested` markers, no `memory_context` → interpreter works with empty context. Cards expire within 7 days. No deployment complexity or partial failure risk.
+12. **Attachment processing split:** → `describe_image(content, mime_type, context) -> str` on `LLMProvider` ABC (Claude vision API only). `extract_pdf_text(content, max_pages) -> str` in `workbench/util/attachments.py` (pdfplumber, no LLM). Routing logic lives in the enricher (GmailEnricher checks mime_type and calls the right tool). LLM provider stays clean — only LLM calls.
+13. **Awaiting timeout behavior:** → On timeout, revert card to `sent` status (not `queued`). Keep existing `bot_message_id`. Scheduler resumes polling that message. No duplicate messages sent, no late responses lost. For `awaiting_confirmation`, timeout discards the pending action and reverts to `sent`.
+14. **LLM output validation:** → Post-processing validates LLM-generated options before converting to TriageOption. Defer hours clamped to [1, 72]. Priority strings normalized (`"urgent"`→P0, `"high"`→P1, etc.). LLM prompt includes instruction: "Do NOT include an 'Other' or open-ended option — one is appended automatically."
+15. **Pending confirmation storage:** → Pending `InterpretedResponse` stored in `card_content["pending_interpretation"]` (JSONB, no new column). When "yes" arrives, the function reads and executes the pending interpretation. Stale interpretations (after timeout revert) are harmless — never read again.
+16. **Skip all confirmation:** → "Skip all" requires confirmation ("This will skip N pending cards. Reply 'yes' to confirm."). After confirmation, routes through `execute_triage_response()` for each card so interaction logging and memory recording happen. Cards in `awaiting_followup`/`awaiting_confirmation` are excluded from bulk skip.
+17. **GChat thread batching:** → Instead of producing a RawItem on every new message, the GChat adapter waits until a thread is idle for `idle_minutes` (default 15) or `max_delay_minutes` (default 120) since last ingestion. State (`last_activity`, `last_ingested` per thread) persisted in `adapter_state`. Prevents duplicate pipeline runs for active threads while ensuring long-running conversations get periodic ingestion.
+
 ## Verification
 
 Phase 1d is complete when:
 
 ### Track A
-1. `GoogleConnection` initializes, refreshes tokens, and exposes service accessors
+1. `GoogleConnection` initializes, refreshes tokens, and uses `build_service()` factory for thread-safe API access
 2. All Google API calls are wrapped in `asyncio.to_thread()` — no event loop blocking
 3. All 3 Google adapters (`Gmail`, `GCalendar`, `GChat`) return `list[RawItem]` from `poll(since)` using the shared connection
 4. All 3 Meta adapters (`MetaTasks`, `Workplace`, `MetaDocs`) return `list[RawItem]` from `poll(since)` using the shared connection
 5. Each adapter produces correct `source_type`, `source_id`, `raw_text`, and `urgency_signals`
 6. Gmail adapter correctly extracts multipart MIME bodies and captures attachment metadata (including inline images)
 7. Calendar adapter deduplicates by meaningful-field hash (RSVP changes don't trigger re-ingestion); recurring events include `recurring_event_id` in urgency signals
-8. GChat adapter implements thread subscription with configurable track mode, thread re-entry on participation, and bot message filtering
+8. GChat adapter implements thread subscription with configurable track mode, thread re-entry on participation, bot message filtering, and thread batching (idle 15min / max delay 2h)
 9. Dedup works correctly for each adapter (unique `source_id` per item, modifications detected where applicable)
 10. Scheduler polls all configured adapters on schedule with error isolation (one failure doesn't block others)
 11. `CompositeEnricher` routes to the correct enricher by source type with per-enricher budget overrides
@@ -1174,7 +1191,7 @@ Phase 1d is complete when:
 32. Destructive actions (skip, mute) require confirmation; additive actions execute immediately
 33. User todos create `Item` objects with `parent_item_id`, `action_source`, and `action_category`
 34. Interpreted responses are logged for future model training
-35. `defer` action sets `deferred_until`; deferred cards pause expiry; on snooze expiry, cards are re-scored via LLM and auto-skipped if below drop_threshold
+35. `defer` action sets `deferred_until`; deferred cards excluded from expiry; on snooze expiry, card reverts to `queued` with original `relevance_score` (no re-scoring)
 36. `format_card_for_chat()` renders card body + options with suggestion markers + free-text hint
 37. No regression in card rendering for existing GitHub/Phabricator sources
 
@@ -1196,14 +1213,20 @@ Phase 1d is complete when:
 50. All existing tests pass (no regressions)
 51. `adapter_state` PG table created; `AdapterStateStore` interface + PG implementation
 52. GChat adapter uses `state_store` for thread state persistence
-53. Triage response handling consolidated into shared `execute_triage_response()` function
-54. `describe_attachment()` on `LLMProvider` handles images (vision API) and PDFs (pdfplumber)
+53. Triage response handling consolidated into shared `execute_triage_response()` — no messenger param, returns `TriageResponseResult`
+54. `describe_image()` on `LLMProvider` handles images (vision API); `extract_pdf_text()` in `workbench/util/attachments.py` handles PDFs (pdfplumber)
 55. Entity admin endpoints (merge/split) proxied through workbench API
 56. Connection initialization failure is a hard startup error
-57. Queued cards re-generated with new LLM format on upgrade (one-time migration script)
+57. Old queued cards degrade gracefully — `format_card_for_chat()` falls back from `card_body` to `summary` (no migration script)
 58. GChat adapter has defense-in-depth: bot message filtering + exclude_spaces validation + triage response filtering
 59. All-day calendar events included with `is_all_day: true` in urgency signals
 60. ActionCategory enum has 8 values including decision and investigation
+61. GitHubEnricher fetches user profile for email/platform_uid via extra `gh api` call
+62. GChatEnricher extracts `platform_uid` from sender user resource name
+63. LLM-generated card options validated: defer hours clamped [1,72], priority strings normalized
+64. Pending `InterpretedResponse` stored in `card_content["pending_interpretation"]` for confirmation flow
+65. "Skip all" requires confirmation and routes through `execute_triage_response()` per card
+66. `awaiting_followup`/`awaiting_confirmation` timeout reverts to `sent` (not `queued`), keeps `bot_message_id`
 
 ## Out of Scope
 
