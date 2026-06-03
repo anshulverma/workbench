@@ -53,6 +53,44 @@ _Avoid_: "priority hints" (too vague), "metadata" (too generic)
 **Dead Letter**: An ingestion queue entry that has exhausted its retry attempts and permanently failed. Stays in the queue with status `dead_letter` for inspection via `GET /api/queue/dead-letter`. Surfaced in the morning briefing. Not automatically retried or purged -- requires manual investigation. Recovery via `POST /api/queue/dead-letter/{id}/retry` (resets to `queued`) or `DELETE /api/queue/dead-letter/{id}` (permanent discard).
 _Avoid_: "failed item" (ambiguous with pipeline failures)
 
+### Observability and Operations
+
+**Instrumented Wrapper**: A decorator-pattern class that wraps a provider (SourceAdapter, ContextEnricher, LLMProvider) with metrics (Prometheus counters and histograms) and structured logging without modifying the provider's own code. Applied automatically by the registry at construction time. Three implementations: `InstrumentedSourceAdapter`, `InstrumentedContextEnricher`, `InstrumentedLLMProvider`.
+_Avoid_: "metrics mixin" (it's a wrapper, not a mixin -- the provider is unaware of instrumentation)
+
+**Sanitizing Processor**: A structlog processor that redacts PII patterns (email addresses, phone numbers) and truncates free-text content in log output. Operates on structured event dicts, not formatted strings. Extensible with extra patterns via `extra_patterns` constructor arg (used by workbench-meta for PHIDs, employee IDs). Configurable via the `privacy:` config section.
+_Avoid_: "log filter" (it's a structlog processor, not a stdlib logging filter)
+
+**Correlation ID**: A UUID4 generated per HTTP request by `CorrelationIdMiddleware`, bound to structlog's contextvars so all loggers in that async context include it automatically. Returned in `X-Request-ID` response header. Pipeline jobs use their existing job_id as correlation ID during processing.
+_Avoid_: "trace ID" (distinct from OpenTelemetry trace IDs, which may also be present)
+
+**Alert Manager**: A component that evaluates health conditions (connection health, dead letters, adapter failures, queue depth) on each scheduler tick and sends alerts via the configured messenger with cooldown-based dedup. Not an external alerting system -- reuses the existing messenger provider.
+_Avoid_: "monitoring" (too generic), "pager" (implies external system)
+
+**Retention Policy**: Configurable time-based cleanup for stored data (archived items, expired cards, enrichment traces, dead letters). Executed by a daily scheduler task after the morning briefing. Interaction log is exempt -- never pruned, needed for preference learning.
+_Avoid_: "garbage collection" (implies automated runtime collection)
+
+**Connection**: A shared external system credential/session (e.g., Google OAuth2, Intern API auth) initialized once at startup and injected into adapters and enrichers that reference it by name in YAML config. Implements `Connection` ABC with `initialize()`, `close()`, `is_healthy()`. Uses factory methods (not cached properties) for API service creation to ensure thread safety under concurrent `asyncio.to_thread()` calls.
+_Avoid_: "connector" (ambiguous with source adapter), "client" (a connection manages auth, not API calls)
+
+**Composite Enricher**: A `ContextEnricher` implementation that routes to the correct source-specific enricher by `item.source_type`. Built by `create_composite_enricher()` from the `enrichment:` config section. Supports per-enricher budget overrides. Falls back to a default enricher (StubEnricher) for unknown source types.
+_Avoid_: "enrichment router" (it's a concrete enricher, not a routing layer)
+
+**Adapter State Store**: A simple utility interface (`get_state`, `save_state`, `delete_state`) for adapters that need persistent state across restarts (e.g., GChat's tracked_threads map). Backed by a PG table (`adapter_state`). Injected into adapters via `state_store` constructor arg using `inspect.signature` pattern -- adapters that don't need state don't declare the parameter.
+_Avoid_: "adapter cache" (it's persistent, not a cache)
+
+**Identity Resolution**: Automatic entity deduplication across sources within the memory service. When enrichers record entities with source-qualified IDs (e.g., `github:alice-gh`, `email:alice@meta.com`), the memory service detects matches via signal-tiered identifying attributes (strong: email/phone/platform_uid auto-merge; medium: name/username need 2+ matches; weak: supporting only) and merges into a single canonical entity with a generated UUID4 canonical ID. PG is the source of truth; Neo4j graph updated best-effort. Canonical IDs are always UUIDs, never source-qualified strings.
+_Avoid_: "entity matching" (resolution implies canonical identity), "dedup" alone (it's cross-source merging, not within-source dedup)
+
+**Entity Ref**: A dict with `type` (EntityType enum value) and `id` (source-qualified string) identifying an entity referenced by an enricher. Returned in the `entity_refs` list within enricher output dicts. Uses dict format `{"type": "person", "id": "github:alice-gh"}` (not tuples) for clean JSON/JSONB round-tripping. Card generation extracts entity refs and queries the memory service for each.
+_Avoid_: "entity reference" spelled out (use "entity ref" for consistency with the field name)
+
+**Triage Response Result**: The return type of `execute_triage_response()` — a pure data object with `explanation`, `prompt`, `followup_status`, and `actions_executed`. Enables the consolidated response handling function to remain pure (no messenger dependency). The API route returns it as JSON; the scheduler checks it and sends messenger prompts if needed.
+_Avoid_: "response object" (too generic)
+
+**Action Item**: An `Item` with `action_source` set (e.g., `"triage_response"`, `"manual"`) and `action_category` from `ActionCategory` enum. Created from user todos in free-text triage responses. Linked to a parent item via `parent_item_id`. Surfaced via `GET /api/actions`, plugin command, morning briefing, and React UI. Has `snoozed_until` (query-time filter) and `completed_at` fields.
+_Avoid_: "task" (conflicts with external task trackers and Meta Tasks source), "todo" alone (too informal -- action items have structure: category, priority, parent link)
+
 ### Infrastructure
 
 **Storage Backend**: The pluggable persistence layer behind the repository pattern. PostgreSQL is the default backend. Selected via config. Business logic never touches SQL directly. Schema managed by Alembic migrations.
@@ -73,7 +111,7 @@ _Avoid_: "service locator" (the registry is config-driven, not container-driven)
 **ProviderConfig**: A pydantic `BaseModel` subclass declared as `cls.ProviderConfig` on each provider class. The server validates the YAML config section against it at startup. Full type safety -- no untyped dicts in the config pipeline.
 _Avoid_: "settings" (reserved for the app-level `Settings` class)
 
-**Config File**: YAML file (`config.yml`) declaring server settings and provider selections. Has a `version` field (semver, e.g. `0.1.0`) for format compatibility -- independent of the app version, bumped only when the config schema changes. Server validates at startup: same major = compatible, different major = hard error, minor/patch mismatch = warn. Sections: `server`, `storage`, `queue`, `triage`, `pipeline`, `scheduler`, `messenger`, `llm`, `sources`, `enrichment`, `memory`. Each provider section has a `class` field (dotted import path) and provider-specific fields validated against the provider's `ProviderConfig`. Missing optional sections fall back to sensible defaults (e.g. no messenger = triage cards queued but not sent, enrichment = StubEnricher, memory = NoopMemoryLayer). Required sections: `storage` and `llm` -- server refuses to start without them. Import failures on any specified `class:` are hard errors. Secrets use OmegaConf `${oc.env:VAR}` interpolation. Layered: a base config is deep-merged with an optional override file (lists replace, dicts merge, scalars replace). The repo ships `config.example.yml` (template); `config.yml` is gitignored and generated by the setup wizard (`workbench init`). Config changes require server restart (no hot reload in Phase 1a).
+**Config File**: YAML file (`config.yml`) declaring server settings and provider selections. Has a `version` field (semver, e.g. `0.1.0`) for format compatibility -- independent of the app version, bumped only when the config schema changes. Server validates at startup: same major = compatible, different major = hard error, minor/patch mismatch = warn. Sections: `server`, `storage`, `queue`, `triage`, `pipeline`, `scheduler`, `messenger`, `llm`, `sources`, `enrichment`, `memory`, `connections`, `privacy`, `metrics`, `tracing`, `alerting`, `retention`, `debug`. Each provider section has a `class` field (dotted import path) and provider-specific fields validated against the provider's `ProviderConfig`. Missing optional sections fall back to sensible defaults (e.g. no messenger = triage cards queued but not sent, enrichment = StubEnricher, memory = NoopMemoryLayer). Required sections: `storage` and `llm` -- server refuses to start without them. Import failures on any specified `class:` are hard errors. Secrets use OmegaConf `${oc.env:VAR}` interpolation. Layered: a base config is deep-merged with an optional override file (lists replace, dicts merge, scalars replace). The repo ships `config.example.yml` (template); `config.yml` is gitignored and generated by the setup wizard (`workbench init`). Config changes require server restart (no hot reload in Phase 1a).
 _Avoid_: "settings file" (settings is the app-level pydantic class), "env file"
 
 **App Version**: Semantic version (`major.minor.patch`) of the Workbench server, stored in `src/workbench/__init__.py` as `__version__`. Exposed in the `/health` endpoint response and docker image tags. Independent of the config file version.
@@ -103,6 +141,15 @@ _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 - The **Memory Layer** informs the noise filter, enrichment, triage card generation, and queue scoring
 - **Repositories** abstract the **Storage Backend** (PostgreSQL) from all business logic
 - The **Provider Registry** resolves all providers (messenger, LLM, queue_scorer, source, enrichment, doc_reader, memory) from YAML config via dynamic import
+- **Connections** are initialized first at startup; adapters and enrichers reference them by name and receive them via constructor injection
+- **Source Adapters** that need persistent state declare a `state_store` parameter and receive an **Adapter State Store**
+- The **Composite Enricher** routes enrichment to source-specific enrichers by `source_type`
+- **Enrichers** return `entity_refs` as list of dicts `[{"type": "person", "id": "github:alice-gh"}]`; the **Memory Layer** performs **Identity Resolution** to merge cross-source entities into canonical UUID4-keyed entities
+- Free-text **Triage Responses** are interpreted by the LLM into system actions + user todos; user todos create **Action Items**
+- **Action Items** link to parent items, have categories, and surface in the morning briefing, API, plugin, and React UI
+- **Instrumented Wrappers** are applied to all providers at registry construction time -- adapters and enrichers get Prometheus metrics automatically
+- **Alert Manager** evaluates health conditions each scheduler tick and sends alerts via the configured messenger
+- **Retention Policy** cleans up expired data daily; **Interaction Log** is exempt
 
 ## Example dialogue
 

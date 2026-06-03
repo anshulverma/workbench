@@ -1,0 +1,11 @@
+# ADR 0011: Regex-Based Log Sanitization over Manual Call-Site Classification
+
+Phase 1d ingests personal email, calendar, and chat — content that routinely contains email addresses, phone numbers, and free-text that could include sensitive information. Logs must not leak PII, even on a single-user devgpu, because logs can be accidentally shared, copied into bug reports, or persisted beyond the data's intended lifetime.
+
+We chose a regex-based `SanitizingProcessor` in the structlog processing chain (Approach A) over requiring every log call to manually classify and redact its fields (Approach B) or deferring PII handling to a log aggregation layer (Approach C).
+
+The processor redacts email addresses and phone numbers via regex patterns, and truncates free-text fields beyond a configurable length (default 200 chars). It operates on structlog event dicts, inspecting each string value. This approach means: (1) every log line is sanitized by default — new adapters and code paths get protection without developer effort; (2) the processing chain is composable — workbench-meta can prepend additional patterns (PHIDs, employee IDs) via `extra_patterns` without modifying core code; (3) sanitization is configurable and can be disabled for local debugging via `privacy.sanitize_logs: false` combined with `privacy.allow_pii_in_debug_logs: true` (double opt-in).
+
+The trade-off is that regex-based detection has known limitations: it cannot catch names reliably (too many false positives — "New York" matches "[A-Z][a-z]+ [A-Z][a-z]+"), and it may miss PII in non-standard formats. We accepted this because: the high-value patterns (email, phone) are reliably detectable; content truncation catches the long tail; and the alternative (manual classification at 100+ log sites across 8+ adapters) is unmaintainable and guaranteed to have gaps as the codebase grows.
+
+**Consequence:** `SanitizingProcessor` is a structlog processor configured in `workbench/logging.py`. It reads from `PrivacyConfig` in the YAML config. Sensitive debug output (LLM prompts, raw adapter content) requires both `debug.llm_prompts: true` and `privacy.allow_pii_in_debug_logs: true`. PII-containing debug fields are logged at DEBUG level only, never at INFO or above.

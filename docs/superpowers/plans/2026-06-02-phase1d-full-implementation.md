@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add 6 source adapters with shared connections, LLM-generated triage cards with memory enrichment and identity resolution, free-text triage responses, and an action items system with React UI.
+**Goal:** Add 6 source adapters with shared connections, LLM-generated triage cards with memory enrichment and identity resolution, free-text triage responses, and an action items system with React UI. Includes observability foundation (structlog, Prometheus metrics, instrumented wrappers), operational readiness (health checks, alerting, debug config, diagnostic endpoints), and privacy safeguards (PII log sanitization, data retention).
 
-**Architecture:** Three independent tracks (Sources, Cards, Actions) built on cross-cutting foundations. Cross-cutting first, then A→B→C.
+**Architecture:** Cross-cutting foundation (Group 0), then observability/ops/privacy foundation (Group 0.5), then three independent tracks: A (Sources) → B (Cards) → C (Actions). Group 0.5 is a prerequisite for Group A — adapters must have metrics and PII-safe logging from day 1.
 
 **Tech Stack:** Python 3.12, FastAPI, asyncpg, PostgreSQL, Google API client, Vite + React + Tailwind CSS, pdfplumber, pytest + pytest-asyncio
 
@@ -13,9 +13,9 @@
 2. GChat thread state via `adapter_state` PG table + `AdapterStateStore` + `state_store` constructor injection
 3. UUID canonical entity IDs (not first-seen source_id)
 4. PG-first, Neo4j best-effort for merge atomicity
-5. Timeout on `awaiting_*` states reverts to `queued` (not `sent`)
+5. Timeout on `awaiting_*` states reverts to `sent` (keeps `bot_message_id`, resumes polling)
 6. No caps on memory context (entity_refs, relationships, preference facts — send all)
-7. Re-score deferred cards on snooze expiry via LLM
+7. No re-scoring on deferred card snooze expiry — preserve original `relevance_score`, just set back to `queued`
 8. 8 action categories: delegation, communication, scheduling, review, creation, update, decision, investigation
 9. Full attachment processing: images via Claude vision API, PDFs via pdfplumber
 10. Config version 0.3.0 (from 0.2.1)
@@ -26,11 +26,53 @@
 15. InternConnection auth must be resolved before Meta adapter work
 16. All-day calendar events included with `is_all_day: true`
 17. TEAM entity refs extracted from Meta sources
-18. Re-generate queued cards on upgrade (one-time migration script)
+18. ~~Dropped~~: no migration script — old queued cards degrade gracefully via `format_card_for_chat()` fallback
 19. `snoozed_until` and `completed_at` on Item model
 20. Tailwind CSS for React UI
-21. `describe_attachment(bytes, mime_type, context)` on LLMProvider
+21. `describe_image(content, mime_type, context)` on LLMProvider + `extract_pdf_text()` in `workbench/util/attachments.py` (split per grilling #12)
 22. Full context (card + enrichment + memory) for interpret_triage_response, stored on card
+
+**Grilling Decisions Applied (2026-06-03 — Observability, Operations, Privacy):**
+23. Observability/ops/privacy woven into Phase 1d as Group 0.5 (not deferred to separate phase)
+24. structlog with JSON/console output replaces glog formatter (ADR 0010)
+25. Correlation ID middleware (UUID4 per request, bound to structlog context)
+26. Prometheus metrics via `prometheus-client` with `/metrics` endpoint
+27. Instrumented wrappers (decorator pattern) for adapters, LLM, enrichers — applied by registry
+28. Health check returns 503 on critical failure; component-level checks; liveness/readiness split
+29. Structured `DebugConfig` section (SQL, LLM prompts, request bodies — independently toggled)
+30. PII debug logging requires double opt-in (debug flag + `privacy.allow_pii_in_debug_logs`)
+31. `SanitizingProcessor` for log PII redaction — email/phone regex, content truncation (ADR 0011)
+32. Extensible sanitizer patterns via `extra_patterns` (workbench-meta adds PHIDs, employee IDs)
+33. Data retention with daily cleanup; OSS defaults 30-90 days; workbench-meta overrides to 365 days
+34. AlertManager with messenger integration, configurable thresholds, cooldown dedup
+35. Diagnostic endpoints under `/api/debug/` (adapters, pipeline, connections, identity, config with secret redaction)
+36. OpenTelemetry auto-instrumentation opt-in via `tracing:` config section
+37. All observability/ops/privacy infrastructure in workbench (OSS); workbench-meta adds only config overrides + extra sanitizer patterns
+
+**Grilling Decisions Applied (2026-06-03 — Plan Review Round 2):**
+38. UUID4 always for canonical entity IDs — fix Task 15 tests (was using first source_id)
+39. Consolidate `execute_triage_response()` in `pipeline/triage.py` — fix Tasks 18/19 (was duplicated between API route and scheduler)
+40. Add `TriageResponseResult` to Task 1 model changes (was missing)
+41. `entity_refs` as list of dicts `[{"type": "person", "id": "..."}]` not tuples (clean JSON/JSONB round-trip)
+42. React UI token injection via dedicated route + `__API_TOKEN__` placeholder (fix main.py, match grilling #23)
+43. Add `state_store` injection to registry Task 4 alongside `connection`; create `AdapterStateStore` in Task 2
+44. Add `enrichment_errors` counter to metrics Task 6b; pass to CompositeEnricher
+45. Add `describe_image()` to LLMProvider base + `extract_pdf_text()` utility in Task 10 (Gmail Enricher)
+46. `GET /api/items` excludes action items by default (`?exclude_actions=true`)
+47. Auth exemptions for `/metrics`, `/health/live`, `/health/ready` consolidated in Task 6c
+48. GChat bot identity auto-discovered via Chat API at `GoogleConnection` init, cached as `bot_user_id`
+49. InternConnection auth investigation added as early task (before Group A, not deferred to Group M)
+50. `AdapterStateStore` created in Task 2 with full interface (get/save/delete)
+51. Config minor version warning when config.version < expected
+52. `InteractionEntry.type` set for all interactions: `option_selected`, `interpreted_response`, `confirmation`
+53. `CompositeEnricher` wraps each child enricher with `InstrumentedContextEnricher` at construction
+54. `format_card_for_chat` skips raw enrichment when `card_body` present (LLM already incorporated context)
+55. Strip authoring commentary from plan markdown
+56. React UI auth: revert to `__API_TOKEN__` meta tag approach (not /api/auth/token endpoint) — no bootstrapping problem
+57. Meta sanitizer regex: `\b[a-z]{2,20}(?=@(?:fb|meta)\.com)` to match both @fb.com and @meta.com
+58. React UI: add Tailwind CSS per spec; replace inline styles with utility classes
+59. Meta enrichers: fix entity_refs from tuples to dicts per decision #41
+60. config.meta.yml: update enrichment to new `providers:` format with source_type routing for CompositeEnricher
 
 **Test commands:**
 - Workbench: make test
@@ -452,8 +494,7 @@ Update `expire_old_cards` to exclude awaiting cards:
     async def expire_old_cards(self, expiry_days: int) -> int:
         result = await self.pool.execute(
             "UPDATE triage_cards SET status = 'expired' "
-            "WHERE status = 'queued' AND expires_at < NOW() "
-            "AND status NOT IN ('awaiting_followup', 'awaiting_confirmation')"
+            "WHERE status = 'queued' AND expires_at < NOW()"
         )
         return int(result.split()[-1])
 ```
@@ -1418,7 +1459,1644 @@ git commit -m "feat(main): initialize connections at startup, wire CompositeEnri
 
 ---
 
-Now I have a thorough understanding of the codebase. Let me produce the plan document content.
+## Group 0.5: Observability, Operations, and Privacy Foundation
+
+> Grilling session 2026-06-03: These tasks are prerequisites for source adapters. Privacy safeguards for email/calendar/chat ingestion are not optional add-ons. Observability for 6 new external API integrations is load-bearing. See ADR 0010, ADR 0011.
+
+### Task 6a: Structured Logging Migration (structlog)
+
+**Files:**
+- Modify: `src/workbench/logging.py`
+- Create: `src/workbench/middleware.py`
+- Modify: `src/workbench/main.py`
+- Modify: `pyproject.toml`
+- Test: `tests/test_structured_logging.py`
+
+- [ ] **Step 1: Write tests for structured logging and correlation IDs**
+
+Create `tests/test_structured_logging.py`:
+
+```python
+# tests/test_structured_logging.py
+
+import json
+import logging
+import uuid
+
+import pytest
+import structlog
+
+from workbench.logging import setup_logging
+from workbench.middleware import CorrelationIdMiddleware
+
+
+def test_json_output_format(tmp_path, capsys):
+    """JSON format produces parseable JSON lines."""
+    setup_logging(log_format="json", log_dir=None)
+    logger = structlog.get_logger("test")
+    logger.info("test_event", key="value", count=42)
+    captured = capsys.readouterr()
+    line = json.loads(captured.err.strip())
+    assert line["event"] == "test_event"
+    assert line["key"] == "value"
+    assert line["count"] == 42
+
+
+def test_console_output_format(capsys):
+    """Console format produces human-readable output."""
+    setup_logging(log_format="console", log_dir=None)
+    logger = structlog.get_logger("test")
+    logger.info("test_event", key="value")
+    captured = capsys.readouterr()
+    assert "test_event" in captured.err
+    assert "key=" in captured.err or "key" in captured.err
+
+
+def test_stdlib_logger_gets_structlog_processing(capsys):
+    """Existing logging.getLogger() calls go through structlog pipeline."""
+    setup_logging(log_format="json", log_dir=None)
+    logger = logging.getLogger("legacy.module")
+    logger.info("legacy message %s", "arg1")
+    captured = capsys.readouterr()
+    line = json.loads(captured.err.strip())
+    assert "legacy message arg1" in line.get("event", "")
+
+
+def test_file_handler_preserved(tmp_path):
+    """AgeRotatingFileHandler still writes logs to files."""
+    log_dir = str(tmp_path / "logs")
+    setup_logging(log_format="json", log_dir=log_dir)
+    logger = structlog.get_logger("test")
+    logger.info("file_test")
+    import os
+    assert os.path.exists(log_dir)
+    log_files = os.listdir(log_dir)
+    assert len(log_files) >= 1
+
+
+@pytest.mark.asyncio
+async def test_correlation_id_middleware():
+    """Middleware adds X-Request-ID to response and binds to context."""
+    from starlette.testclient import TestClient
+    from fastapi import FastAPI, Request
+
+    app = FastAPI()
+    app.add_middleware(CorrelationIdMiddleware)
+
+    @app.get("/test")
+    async def handler(request: Request):
+        return {"request_id": request.state.request_id}
+
+    client = TestClient(app)
+    resp = client.get("/test")
+    assert resp.status_code == 200
+    request_id = resp.headers.get("X-Request-ID")
+    assert request_id is not None
+    uuid.UUID(request_id)  # valid UUID
+    assert resp.json()["request_id"] == request_id
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_structured_logging.py -v`
+Expected: ImportError -- `structlog` not installed, `workbench.middleware` not found.
+
+- [ ] **Step 3: Add structlog dependency to pyproject.toml**
+
+Add `structlog>=24.0` to the dependencies list in `pyproject.toml`.
+
+- [ ] **Step 4: Rewrite logging.py with structlog**
+
+Replace `src/workbench/logging.py`:
+
+```python
+from __future__ import annotations
+
+import logging
+import os
+import re
+import time
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any
+
+import structlog
+
+
+class AgeRotatingFileHandler(RotatingFileHandler):
+    """Rotating file handler that also removes old backup files beyond max_age_days."""
+
+    def __init__(self, filename, max_age_days=84, **kwargs):
+        self.max_age_days = max_age_days
+        super().__init__(filename, **kwargs)
+
+    def doRollover(self):
+        super().doRollover()
+        self._cleanup_old_files()
+
+    def _cleanup_old_files(self):
+        log_dir = os.path.dirname(self.baseFilename)
+        base_name = os.path.basename(self.baseFilename)
+        cutoff = time.time() - (self.max_age_days * 86400)
+        for f in os.listdir(log_dir):
+            if f.startswith(base_name + ".") and f != base_name:
+                path = os.path.join(log_dir, f)
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+
+
+def setup_logging(
+    log_format: str = "console",
+    log_dir: str | None = None,
+    level: int = logging.INFO,
+    max_bytes: int = 10 * 1024 * 1024,
+    max_age_days: int = 84,
+    timezone: str = "America/Los_Angeles",
+    extra_processors: list | None = None,
+) -> None:
+    """Configure structlog with JSON or console output.
+
+    Args:
+        log_format: "json" for production, "console" for dev.
+        log_dir: Directory for log files. None = stderr only.
+        level: Logging level.
+        max_bytes: Max log file size before rotation.
+        max_age_days: Delete rotated logs older than this.
+        timezone: Timezone for timestamps.
+        extra_processors: Additional structlog processors (e.g., SanitizingProcessor).
+    """
+    shared_processors: list[Any] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso", utc=False),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.UnicodeDecoder(),
+    ]
+
+    if extra_processors:
+        shared_processors.extend(extra_processors)
+
+    if log_format == "json":
+        renderer = structlog.processors.JSONRenderer()
+    else:
+        renderer = structlog.dev.ConsoleRenderer()
+
+    structlog.configure(
+        processors=[
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(level)
+
+    stderr_handler = logging.StreamHandler()
+    stderr_handler.setFormatter(formatter)
+    root_logger.addHandler(stderr_handler)
+
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+        file_handler = AgeRotatingFileHandler(
+            os.path.join(log_dir, "workbench.log"),
+            max_age_days=max_age_days,
+            maxBytes=max_bytes,
+            backupCount=10,
+        )
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        uv_logger = logging.getLogger(name)
+        uv_logger.handlers.clear()
+        uv_logger.propagate = True
+```
+
+- [ ] **Step 5: Create CorrelationIdMiddleware**
+
+Create `src/workbench/middleware.py`:
+
+```python
+from __future__ import annotations
+
+import uuid
+
+import structlog
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+        )
+
+        response: Response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+```
+
+- [ ] **Step 6: Update main.py to use structlog and middleware**
+
+In `src/workbench/main.py`:
+
+1. Replace `import logging` with `import structlog` at the top. Keep `import logging` for level constants.
+2. Replace `logger = logging.getLogger(__name__)` with `logger = structlog.get_logger(__name__)`
+3. Update `setup_logging()` calls to pass `log_format=log_cfg.format` (add `format` field to `LoggingConfig`)
+4. Add `CorrelationIdMiddleware` in `create_app()`:
+```python
+from workbench.middleware import CorrelationIdMiddleware
+app.add_middleware(CorrelationIdMiddleware)
+```
+
+- [ ] **Step 7: Add `format` field to LoggingConfig in config.py**
+
+In `src/workbench/config.py`, update `LoggingConfig`:
+```python
+class LoggingConfig(BaseModel):
+    format: str = "console"  # "json" | "console"
+    level: str = "INFO"
+    log_dir: str | None = None
+    max_bytes: int = 10 * 1024 * 1024
+    max_age_days: int = 84
+    timezone: str = "America/Los_Angeles"
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `python -m pytest tests/test_structured_logging.py -v && make test`
+Expected: All pass, including existing tests (structlog stdlib integration is backward-compatible).
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/workbench/logging.py src/workbench/middleware.py src/workbench/main.py src/workbench/config.py pyproject.toml tests/test_structured_logging.py
+git commit -m "feat(logging): replace glog with structlog, add correlation ID middleware (ADR 0010)"
+```
+
+---
+
+### Task 6b: Metrics Foundation (Prometheus)
+
+**Files:**
+- Create: `src/workbench/metrics.py`
+- Create: `src/workbench/instrumentation.py`
+- Modify: `src/workbench/main.py`
+- Modify: `src/workbench/registry.py`
+- Modify: `src/workbench/config.py`
+- Modify: `pyproject.toml`
+- Test: `tests/test_metrics.py`
+- Test: `tests/test_instrumentation.py`
+
+- [ ] **Step 1: Write tests for metrics definitions and instrumented wrappers**
+
+Create `tests/test_metrics.py`:
+
+```python
+# tests/test_metrics.py
+
+import pytest
+from prometheus_client import CollectorRegistry
+
+from workbench.metrics import create_metrics
+
+
+def test_all_metrics_registered():
+    """All expected metrics are created."""
+    registry = CollectorRegistry()
+    m = create_metrics(registry)
+    assert m.items_ingested is not None
+    assert m.adapter_polls is not None
+    assert m.adapter_poll_seconds is not None
+    assert m.llm_calls is not None
+    assert m.llm_errors is not None
+    assert m.llm_call_seconds is not None
+    assert m.items_triaged is not None
+    assert m.items_dropped is not None
+    assert m.pipeline_stage_seconds is not None
+    assert m.enrichment_seconds is not None
+    assert m.identity_merges is not None
+    assert m.cards_generated is not None
+    assert m.alerts_sent is not None
+    assert m.ingestion_queue_depth is not None
+    assert m.triage_queue_depth is not None
+    assert m.dead_letter_count is not None
+    assert m.connection_healthy is not None
+```
+
+Create `tests/test_instrumentation.py`:
+
+```python
+# tests/test_instrumentation.py
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime
+
+from prometheus_client import CollectorRegistry
+from workbench.metrics import create_metrics
+from workbench.instrumentation import InstrumentedSourceAdapter
+
+
+@pytest.mark.asyncio
+async def test_instrumented_adapter_tracks_success():
+    registry = CollectorRegistry()
+    metrics = create_metrics(registry)
+    inner = AsyncMock()
+    inner.poll.return_value = [MagicMock(source_type="email") for _ in range(3)]
+
+    adapter = InstrumentedSourceAdapter(inner, "gmail", metrics)
+    items = await adapter.poll(datetime.now())
+
+    assert len(items) == 3
+    assert metrics.adapter_polls.labels(adapter="gmail", status="success")._value.get() == 1.0
+
+
+@pytest.mark.asyncio
+async def test_instrumented_adapter_tracks_errors():
+    registry = CollectorRegistry()
+    metrics = create_metrics(registry)
+    inner = AsyncMock()
+    inner.poll.side_effect = RuntimeError("API error")
+
+    adapter = InstrumentedSourceAdapter(inner, "gmail", metrics)
+    with pytest.raises(RuntimeError):
+        await adapter.poll(datetime.now())
+
+    assert metrics.adapter_polls.labels(adapter="gmail", status="error")._value.get() == 1.0
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_metrics.py tests/test_instrumentation.py -v`
+Expected: ImportError -- `prometheus_client` not installed, modules not found.
+
+- [ ] **Step 3: Add prometheus-client dependency**
+
+Add `prometheus-client>=0.20` to `pyproject.toml` dependencies.
+
+- [ ] **Step 4: Create metrics.py with all metric definitions**
+
+Create `src/workbench/metrics.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
+
+
+@dataclass
+class WorkbenchMetrics:
+    # Counters
+    items_ingested: Counter
+    adapter_polls: Counter
+    llm_calls: Counter
+    llm_errors: Counter
+    items_triaged: Counter
+    items_dropped: Counter
+    identity_merges: Counter
+    cards_generated: Counter
+    alerts_sent: Counter
+
+    # Histograms
+    adapter_poll_seconds: Histogram
+    llm_call_seconds: Histogram
+    pipeline_stage_seconds: Histogram
+    enrichment_seconds: Histogram
+
+    # Gauges
+    ingestion_queue_depth: Gauge
+    triage_queue_depth: Gauge
+    dead_letter_count: Gauge
+    connection_healthy: Gauge
+    tracked_threads: Gauge
+
+
+def create_metrics(registry: CollectorRegistry | None = None) -> WorkbenchMetrics:
+    kw = {"registry": registry} if registry else {}
+
+    return WorkbenchMetrics(
+        items_ingested=Counter(
+            "workbench_items_ingested_total", "Items ingested from sources",
+            ["source_type", "adapter"], **kw,
+        ),
+        adapter_polls=Counter(
+            "workbench_adapter_polls_total", "Source adapter poll attempts",
+            ["adapter", "status"], **kw,
+        ),
+        llm_calls=Counter(
+            "workbench_llm_calls_total", "LLM API calls",
+            ["method"], **kw,
+        ),
+        llm_errors=Counter(
+            "workbench_llm_errors_total", "LLM API errors",
+            ["method", "error_type"], **kw,
+        ),
+        items_triaged=Counter(
+            "workbench_items_triaged_total", "Items triaged by user action",
+            ["action"], **kw,
+        ),
+        items_dropped=Counter(
+            "workbench_items_dropped_total", "Items dropped from pipeline",
+            ["reason"], **kw,
+        ),
+        identity_merges=Counter(
+            "workbench_identity_merges_total", "Entity identity merges",
+            ["resolved_by"], **kw,
+        ),
+        cards_generated=Counter(
+            "workbench_cards_generated_total", "Triage cards generated",
+            ["method"], **kw,
+        ),
+        alerts_sent=Counter(
+            "workbench_alerts_sent_total", "Operational alerts sent",
+            ["alert_type"], **kw,
+        ),
+        adapter_poll_seconds=Histogram(
+            "workbench_adapter_poll_seconds", "Source adapter poll duration",
+            ["adapter"], **kw,
+        ),
+        llm_call_seconds=Histogram(
+            "workbench_llm_call_seconds", "LLM call duration",
+            ["method"], **kw,
+        ),
+        pipeline_stage_seconds=Histogram(
+            "workbench_pipeline_stage_seconds", "Pipeline stage duration",
+            ["stage"], **kw,
+        ),
+        enrichment_seconds=Histogram(
+            "workbench_enrichment_seconds", "Enrichment duration",
+            ["enricher"], **kw,
+        ),
+        ingestion_queue_depth=Gauge(
+            "workbench_ingestion_queue_depth", "Current ingestion queue depth",
+            **kw,
+        ),
+        triage_queue_depth=Gauge(
+            "workbench_triage_queue_depth", "Current triage queue depth",
+            **kw,
+        ),
+        dead_letter_count=Gauge(
+            "workbench_dead_letter_count", "Current dead letter count",
+            **kw,
+        ),
+        connection_healthy=Gauge(
+            "workbench_connection_healthy", "Connection health (1=healthy, 0=unhealthy)",
+            ["name"], **kw,
+        ),
+        tracked_threads=Gauge(
+            "workbench_tracked_threads", "Tracked chat threads",
+            ["adapter"], **kw,
+        ),
+    )
+```
+
+- [ ] **Step 5: Create instrumentation.py with wrapper classes**
+
+Create `src/workbench/instrumentation.py`:
+
+```python
+from __future__ import annotations
+
+import time
+from datetime import datetime
+from typing import Any
+
+import structlog
+
+from workbench.metrics import WorkbenchMetrics
+
+logger = structlog.get_logger(__name__)
+
+
+class InstrumentedSourceAdapter:
+    """Decorator that wraps a SourceAdapter with metrics and structured logging."""
+
+    def __init__(self, inner, adapter_name: str, metrics: WorkbenchMetrics):
+        self._inner = inner
+        self._name = adapter_name
+        self._metrics = metrics
+
+    async def poll(self, since: datetime | None = None):
+        start = time.monotonic()
+        try:
+            items = await self._inner.poll(since)
+            elapsed = time.monotonic() - start
+            self._metrics.adapter_polls.labels(adapter=self._name, status="success").inc()
+            self._metrics.adapter_poll_seconds.labels(adapter=self._name).observe(elapsed)
+            for item in items:
+                self._metrics.items_ingested.labels(
+                    source_type=item.source_type, adapter=self._name,
+                ).inc()
+            logger.info("adapter_poll_complete",
+                adapter=self._name, items=len(items), duration_ms=round(elapsed * 1000))
+            return items
+        except Exception as e:
+            elapsed = time.monotonic() - start
+            self._metrics.adapter_polls.labels(adapter=self._name, status="error").inc()
+            self._metrics.adapter_poll_seconds.labels(adapter=self._name).observe(elapsed)
+            logger.error("adapter_poll_failed",
+                adapter=self._name, error=str(e), duration_ms=round(elapsed * 1000))
+            raise
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class InstrumentedLLMProvider:
+    """Decorator that wraps an LLMProvider with metrics and structured logging."""
+
+    def __init__(self, inner, metrics: WorkbenchMetrics):
+        self._inner = inner
+        self._metrics = metrics
+
+    async def _instrumented_call(self, method_name: str, coro):
+        start = time.monotonic()
+        try:
+            result = await coro
+            elapsed = time.monotonic() - start
+            self._metrics.llm_calls.labels(method=method_name).inc()
+            self._metrics.llm_call_seconds.labels(method=method_name).observe(elapsed)
+            logger.info("llm_call_complete",
+                method=method_name, duration_ms=round(elapsed * 1000))
+            return result
+        except Exception as e:
+            elapsed = time.monotonic() - start
+            self._metrics.llm_errors.labels(
+                method=method_name, error_type=type(e).__name__,
+            ).inc()
+            logger.error("llm_call_failed",
+                method=method_name, error=str(e), duration_ms=round(elapsed * 1000))
+            raise
+
+    async def extract_items(self, *args, **kwargs):
+        return await self._instrumented_call(
+            "extract", self._inner.extract_items(*args, **kwargs))
+
+    async def score_relevance(self, *args, **kwargs):
+        return await self._instrumented_call(
+            "score_relevance", self._inner.score_relevance(*args, **kwargs))
+
+    async def generate_triage_card(self, *args, **kwargs):
+        return await self._instrumented_call(
+            "generate_card", self._inner.generate_triage_card(*args, **kwargs))
+
+    async def interpret_triage_response(self, *args, **kwargs):
+        return await self._instrumented_call(
+            "interpret_response", self._inner.interpret_triage_response(*args, **kwargs))
+
+    async def describe_image(self, *args, **kwargs):
+        return await self._instrumented_call(
+            "describe_image", self._inner.describe_image(*args, **kwargs))
+
+    async def evaluate_filter(self, *args, **kwargs):
+        return await self._instrumented_call(
+            "evaluate_filter", self._inner.evaluate_filter(*args, **kwargs))
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class InstrumentedContextEnricher:
+    """Decorator that wraps a ContextEnricher with metrics and structured logging."""
+
+    def __init__(self, inner, enricher_name: str, metrics: WorkbenchMetrics):
+        self._inner = inner
+        self._name = enricher_name
+        self._metrics = metrics
+
+    async def enrich(self, *args, **kwargs):
+        start = time.monotonic()
+        try:
+            result = await self._inner.enrich(*args, **kwargs)
+            elapsed = time.monotonic() - start
+            self._metrics.enrichment_seconds.labels(enricher=self._name).observe(elapsed)
+            logger.info("enrichment_complete",
+                enricher=self._name, duration_ms=round(elapsed * 1000))
+            return result
+        except Exception as e:
+            elapsed = time.monotonic() - start
+            logger.error("enrichment_failed",
+                enricher=self._name, error=str(e), duration_ms=round(elapsed * 1000))
+            raise
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+```
+
+- [ ] **Step 6: Add MetricsConfig to config.py**
+
+In `src/workbench/config.py`, add after `LoggingConfig`:
+```python
+class MetricsConfig(BaseModel):
+    enabled: bool = True
+    endpoint: str = "/metrics"
+```
+
+Add to `AppConfig`:
+```python
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+```
+
+- [ ] **Step 7: Wire metrics in main.py**
+
+In `src/workbench/main.py`:
+1. Import and create metrics: `from workbench.metrics import create_metrics`
+2. In `lifespan`: `app.state.metrics = create_metrics()`
+3. In `create_app()`, add `/metrics` endpoint:
+```python
+if config.metrics.enabled:
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from starlette.responses import Response
+
+    @app.get(config.metrics.endpoint, include_in_schema=False)
+    async def metrics_endpoint():
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+```
+4. Wrap LLM provider: `app.state.llm = InstrumentedLLMProvider(create_provider(config.llm), app.state.metrics)`
+5. Wrap source adapters: pass metrics to `InstrumentedSourceAdapter` wrapper in `create_providers_from_list`
+
+- [ ] **Step 8: Update registry.py to apply instrumented wrappers**
+
+In `src/workbench/registry.py`, update `create_providers_from_list` to accept optional `metrics` and wrap adapters:
+
+```python
+def create_providers_from_list(
+    sections: list[dict[str, Any]],
+    connections: dict[str, Any] | None = None,
+    metrics: WorkbenchMetrics | None = None,
+) -> list[Any]:
+    providers = []
+    for s in sections:
+        name = s.get("class", "").rsplit(".", 1)[-1] if "class" in s else "unknown"
+        provider = create_provider(s, connections=connections)
+        if metrics:
+            from workbench.instrumentation import InstrumentedSourceAdapter
+            provider = InstrumentedSourceAdapter(provider, name, metrics)
+        providers.append(provider)
+    return providers
+```
+
+- [ ] **Step 9: Run tests**
+
+Run: `python -m pytest tests/test_metrics.py tests/test_instrumentation.py -v && make test`
+Expected: All pass.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/workbench/metrics.py src/workbench/instrumentation.py src/workbench/main.py src/workbench/registry.py src/workbench/config.py pyproject.toml tests/test_metrics.py tests/test_instrumentation.py
+git commit -m "feat(metrics): add Prometheus metrics, instrumented provider wrappers"
+```
+
+---
+
+### Task 6c: Health Check Improvements
+
+**Files:**
+- Modify: `src/workbench/api/health.py`
+- Test: `tests/test_health_improved.py`
+
+- [ ] **Step 1: Write tests for improved health checks**
+
+Create `tests/test_health_improved.py`:
+
+```python
+# tests/test_health_improved.py
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from fastapi.testclient import TestClient
+from workbench.api.health import router
+from fastapi import FastAPI
+
+
+def _make_app(stores_healthy=True, connections=None):
+    app = FastAPI()
+    app.include_router(router)
+
+    stores = MagicMock()
+    if stores_healthy:
+        stores.items.pool.fetchval = AsyncMock(return_value=1)
+        stores.ingestion_queue.get_depth = AsyncMock(return_value=3)
+        stores.triage.get_pending = AsyncMock(return_value=[])
+        stores.ingestion_queue.get_dead_letters = AsyncMock(return_value=[])
+    else:
+        stores.items.pool.fetchval = AsyncMock(side_effect=Exception("PG down"))
+
+    app.state.stores = stores
+    app.state.connections = connections or {}
+    app.state.llm = MagicMock()
+    app.state.memory = MagicMock()
+    app.state.messenger = None
+    return app
+
+
+def test_health_returns_200_when_healthy():
+    app = _make_app(stores_healthy=True)
+    client = TestClient(app)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "healthy"
+    assert "components" in data
+
+
+def test_health_returns_503_when_pg_down():
+    app = _make_app(stores_healthy=False)
+    client = TestClient(app)
+    resp = client.get("/health")
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["status"] == "unhealthy"
+    assert data["components"]["storage"]["status"] == "unhealthy"
+
+
+def test_health_live_always_200():
+    app = _make_app(stores_healthy=False)
+    client = TestClient(app)
+    resp = client.get("/health/live")
+    assert resp.status_code == 200
+
+
+def test_health_ready_503_when_pg_down():
+    app = _make_app(stores_healthy=False)
+    client = TestClient(app)
+    resp = client.get("/health/ready")
+    assert resp.status_code == 503
+
+
+def test_health_includes_connection_status():
+    conn = MagicMock()
+    conn.is_healthy.return_value = False
+    app = _make_app(stores_healthy=True, connections={"google": conn})
+    client = TestClient(app)
+    resp = client.get("/health")
+    assert resp.status_code == 200  # connection is non-critical
+    data = resp.json()
+    assert data["components"]["connections"]["google"]["status"] == "unhealthy"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_health_improved.py -v`
+Expected: Failures -- `/health/live` and `/health/ready` don't exist; `/health` returns 200 on PG failure.
+
+- [ ] **Step 3: Rewrite health.py**
+
+Replace `src/workbench/api/health.py`:
+
+```python
+from __future__ import annotations
+
+import structlog
+from fastapi import APIRouter, Request, Response
+
+from workbench import __version__
+
+logger = structlog.get_logger(__name__)
+router = APIRouter(tags=["health"])
+
+
+async def _check_storage(stores) -> dict:
+    try:
+        await stores.items.pool.fetchval("SELECT 1")
+        return {"status": "healthy"}
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}
+
+
+async def _check_connections(connections: dict) -> dict:
+    result = {}
+    for name, conn in connections.items():
+        try:
+            healthy = conn.is_healthy()
+            result[name] = {"status": "healthy" if healthy else "unhealthy"}
+        except Exception as e:
+            result[name] = {"status": "unhealthy", "error": str(e)}
+    return result
+
+
+async def _build_health(request: Request) -> tuple[dict, bool]:
+    stores = request.app.state.stores
+    connections = getattr(request.app.state, "connections", {})
+
+    storage_health = await _check_storage(stores)
+    connection_health = await _check_connections(connections)
+
+    critical_healthy = storage_health["status"] == "healthy"
+
+    queue_stats = {}
+    if critical_healthy:
+        try:
+            depth = await stores.ingestion_queue.get_depth()
+            pending = await stores.triage.get_pending()
+            dead = await stores.ingestion_queue.get_dead_letters()
+            queue_stats = {
+                "ingestion_depth": depth,
+                "triage_pending": len(pending),
+                "dead_letters": len(dead),
+            }
+        except Exception:
+            pass
+
+    return {
+        "status": "healthy" if critical_healthy else "unhealthy",
+        "version": __version__,
+        "components": {
+            "storage": storage_health,
+            "connections": connection_health,
+        },
+        "queue": queue_stats,
+    }, critical_healthy
+
+
+@router.get("/health")
+async def health(request: Request, response: Response):
+    data, healthy = await _build_health(request)
+    if not healthy:
+        response.status_code = 503
+    return data
+
+
+@router.get("/health/live")
+async def liveness():
+    return {"status": "alive"}
+
+
+@router.get("/health/ready")
+async def readiness(request: Request, response: Response):
+    data, healthy = await _build_health(request)
+    if not healthy:
+        response.status_code = 503
+    return data
+```
+
+- [ ] **Step 4: Update auth.py to allow new health endpoints**
+
+In `src/workbench/auth.py`, update the unauthenticated paths list to include `/health/live` and `/health/ready`.
+
+- [ ] **Step 5: Run tests**
+
+Run: `python -m pytest tests/test_health_improved.py -v && make test`
+Expected: All pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/workbench/api/health.py src/workbench/auth.py tests/test_health_improved.py
+git commit -m "fix(health): return 503 on critical failure, add component checks, liveness/readiness"
+```
+
+---
+
+### Task 6d: Debug Configuration + Privacy Config + Log Sanitization
+
+**Files:**
+- Modify: `src/workbench/config.py`
+- Create: `src/workbench/privacy.py`
+- Modify: `src/workbench/logging.py`
+- Modify: `src/workbench/main.py`
+- Test: `tests/test_sanitizer.py`
+
+- [ ] **Step 1: Write tests for sanitizer**
+
+Create `tests/test_sanitizer.py`:
+
+```python
+# tests/test_sanitizer.py
+
+import pytest
+from workbench.privacy import SanitizingProcessor, PrivacyConfig
+
+
+def _process(processor, event_dict):
+    return processor(None, "info", event_dict)
+
+
+def test_redacts_email_addresses():
+    proc = SanitizingProcessor(PrivacyConfig())
+    result = _process(proc, {"event": "test", "sender": "alice@meta.com"})
+    assert result["sender"] == "[REDACTED:email]"
+
+
+def test_redacts_email_in_longer_text():
+    proc = SanitizingProcessor(PrivacyConfig())
+    result = _process(proc, {"event": "test", "msg": "From alice@meta.com to bob@example.org"})
+    assert "alice@meta.com" not in result["msg"]
+    assert "[REDACTED:email]" in result["msg"]
+
+
+def test_redacts_phone_numbers():
+    proc = SanitizingProcessor(PrivacyConfig())
+    result = _process(proc, {"event": "test", "phone": "555-123-4567"})
+    assert result["phone"] == "[REDACTED:phone]"
+
+
+def test_truncates_long_content():
+    proc = SanitizingProcessor(PrivacyConfig(max_content_in_logs=50))
+    long_text = "a" * 200
+    result = _process(proc, {"event": "test", "body": long_text})
+    assert len(result["body"]) < 200
+    assert "[truncated]" in result["body"]
+
+
+def test_preserves_short_content():
+    proc = SanitizingProcessor(PrivacyConfig())
+    result = _process(proc, {"event": "test", "msg": "short message"})
+    assert result["msg"] == "short message"
+
+
+def test_skips_non_string_values():
+    proc = SanitizingProcessor(PrivacyConfig())
+    result = _process(proc, {"event": "test", "count": 42, "items": [1, 2, 3]})
+    assert result["count"] == 42
+    assert result["items"] == [1, 2, 3]
+
+
+def test_disabled_when_sanitize_logs_false():
+    proc = SanitizingProcessor(PrivacyConfig(sanitize_logs=False))
+    result = _process(proc, {"event": "test", "email": "alice@meta.com"})
+    assert result["email"] == "alice@meta.com"
+
+
+def test_extra_patterns():
+    import re
+    extra = [(re.compile(r'\bD\d{6,}\b'), '[REDACTED:phid]')]
+    proc = SanitizingProcessor(PrivacyConfig(), extra_patterns=extra)
+    result = _process(proc, {"event": "test", "diff": "D123456"})
+    assert result["diff"] == "[REDACTED:phid]"
+
+
+def test_skips_excluded_keys():
+    proc = SanitizingProcessor(PrivacyConfig())
+    result = _process(proc, {"event": "alice@meta.com", "level": "info", "timestamp": "2026-06-03"})
+    assert result["event"] == "alice@meta.com"  # event key is excluded from sanitization
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_sanitizer.py -v`
+Expected: ImportError -- `workbench.privacy` not found.
+
+- [ ] **Step 3: Add DebugConfig and PrivacyConfig to config.py**
+
+In `src/workbench/config.py`, add after `MetricsConfig`:
+
+```python
+class DebugConfig(BaseModel):
+    sql_queries: bool = False
+    llm_prompts: bool = False
+    llm_token_usage: bool = True
+    request_bodies: bool = False
+    enrichment_details: bool = False
+    adapter_raw_items: bool = False
+
+
+class PrivacyConfig(BaseModel):
+    sanitize_logs: bool = True
+    redact_emails: bool = True
+    redact_phones: bool = True
+    max_content_in_logs: int = 200
+    allow_pii_in_debug_logs: bool = False
+
+
+class TracingConfig(BaseModel):
+    enabled: bool = False
+    exporter: str = "console"
+    otlp_endpoint: str | None = None
+    sample_rate: float = 1.0
+```
+
+Add to `AppConfig`:
+```python
+    debug: DebugConfig = Field(default_factory=DebugConfig)
+    privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
+```
+
+- [ ] **Step 4: Create privacy.py with SanitizingProcessor**
+
+Create `src/workbench/privacy.py`:
+
+```python
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from workbench.config import PrivacyConfig
+
+EXCLUDED_KEYS = frozenset({"event", "level", "timestamp", "logger", "request_id"})
+
+
+class SanitizingProcessor:
+    """structlog processor that redacts PII patterns from log events."""
+
+    EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+    PHONE_PATTERN = re.compile(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b')
+
+    def __init__(
+        self,
+        config: PrivacyConfig,
+        extra_patterns: list[tuple[re.Pattern, str]] | None = None,
+    ):
+        self._config = config
+        self._patterns: list[tuple[re.Pattern, str]] = []
+        if config.redact_emails:
+            self._patterns.append((self.EMAIL_PATTERN, "[REDACTED:email]"))
+        if config.redact_phones:
+            self._patterns.append((self.PHONE_PATTERN, "[REDACTED:phone]"))
+        if extra_patterns:
+            self._patterns.extend(extra_patterns)
+
+    def __call__(
+        self, logger: Any, method_name: str, event_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self._config.sanitize_logs:
+            return event_dict
+
+        for key, value in event_dict.items():
+            if key in EXCLUDED_KEYS:
+                continue
+            if not isinstance(value, str):
+                continue
+            if len(value) > self._config.max_content_in_logs:
+                value = value[: self._config.max_content_in_logs] + "... [truncated]"
+            for pattern, replacement in self._patterns:
+                value = pattern.sub(replacement, value)
+            event_dict[key] = value
+
+        return event_dict
+```
+
+- [ ] **Step 5: Wire SanitizingProcessor into logging setup in main.py**
+
+In `src/workbench/main.py`, update the `lifespan` function to create `SanitizingProcessor` and pass it to `setup_logging`:
+
+```python
+from workbench.privacy import SanitizingProcessor
+
+# Inside lifespan, after config is loaded:
+sanitizer = SanitizingProcessor(config.privacy)
+setup_logging(
+    log_format=log_cfg.format,
+    log_dir=log_dir,
+    level=getattr(logging, log_cfg.level.upper(), logging.INFO),
+    max_bytes=log_cfg.max_bytes,
+    max_age_days=log_cfg.max_age_days,
+    timezone=log_cfg.timezone,
+    extra_processors=[sanitizer],
+)
+```
+
+- [ ] **Step 6: Run tests**
+
+Run: `python -m pytest tests/test_sanitizer.py -v && make test`
+Expected: All pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/workbench/privacy.py src/workbench/config.py src/workbench/main.py tests/test_sanitizer.py
+git commit -m "feat(privacy): add SanitizingProcessor for PII log redaction, DebugConfig, PrivacyConfig (ADR 0011)"
+```
+
+---
+
+### Task 6e: Data Retention
+
+**Files:**
+- Modify: `src/workbench/config.py`
+- Modify: `src/workbench/pipeline/scheduler.py`
+- Modify: `src/workbench/storage/base.py` (add retention methods to store interfaces)
+- Modify: `src/workbench/storage/postgres/items.py`
+- Modify: `src/workbench/storage/postgres/triage.py`
+- Test: `tests/test_retention.py`
+
+- [ ] **Step 1: Write tests for retention cleanup**
+
+Create `tests/test_retention.py`:
+
+```python
+# tests/test_retention.py
+
+import pytest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+from workbench.config import RetentionConfig
+
+
+@pytest.mark.asyncio
+async def test_retention_deletes_old_archived_items():
+    from workbench.pipeline.scheduler import run_retention_cleanup
+
+    stores = MagicMock()
+    stores.items.delete_older_than = AsyncMock(return_value=5)
+    stores.triage.delete_older_than = AsyncMock(return_value=3)
+    stores.enrichment_traces.delete_older_than = AsyncMock(return_value=2)
+    stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=1)
+
+    config = RetentionConfig(archived_items_days=90)
+    result = await run_retention_cleanup(stores, config)
+
+    stores.items.delete_older_than.assert_called_once()
+    assert result["archived_items"] == 5
+
+
+@pytest.mark.asyncio
+async def test_retention_skips_interaction_log():
+    from workbench.pipeline.scheduler import run_retention_cleanup
+
+    stores = MagicMock()
+    stores.items.delete_older_than = AsyncMock(return_value=0)
+    stores.triage.delete_older_than = AsyncMock(return_value=0)
+    stores.enrichment_traces.delete_older_than = AsyncMock(return_value=0)
+    stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=0)
+
+    config = RetentionConfig()
+    await run_retention_cleanup(stores, config)
+
+    assert not hasattr(stores.interactions, "delete_older_than") or \
+           not stores.interactions.delete_older_than.called
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_retention.py -v`
+Expected: ImportError -- `RetentionConfig` not found, `run_retention_cleanup` not found.
+
+- [ ] **Step 3: Add RetentionConfig to config.py**
+
+In `src/workbench/config.py`, add:
+
+```python
+class RetentionConfig(BaseModel):
+    archived_items_days: int = 90
+    done_items_days: int = 90
+    expired_cards_days: int = 30
+    responded_cards_days: int = 90
+    enrichment_traces_days: int = 30
+    dead_letters_days: int = 30
+```
+
+Add to `AppConfig`:
+```python
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
+```
+
+- [ ] **Step 4: Add retention delete methods to store interfaces**
+
+In `src/workbench/storage/base.py`, add to `ItemStore`:
+```python
+    @abstractmethod
+    async def delete_older_than(self, status: str, days: int) -> int:
+        """Delete items with given status older than days. Returns count deleted."""
+        ...
+```
+
+Add similar methods to `TriageStore` and `EnrichmentTraceStore`.
+
+- [ ] **Step 5: Implement retention delete methods in PG stores**
+
+In `src/workbench/storage/postgres/items.py`:
+```python
+    async def delete_older_than(self, status: str, days: int) -> int:
+        result = await self.pool.execute(
+            "DELETE FROM items WHERE status = $1 AND updated_at < NOW() - INTERVAL '1 day' * $2",
+            status, days,
+        )
+        return int(result.split()[-1])
+```
+
+Similar implementations for triage cards and enrichment traces.
+
+- [ ] **Step 6: Add run_retention_cleanup to scheduler**
+
+In `src/workbench/pipeline/scheduler.py`, add:
+
+```python
+async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, int]:
+    """Run daily retention cleanup. Returns counts of deleted rows."""
+    logger = structlog.get_logger(__name__)
+    results = {}
+
+    results["archived_items"] = await stores.items.delete_older_than("archived", config.archived_items_days)
+    results["done_items"] = await stores.items.delete_older_than("done", config.done_items_days)
+    results["expired_cards"] = await stores.triage.delete_older_than("expired", config.expired_cards_days)
+    results["responded_cards"] = await stores.triage.delete_older_than("responded", config.responded_cards_days)
+    results["enrichment_traces"] = await stores.enrichment_traces.delete_older_than(config.enrichment_traces_days)
+    results["dead_letters"] = await stores.ingestion_queue.delete_dead_letters_older_than(config.dead_letters_days)
+
+    total = sum(results.values())
+    if total > 0:
+        logger.info("retention_cleanup_complete", **results, total=total)
+    return results
+```
+
+Wire into the scheduler's morning briefing job to run after the briefing.
+
+- [ ] **Step 7: Run tests**
+
+Run: `python -m pytest tests/test_retention.py -v && make test`
+Expected: All pass.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/workbench/config.py src/workbench/pipeline/scheduler.py src/workbench/storage/base.py src/workbench/storage/postgres/items.py src/workbench/storage/postgres/triage.py tests/test_retention.py
+git commit -m "feat(retention): add configurable data retention with daily cleanup"
+```
+
+---
+
+### Task 6f: Alerting (AlertManager)
+
+**Files:**
+- Create: `src/workbench/alerting.py`
+- Modify: `src/workbench/config.py`
+- Modify: `src/workbench/pipeline/scheduler.py`
+- Test: `tests/test_alerting.py`
+
+- [ ] **Step 1: Write tests for AlertManager**
+
+Create `tests/test_alerting.py`:
+
+```python
+# tests/test_alerting.py
+
+import pytest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+from workbench.alerting import AlertManager, AlertConfig, AlertConditions
+
+
+@pytest.mark.asyncio
+async def test_alert_on_dead_letters():
+    messenger = AsyncMock()
+    config = AlertConfig(conditions=AlertConditions(dead_letter_threshold=3))
+    mgr = AlertManager(messenger, config)
+
+    health = {"dead_letter_count": 5}
+    await mgr.check_and_alert(health)
+
+    messenger.send_notification.assert_called_once()
+    msg = messenger.send_notification.call_args[0][0]
+    assert "dead letter" in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_alert_cooldown_prevents_duplicate():
+    messenger = AsyncMock()
+    config = AlertConfig(cooldown_minutes=60, conditions=AlertConditions(dead_letter_threshold=3))
+    mgr = AlertManager(messenger, config)
+
+    health = {"dead_letter_count": 5}
+    await mgr.check_and_alert(health)
+    await mgr.check_and_alert(health)  # within cooldown
+
+    assert messenger.send_notification.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_no_alert_below_threshold():
+    messenger = AsyncMock()
+    config = AlertConfig(conditions=AlertConditions(dead_letter_threshold=3))
+    mgr = AlertManager(messenger, config)
+
+    health = {"dead_letter_count": 2}
+    await mgr.check_and_alert(health)
+
+    messenger.send_notification.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connection_unhealthy_alert():
+    messenger = AsyncMock()
+    config = AlertConfig()
+    mgr = AlertManager(messenger, config)
+
+    health = {"connections": {"google": False}}
+    await mgr.check_and_alert(health)
+
+    messenger.send_notification.assert_called_once()
+    msg = messenger.send_notification.call_args[0][0]
+    assert "google" in msg.lower()
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_alerting.py -v`
+Expected: ImportError -- `workbench.alerting` not found.
+
+- [ ] **Step 3: Add AlertConfig to config.py**
+
+In `src/workbench/config.py`:
+
+```python
+class AlertConditions(BaseModel):
+    dead_letter_threshold: int = 3
+    adapter_failure_threshold: int = 3
+    queue_depth_threshold: int = 50
+    stale_card_days: int = 3
+    llm_failure_threshold: int = 2
+
+
+class AlertConfig(BaseModel):
+    enabled: bool = True
+    cooldown_minutes: int = 60
+    conditions: AlertConditions = Field(default_factory=AlertConditions)
+```
+
+Add to `AppConfig`:
+```python
+    alerting: AlertConfig = Field(default_factory=AlertConfig)
+```
+
+- [ ] **Step 4: Create alerting.py**
+
+Create `src/workbench/alerting.py`:
+
+```python
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import structlog
+
+from workbench.config import AlertConfig, AlertConditions
+
+logger = structlog.get_logger(__name__)
+
+
+class AlertManager:
+    def __init__(self, messenger, config: AlertConfig):
+        self._messenger = messenger
+        self._config = config
+        self._last_fired: dict[str, datetime] = {}
+
+    async def check_and_alert(self, health: dict[str, Any]) -> None:
+        if not self._config.enabled or not self._messenger:
+            return
+
+        conditions = self._config.conditions
+        now = datetime.now(timezone.utc)
+
+        # Dead letters
+        dl = health.get("dead_letter_count", 0)
+        if dl >= conditions.dead_letter_threshold:
+            await self._fire("dead_letters", f"⚠ {dl} dead letter entries need investigation", now)
+
+        # Connection health
+        for name, healthy in health.get("connections", {}).items():
+            if not healthy:
+                await self._fire(f"conn_{name}", f"⚠ Connection '{name}' is unhealthy", now)
+
+        # Queue depth
+        depth = health.get("ingestion_queue_depth", 0)
+        if depth >= conditions.queue_depth_threshold:
+            await self._fire("queue_depth", f"⚠ Ingestion queue depth is {depth}", now)
+
+        # Adapter failures
+        for name, failures in health.get("adapter_consecutive_failures", {}).items():
+            if failures >= conditions.adapter_failure_threshold:
+                await self._fire(f"adapter_{name}", f"⚠ Adapter '{name}' has {failures} consecutive failures", now)
+
+    async def _fire(self, key: str, message: str, now: datetime) -> None:
+        cooldown = timedelta(minutes=self._config.cooldown_minutes)
+        last = self._last_fired.get(key)
+        if last and (now - last) < cooldown:
+            return
+
+        try:
+            await self._messenger.send_notification(message)
+            self._last_fired[key] = now
+            logger.info("alert_sent", alert_key=key, message=message)
+        except Exception as e:
+            logger.error("alert_send_failed", alert_key=key, error=str(e))
+```
+
+- [ ] **Step 5: Wire AlertManager into scheduler**
+
+In `src/workbench/pipeline/scheduler.py`:
+1. Initialize `AlertManager` in `__init__` using `config.alerting` and `self.messenger`
+2. On each scheduler tick, build health dict from stores + connections and call `self.alert_manager.check_and_alert(health)`
+
+- [ ] **Step 6: Run tests**
+
+Run: `python -m pytest tests/test_alerting.py -v && make test`
+Expected: All pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/workbench/alerting.py src/workbench/config.py src/workbench/pipeline/scheduler.py tests/test_alerting.py
+git commit -m "feat(alerting): add AlertManager with messenger integration and cooldown dedup"
+```
+
+---
+
+### Task 6g: Diagnostic Endpoints
+
+**Files:**
+- Create: `src/workbench/api/debug.py`
+- Modify: `src/workbench/main.py`
+- Test: `tests/test_debug_endpoints.py`
+
+- [ ] **Step 1: Write tests for diagnostic endpoints**
+
+Create `tests/test_debug_endpoints.py`:
+
+```python
+# tests/test_debug_endpoints.py
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from fastapi.testclient import TestClient
+from fastapi import FastAPI
+from workbench.api.debug import router
+
+
+def _make_app():
+    app = FastAPI()
+    app.include_router(router)
+
+    stores = MagicMock()
+    stores.items.pool.fetch = AsyncMock(return_value=[])
+    stores.ingestion_queue.get_depth = AsyncMock(return_value=0)
+    stores.triage.get_pending = AsyncMock(return_value=[])
+
+    app.state.stores = stores
+    app.state.connections = {}
+    app.state.sources = []
+    app.state.config = MagicMock()
+    app.state.config.model_dump.return_value = {"version": "0.3.0", "server": {"api_token": "SECRET"}}
+    app.state.metrics = None
+    return app
+
+
+def test_debug_adapters():
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.get("/api/debug/adapters")
+    assert resp.status_code == 200
+    assert "adapters" in resp.json()
+
+
+def test_debug_connections():
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.get("/api/debug/connections")
+    assert resp.status_code == 200
+    assert "connections" in resp.json()
+
+
+def test_debug_config_redacts_secrets():
+    app = _make_app()
+    client = TestClient(app)
+    resp = client.get("/api/debug/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "SECRET" not in str(data)
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_debug_endpoints.py -v`
+Expected: ImportError -- `workbench.api.debug` not found.
+
+- [ ] **Step 3: Create debug.py**
+
+Create `src/workbench/api/debug.py`:
+
+```python
+from __future__ import annotations
+
+import re
+from typing import Any
+
+import structlog
+from fastapi import APIRouter, Request
+
+logger = structlog.get_logger(__name__)
+router = APIRouter(prefix="/api/debug", tags=["debug"])
+
+SECRET_PATTERN = re.compile(r'(token|key|secret|password|dsn|credentials)', re.IGNORECASE)
+
+
+def _redact_secrets(obj: Any, depth: int = 0) -> Any:
+    if depth > 10:
+        return "..."
+    if isinstance(obj, dict):
+        return {
+            k: "[REDACTED]" if SECRET_PATTERN.search(k) else _redact_secrets(v, depth + 1)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_secrets(i, depth + 1) for i in obj]
+    return obj
+
+
+@router.get("/adapters")
+async def debug_adapters(request: Request):
+    sources = getattr(request.app.state, "sources", [])
+    adapters = []
+    for s in sources:
+        inner = getattr(s, "_inner", s)
+        adapters.append({
+            "name": getattr(s, "_name", type(inner).__name__),
+            "class": type(inner).__qualname__,
+            "healthy": getattr(getattr(inner, "_connection", None), "is_healthy", lambda: True)(),
+        })
+    return {"adapters": adapters}
+
+
+@router.get("/connections")
+async def debug_connections(request: Request):
+    connections = getattr(request.app.state, "connections", {})
+    result = {}
+    for name, conn in connections.items():
+        result[name] = {
+            "class": type(conn).__qualname__,
+            "healthy": conn.is_healthy(),
+        }
+    return {"connections": result}
+
+
+@router.get("/pipeline")
+async def debug_pipeline(request: Request):
+    stores = request.app.state.stores
+    try:
+        rows = await stores.items.pool.fetch(
+            "SELECT id, status, source_type, created_at FROM items ORDER BY created_at DESC LIMIT 50"
+        )
+        jobs = [dict(r) for r in rows]
+    except Exception:
+        jobs = []
+    return {"recent_items": jobs}
+
+
+@router.get("/identity")
+async def debug_identity(request: Request):
+    memory = getattr(request.app.state, "memory", None)
+    if not memory or not hasattr(memory, "get_identity_stats"):
+        return {"message": "Identity resolution not available"}
+    try:
+        stats = await memory.get_identity_stats()
+        return stats
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/config")
+async def debug_config(request: Request):
+    config = request.app.state.config
+    raw = config.model_dump() if hasattr(config, "model_dump") else {}
+    return {"config": _redact_secrets(raw)}
+```
+
+- [ ] **Step 4: Register debug router in main.py**
+
+In `src/workbench/main.py`, add `from workbench.api import debug` to the imports and include `debug.router` in the router list.
+
+- [ ] **Step 5: Run tests**
+
+Run: `python -m pytest tests/test_debug_endpoints.py -v && make test`
+Expected: All pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/workbench/api/debug.py src/workbench/main.py tests/test_debug_endpoints.py
+git commit -m "feat(debug): add diagnostic endpoints for adapters, pipeline, connections, config"
+```
+
+---
 
 ## Group A: Source Adapters + Enrichers
 
@@ -3948,8 +5626,6 @@ git commit -m "docs(config): add connections, Google source adapters, and compos
 ```
 
 ---
-
-Now I have everything I need. Let me write the complete Group B (Tasks 15-20) with all the critical fixes incorporated.
 
 ## Group B: Cards + Identity Resolution
 
@@ -6664,8 +8340,6 @@ git commit -m "feat(triage): update format_card_for_chat with LLM body, suggesti
 
 ---
 
-I now have all the context needed. Let me produce the complete markdown output.
-
 ## Group C: Action Items (Tasks 21-23), Group M (Task 24), Plugin Command (Task 25), Final Verification (Task 26)
 
 ---
@@ -7778,11 +9452,14 @@ git commit -m "feat(ui): add React action items UI with token auth and multi-sta
 
 ## Group M: workbench-meta Adapters
 
-### Task 24: Meta-Internal Adapters (workbench-meta)
+### Task 24: Meta-Internal Adapters + Observability (workbench-meta)
 
 **Note:** These files live in the separate `~/workspace/workbench-meta/` repository. They depend on resolving the InternConnection auth mechanism (open question). The adapters below are functional stubs that follow the existing pattern (see `phabricator.py`).
 
+**Observability requirements (grilling session 2026-06-03):** All Meta adapters and enrichers use structlog with Meta-specific bound context fields. The `workbench_meta/privacy.py` module provides META_SANITIZER_PATTERNS. The config.meta.yml includes observability overrides (retention 365d, stricter alerting, JSON logging).
+
 **Files (all in workbench-meta):**
+- Create: `workbench_meta/privacy.py`
 - Create: `workbench_meta/providers/source/meta_tasks.py`
 - Create: `workbench_meta/providers/source/workplace.py`
 - Create: `workbench_meta/providers/source/docs.py`
@@ -7790,6 +9467,36 @@ git commit -m "feat(ui): add React action items UI with token auth and multi-sta
 - Create: `workbench_meta/providers/enrichment/workplace.py`
 - Create: `workbench_meta/providers/enrichment/docs.py`
 - Modify: `config.meta.yml`
+
+- [ ] **Step 0: Create workbench_meta/privacy.py with Meta sanitizer patterns**
+
+```python
+# workbench_meta/privacy.py
+
+import re
+
+META_SANITIZER_PATTERNS = [
+    (re.compile(r'\bD\d{6,}\b'), '[REDACTED:phid]'),
+    (re.compile(r'\bT\d{6,}\b'), '[REDACTED:task_id]'),
+    (re.compile(r'\b[a-z]{2,20}(?=@fb\.com)'), '[REDACTED:unixname]'),
+]
+```
+
+This module is loaded by the Meta entrypoint and passed to `setup_logging(extra_processors=[SanitizingProcessor(config.privacy, extra_patterns=META_SANITIZER_PATTERNS)])`. In `src/workbench/main.py`, update the `lifespan` function to support a hook for extra sanitizer patterns:
+
+```python
+# In main.py lifespan, after config is loaded:
+extra_patterns = []
+try:
+    from workbench_meta.privacy import META_SANITIZER_PATTERNS
+    extra_patterns = META_SANITIZER_PATTERNS
+except ImportError:
+    pass  # OSS mode — no Meta patterns
+
+sanitizer = SanitizingProcessor(config.privacy, extra_patterns=extra_patterns)
+```
+
+This import pattern matches the existing workbench-meta overlay approach — workbench tries to import Meta extensions, falls back gracefully when running OSS-only.
 
 - [ ] **Step 1: Create MetaTasksAdapter**
 
@@ -7800,9 +9507,12 @@ import asyncio
 import json
 from datetime import datetime
 
+import structlog
 from pydantic import BaseModel
 from workbench.models import RawItem
 from workbench.providers.source.base import SourceAdapter
+
+logger = structlog.get_logger(__name__)
 
 
 class MetaTasksAdapter(SourceAdapter):
@@ -7820,6 +9530,8 @@ class MetaTasksAdapter(SourceAdapter):
         if not self.owner:
             return []
 
+        logger.info("meta_tasks_poll_start", query_owner=self.owner, since=str(since))
+
         args = ["meta", "tasks.task", "list", "--owner", self.owner, "--format", "json"]
         if since:
             args.extend(["--modified-after", since.isoformat()])
@@ -7832,9 +9544,11 @@ class MetaTasksAdapter(SourceAdapter):
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode != 0:
+                logger.warning("meta_tasks_poll_nonzero_exit", returncode=proc.returncode)
                 return []
             tasks = json.loads(stdout.decode())
-        except Exception:
+        except Exception as e:
+            logger.error("meta_tasks_poll_failed", error=str(e))
             return []
 
         items = []
@@ -7856,6 +9570,8 @@ class MetaTasksAdapter(SourceAdapter):
                 raw_text=json.dumps(task),
                 urgency_signals=urgency_signals,
             ))
+
+        logger.info("meta_tasks_poll_complete", task_count=len(items), query_owner=self.owner)
         return items
 ```
 
@@ -7868,9 +9584,12 @@ import asyncio
 import json
 from datetime import datetime
 
+import structlog
 from pydantic import BaseModel
 from workbench.models import RawItem
 from workbench.providers.source.base import SourceAdapter
+
+logger = structlog.get_logger(__name__)
 
 
 class WorkplaceAdapter(SourceAdapter):
@@ -7887,6 +9606,8 @@ class WorkplaceAdapter(SourceAdapter):
     async def poll(self, since: datetime | None = None) -> list[RawItem]:
         if not self.group_ids:
             return []
+
+        logger.info("workplace_poll_start", group_count=len(self.group_ids))
 
         items = []
         for group_id in self.group_ids:
@@ -7905,9 +9626,11 @@ class WorkplaceAdapter(SourceAdapter):
                 )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
                 if proc.returncode != 0:
+                    logger.warning("workplace_group_poll_failed", group_id=group_id, returncode=proc.returncode)
                     continue
                 posts = json.loads(stdout.decode())
-            except Exception:
+            except Exception as e:
+                logger.error("workplace_group_poll_error", group_id=group_id, error=str(e))
                 continue
 
             for post in posts if isinstance(posts, list) else []:
@@ -7924,6 +9647,8 @@ class WorkplaceAdapter(SourceAdapter):
                     raw_text=json.dumps(post),
                     urgency_signals=urgency_signals,
                 ))
+
+        logger.info("workplace_poll_complete", post_count=len(items), group_ids=self.group_ids)
         return items
 ```
 
@@ -7936,9 +9661,12 @@ import asyncio
 import json
 from datetime import datetime
 
+import structlog
 from pydantic import BaseModel
 from workbench.models import RawItem
 from workbench.providers.source.base import SourceAdapter
+
+logger = structlog.get_logger(__name__)
 
 
 class MetaDocsAdapter(SourceAdapter):
@@ -7956,6 +9684,8 @@ class MetaDocsAdapter(SourceAdapter):
         if not self.subscribed_doc_ids:
             return []
 
+        logger.info("meta_docs_poll_start", doc_count=len(self.subscribed_doc_ids))
+
         items = []
         for doc_id in self.subscribed_doc_ids:
             args = [
@@ -7970,9 +9700,11 @@ class MetaDocsAdapter(SourceAdapter):
                 )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
                 if proc.returncode != 0:
+                    logger.warning("meta_docs_fetch_failed", doc_id=doc_id, returncode=proc.returncode)
                     continue
                 doc = json.loads(stdout.decode())
-            except Exception:
+            except Exception as e:
+                logger.error("meta_docs_fetch_error", doc_id=doc_id, error=str(e))
                 continue
 
             title = doc.get("title", "")
@@ -7988,6 +9720,8 @@ class MetaDocsAdapter(SourceAdapter):
                 raw_text=json.dumps(doc),
                 urgency_signals=urgency_signals,
             ))
+
+        logger.info("meta_docs_poll_complete", doc_count=len(items))
         return items
 ```
 
@@ -7999,9 +9733,12 @@ class MetaDocsAdapter(SourceAdapter):
 import asyncio
 import json
 
+import structlog
 from pydantic import BaseModel
 from workbench.models import EnrichmentBudget, ExtractedItem
 from workbench.providers.enrichment.base import ContextEnricher
+
+logger = structlog.get_logger(__name__)
 
 
 class MetaTasksEnricher(ContextEnricher):
@@ -8077,9 +9814,12 @@ class MetaTasksEnricher(ContextEnricher):
 
 import json
 
+import structlog
 from pydantic import BaseModel
 from workbench.models import EnrichmentBudget, ExtractedItem
 from workbench.providers.enrichment.base import ContextEnricher
+
+logger = structlog.get_logger(__name__)
 
 
 class WorkplaceEnricher(ContextEnricher):
@@ -8130,9 +9870,12 @@ class WorkplaceEnricher(ContextEnricher):
 
 import json
 
+import structlog
 from pydantic import BaseModel
 from workbench.models import EnrichmentBudget, ExtractedItem
 from workbench.providers.enrichment.base import ContextEnricher
+
+logger = structlog.get_logger(__name__)
 
 
 class MetaDocsEnricher(ContextEnricher):
@@ -8179,7 +9922,7 @@ class MetaDocsEnricher(ContextEnricher):
         }
 ```
 
-- [ ] **Step 7: Update config.meta.yml**
+- [ ] **Step 7: Update config.meta.yml with adapters + observability overrides**
 
 ```yaml
 llm:
@@ -8214,20 +9957,49 @@ enrichment:
 # meta_tasks: workbench_meta.providers.enrichment.meta_tasks.MetaTasksEnricher
 # workplace:  workbench_meta.providers.enrichment.workplace.WorkplaceEnricher
 # docs:       workbench_meta.providers.enrichment.docs.MetaDocsEnricher
+
+# --- Observability overrides (grilling session 2026-06-03) ---
+
+logging:
+  format: json
+  level: INFO
+
+privacy:
+  sanitize_logs: true
+  redact_emails: true
+  redact_phones: true
+  max_content_in_logs: 500
+
+retention:
+  archived_items_days: 365
+  done_items_days: 365
+  expired_cards_days: 365
+  responded_cards_days: 365
+  enrichment_traces_days: 365
+  dead_letters_days: 365
+
+alerting:
+  enabled: true
+  cooldown_minutes: 30
+  conditions:
+    dead_letter_threshold: 2
+    adapter_failure_threshold: 2
+    queue_depth_threshold: 30
 ```
 
 - [ ] **Step 8: Commit (in workbench-meta repo)**
 
 ```bash
 cd ~/workspace/workbench-meta
-git add workbench_meta/providers/source/meta_tasks.py \
+git add workbench_meta/privacy.py \
+        workbench_meta/providers/source/meta_tasks.py \
         workbench_meta/providers/source/workplace.py \
         workbench_meta/providers/source/docs.py \
         workbench_meta/providers/enrichment/meta_tasks.py \
         workbench_meta/providers/enrichment/workplace.py \
         workbench_meta/providers/enrichment/docs.py \
         config.meta.yml
-git commit -m "feat(meta): add Meta Tasks, Workplace, Docs adapters and enrichers"
+git commit -m "feat(meta): add Meta adapters/enrichers with structlog, sanitizer patterns, observability config"
 ```
 
 ---

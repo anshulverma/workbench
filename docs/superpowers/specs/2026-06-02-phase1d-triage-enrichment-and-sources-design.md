@@ -400,13 +400,13 @@ Extend the enum when new entity types are needed. Enrichers must use these value
 
 ### Standardized `entity_refs` output
 
-Every enricher returns an `entity_refs` field in its output dict. Entity IDs are source-qualified to support identity resolution:
+Every enricher returns an `entity_refs` field in its output dict. Entity IDs are source-qualified to support identity resolution. Uses list of dicts (not tuples) for clean JSON/JSONB round-tripping:
 
 ```python
 {
     "entity_refs": [
-        (EntityType.PERSON, "github:alice-gh"),
-        (EntityType.REPO, "github:owner/infra-core"),
+        {"type": "person", "id": "github:alice-gh"},
+        {"type": "repo", "id": "github:owner/infra-core"},
     ],
     # ...rest of enrichment context
 }
@@ -416,14 +416,14 @@ Entity ref mapping by source type:
 
 | Source type | Entity refs extracted |
 |------------|---------------------|
-| `email` | `(PERSON, "email:{sender}")`, `(PERSON, "email:{recipient}")` per recipient |
-| `github` | `(PERSON, "github:{author}")`, `(REPO, "github:{repo}")`, `(PERSON, "github:{reviewer}")` per reviewer |
-| `calendar` | `(PERSON, "gcal:{organizer}")`, `(PERSON, "gcal:{attendee}")` per attendee |
-| `gchat_message` | `(PERSON, "gchat:{sender}")`, `(SPACE, "gchat:{space_id}")` |
-| `task` | `(PERSON, "task:{assignee}")`, `(PERSON, "task:{reporter}")`, `(TEAM, "task:{team_tag}")` per team tag |
-| `workplace` | `(PERSON, "wp:{author}")`, `(GROUP, "wp:{group_id}")`, `(TEAM, "wp:{group_name}")` when group maps to a team |
-| `doc` | `(PERSON, "doc:{author}")`, `(PERSON, "doc:{last_editor}")` |
-| `diff` | `(PERSON, "diff:{author}")`, `(PERSON, "diff:{reviewer}")` per reviewer, `(REPO, "diff:{repo}")` |
+| `email` | `{type: person, id: "email:{sender}"}`, `{type: person, id: "email:{recipient}"}` per recipient |
+| `github` | `{type: person, id: "github:{author}"}`, `{type: repo, id: "github:{repo}"}`, `{type: person, id: "github:{reviewer}"}` per reviewer |
+| `calendar` | `{type: person, id: "gcal:{organizer}"}`, `{type: person, id: "gcal:{attendee}"}` per attendee |
+| `gchat_message` | `{type: person, id: "gchat:{sender}"}`, `{type: space, id: "gchat:{space_id}"}` |
+| `task` | `{type: person, id: "task:{assignee}"}`, `{type: person, id: "task:{reporter}"}`, `{type: team, id: "task:{team_tag}"}` per team tag |
+| `workplace` | `{type: person, id: "wp:{author}"}`, `{type: group, id: "wp:{group_id}"}`, `{type: team, id: "wp:{group_name}"}` when group maps to a team |
+| `doc` | `{type: person, id: "doc:{author}"}`, `{type: person, id: "doc:{last_editor}"}` |
+| `diff` | `{type: person, id: "diff:{author}"}`, `{type: person, id: "diff:{reviewer}"}` per reviewer, `{type: repo, id: "diff:{repo}"}` |
 
 ### Enricher identifying attributes
 
@@ -662,10 +662,10 @@ Day 3: Phabricator diff from alice
 2. **Query memory** for each referenced entity in parallel (entity IDs resolve through identity table to canonical entities):
 
 ```python
-entity_ids = enrichment_context.get("entity_refs", [])
+entity_refs = enrichment_context.get("entity_refs", [])
 entities_and_rels = await asyncio.gather(
-    *[memory.query_entity(t, i) for t, i in entity_ids],
-    *[memory.query_relationships(t, i) for t, i in entity_ids],
+    *[memory.query_entity(ref["type"], ref["id"]) for ref in entity_refs],
+    *[memory.query_relationships(ref["type"], ref["id"]) for ref in entity_refs],
     memory.query_preferences(item.summary),
 )
 ```
@@ -674,7 +674,7 @@ entities_and_rels = await asyncio.gather(
 
 ```python
 memory_context = {
-    "entity_facts": {f"{t}:{i}": e.facts for (t, i), e in zip(entity_ids, entities) if e},
+    "entity_facts": {f"{ref['type']}:{ref['id']}": e.facts for ref, e in zip(entity_refs, entities) if e},
     "relationships": all_relationships,
     "preference_facts": [f.content for f in preferences],
 }
@@ -1041,7 +1041,18 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 
 ## File Changes
 
-### Core `workbench/` — New Files
+### Core `workbench/` — New Files (Observability, Operations, Privacy)
+
+| File | Description |
+|------|-------------|
+| `middleware.py` | `CorrelationIdMiddleware` — UUID4 per request, bound to structlog contextvars, `X-Request-ID` header |
+| `metrics.py` | Prometheus metric definitions (all counters, histograms, gauges) and `/metrics` endpoint |
+| `instrumentation.py` | `InstrumentedSourceAdapter`, `InstrumentedLLMProvider`, `InstrumentedContextEnricher` decorator wrappers |
+| `privacy.py` | `SanitizingProcessor` — structlog processor for PII redaction; `PrivacyConfig` model |
+| `alerting.py` | `AlertManager` — condition evaluation, messenger alerts, cooldown dedup; `AlertConfig` model |
+| `api/debug.py` | Diagnostic endpoints: `/api/debug/adapters`, `/api/debug/pipeline`, `/api/debug/connections`, `/api/debug/identity`, `/api/debug/config` |
+
+### Core `workbench/` — New Files (Tracks A/B/C)
 
 | File | Description |
 |------|-------------|
@@ -1058,7 +1069,18 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 | `api/actions.py` | Action items API endpoints |
 | `ui/` | React app (Vite + React, static assets served by FastAPI) |
 
-### Core `workbench/` — Modified Files
+### Core `workbench/` — Modified Files (Observability, Operations, Privacy)
+
+| File | Change |
+|------|--------|
+| `logging.py` | Rewrite: replace `GlogFormatter` with structlog setup (JSON/console configurable), integrate `SanitizingProcessor`, preserve `AgeRotatingFileHandler` |
+| `config.py` | Add `DebugConfig`, `PrivacyConfig`, `MetricsConfig`, `TracingConfig`, `AlertConfig`, `RetentionConfig` models to `AppConfig` |
+| `main.py` | Add `CorrelationIdMiddleware`, initialize `AlertManager`, register `/metrics` and `/api/debug/` routes, OTel auto-instrumentation (opt-in) |
+| `registry.py` | Wrap providers with instrumented wrappers at construction time |
+| `api/health.py` | Return 503 on critical component failure; add component-level checks; add `/health/live` and `/health/ready` |
+| `pipeline/scheduler.py` | Call `alert_manager.check_and_alert()` on each tick; call `run_retention_cleanup()` daily after morning briefing |
+
+### Core `workbench/` — Modified Files (Tracks A/B/C)
 
 | File | Change |
 |------|--------|
@@ -1093,23 +1115,38 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 
 | File | Description |
 |------|-------------|
+| `privacy.py` | `META_SANITIZER_PATTERNS` — regex patterns for PHIDs (`D123456`), task IDs (`T123456`), unixnames; loaded at startup into `SanitizingProcessor` |
 | `providers/connection/__init__.py` | Connection package |
-| `providers/connection/intern.py` | `InternConnection` — Intern API / GraphQL auth (mechanism TBD) |
-| `providers/source/meta_tasks.py` | `MetaTasksAdapter` — polls tasks via meta CLI or GraphQL |
-| `providers/source/workplace.py` | `WorkplaceAdapter` — polls Workplace group posts |
-| `providers/source/docs.py` | `MetaDocsAdapter` — polls wiki/doc updates |
-| `providers/enrichment/meta_tasks.py` | `MetaTasksEnricher` — subtasks, blockers, related diffs |
-| `providers/enrichment/workplace.py` | `WorkplaceEnricher` — comments, reactions, author role |
-| `providers/enrichment/docs.py` | `MetaDocsEnricher` — content summary, edit history |
+| `providers/connection/intern.py` | `InternConnection` — Intern API / GraphQL auth (mechanism TBD). Includes `is_healthy()` for health check integration and structlog logging with `auth_method`, `token_expiry` context |
+| `providers/source/meta_tasks.py` | `MetaTasksAdapter` — polls tasks via meta CLI or GraphQL. Structured logging with `query_owner`, `task_count`, `query_filters` |
+| `providers/source/workplace.py` | `WorkplaceAdapter` — polls Workplace group posts. Structured logging with `group_ids`, `post_count` |
+| `providers/source/docs.py` | `MetaDocsAdapter` — polls wiki/doc updates. Structured logging with `wiki_spaces`, `doc_count`, `watch_tags` |
+| `providers/enrichment/meta_tasks.py` | `MetaTasksEnricher` — subtasks, blockers, related diffs. Structured logging with `task_id`, `subtask_count`, `blocker_count` |
+| `providers/enrichment/workplace.py` | `WorkplaceEnricher` — comments, reactions, author role. Structured logging with `post_id`, `comment_count`, `author_role` |
+| `providers/enrichment/docs.py` | `MetaDocsEnricher` — content summary, edit history. Structured logging with `page_id`, `revision_id`, `edit_count` |
 
 ### `workbench-meta/` — Modified Files
 
 | File | Change |
 |------|--------|
-| config files | Add `connections:` section, Meta-internal source and enricher entries, full enricher provider list (core + meta) |
+| `config.meta.yml` | Add `connections:`, `privacy:` (max_content_in_logs: 500), `retention:` (365 days all), `alerting:` (stricter thresholds), `logging:` (format: json). Add Meta-internal source and enricher entries, full enricher provider list (core + meta) |
+| `docker-compose.override.yml` or entrypoint | Load `META_SANITIZER_PATTERNS` from `workbench_meta.privacy` into `SanitizingProcessor` at startup |
 | `providers/llm/meta_anthropic.py` | Inherits LLM card generation and interpret_triage_response from parent — no changes needed |
 
-### Tests
+### Tests (Observability, Operations, Privacy)
+
+| File | Description |
+|------|-------------|
+| `tests/test_structured_logging.py` | structlog JSON/console output, correlation ID binding, sanitizer integration |
+| `tests/test_metrics.py` | Prometheus counters/histograms increment correctly, `/metrics` endpoint returns text |
+| `tests/test_instrumentation.py` | Instrumented wrappers track poll/enrich/LLM durations and counts |
+| `tests/test_sanitizer.py` | Email/phone redaction, content truncation, extra_patterns extension, PII debug opt-in |
+| `tests/test_health_improved.py` | 503 on PG failure, component breakdown, liveness/readiness split |
+| `tests/test_alerting.py` | Condition evaluation, cooldown dedup, messenger integration |
+| `tests/test_retention.py` | Cleanup deletes expired rows, respects retention periods, skips interaction log |
+| `tests/test_debug_endpoints.py` | Diagnostic endpoints return adapter/pipeline/connection/identity/config data |
+
+### Tests (Tracks A/B/C)
 
 | File | Description |
 |------|-------------|
@@ -1147,6 +1184,288 @@ The `action_source` field on Items and the `InterpretedResponse` logging provide
 15. **Pending confirmation storage:** → Pending `InterpretedResponse` stored in `card_content["pending_interpretation"]` (JSONB, no new column). When "yes" arrives, the function reads and executes the pending interpretation. Stale interpretations (after timeout revert) are harmless — never read again.
 16. **Skip all confirmation:** → "Skip all" requires confirmation ("This will skip N pending cards. Reply 'yes' to confirm."). After confirmation, routes through `execute_triage_response()` for each card so interaction logging and memory recording happen. Cards in `awaiting_followup`/`awaiting_confirmation` are excluded from bulk skip.
 17. **GChat thread batching:** → Instead of producing a RawItem on every new message, the GChat adapter waits until a thread is idle for `idle_minutes` (default 15) or `max_delay_minutes` (default 120) since last ingestion. State (`last_activity`, `last_ingested` per thread) persisted in `adapter_state`. Prevents duplicate pipeline runs for active threads while ensuring long-running conversations get periodic ingestion.
+
+## Resolved Questions (from Grilling Session 2026-06-03 — Plan Review)
+
+18. **Plan header inconsistencies:** → Fixed 4 stale plan header entries: (a) deferred card re-scoring removed per #8, (b) awaiting timeout reverts to `sent` per #13, (c) `describe_attachment` split per #12, (d) regenerate_cards.py dropped per #11.
+19. **expire_old_cards() redundant WHERE clause:** → `status = 'queued' AND status NOT IN ('awaiting_followup', 'awaiting_confirmation')` is redundant — removed second condition. Cards in awaiting states have their own 1-hour timeout.
+20. **TriageResponseResult model:** → Missing from Task 1 models. Add `TriageResponseResult(explanation: str, prompt: str | None, followup_status: str | None, actions_executed: list[str])` to `models.py`.
+21. **AdapterStateStore.delete_state():** → Add `delete_state(name: str)` method for adapter cleanup. Cheap to add now, avoids migration later.
+22. **BearerTokenMiddleware auth exemptions:** → `/metrics`, `/health/live`, `/health/ready` must be exempted alongside `/health`. Update middleware in Tasks 6b and 6d.
+23. **React UI token injection:** → `StaticFiles` can't inject dynamic content. Use a dedicated route that serves `index.html` with token replaced via string substitution (`__API_TOKEN__` placeholder), plus `StaticFiles` for other assets at `/ui/assets`.
+24. **CompositeEnricher failure metrics:** → Add `workbench_enrichment_errors_total{enricher, source_type}` counter. Increment on enricher exception in `CompositeEnricher.enrich()`.
+25. **GoogleConnection factory methods:** → Use `gmail_service()`, `calendar_service()`, `chat_service()` methods (not properties) that return fresh thread-local API services via `build_service(api, version)`. Naming makes the per-call cost explicit.
+26. **ActionCategory fallback:** → If LLM produces unsupported category (shouldn't happen with tool use constraint), default to `UPDATE` and log with `unsupported_action_category` marker. Don't fail the user action.
+27. **SanitizingProcessor recursion:** → Must recursively walk all string values in nested dicts/lists. Use `_sanitize_value()` recursive helper.
+28. **Alert message formatting:** → Prefix alert messages with `⚠️ [ALERT]` to visually distinguish from triage cards.
+
+## Observability, Operations, and Privacy
+
+### Structured Logging
+
+Replace the glog formatter with structlog. Two output modes: JSON in production (`logging.format: json`), human-readable console renderer in dev (`logging.format: console`). See ADR 0010.
+
+**Correlation IDs:** `CorrelationIdMiddleware` in `workbench/middleware.py` generates a UUID4 per HTTP request, binds it to structlog's contextvars, and returns it in `X-Request-ID` response header. Pipeline jobs bind their existing `job_id` to the logging context during processing.
+
+**Migration:** Existing `logging.getLogger(__name__)` calls continue to work via structlog's stdlib integration. New code uses `structlog.get_logger()`. The `AgeRotatingFileHandler` is preserved for file output.
+
+### Metrics
+
+Prometheus metrics via `prometheus-client`. Exposed at `GET /metrics` (unauthenticated, like `/health`).
+
+**Instrumented wrappers** (decorator pattern, SOLID Open/Closed) wrap providers automatically at registry construction time:
+
+- `InstrumentedSourceAdapter` — counters: `workbench_items_ingested_total{source_type, adapter}`, `workbench_adapter_polls_total{adapter, status}`; histograms: `workbench_adapter_poll_seconds{adapter}`
+- `InstrumentedLLMProvider` — counters: `workbench_llm_calls_total{method}`, `workbench_llm_errors_total{method, error_type}`; histograms: `workbench_llm_call_seconds{method}`
+- `InstrumentedContextEnricher` — histograms: `workbench_enrichment_seconds{enricher}`
+
+**Additional metrics:**
+- Counters: `workbench_items_triaged_total{action}`, `workbench_items_dropped_total{reason}`, `workbench_identity_merges_total{resolved_by}`, `workbench_cards_generated_total{method}`, `workbench_alerts_sent_total{alert_type}`
+- Gauges: `workbench_ingestion_queue_depth`, `workbench_triage_queue_depth`, `workbench_dead_letter_count`, `workbench_connection_healthy{name}`, `workbench_tracked_threads{adapter}`
+- Histograms: `workbench_pipeline_stage_seconds{stage}`
+
+**Config:**
+```yaml
+metrics:
+  enabled: true
+  endpoint: /metrics
+```
+
+### OpenTelemetry Tracing (Opt-In)
+
+Auto-instrumentation for FastAPI, httpx (memory service calls), and asyncpg. Trace context propagated to the memory service in HTTP headers. Disabled by default.
+
+```yaml
+tracing:
+  enabled: false
+  exporter: console       # "console" | "otlp"
+  otlp_endpoint: null
+  sample_rate: 1.0
+```
+
+### Health Check Improvements
+
+Fix existing bug: return HTTP 503 when critical components are unhealthy (currently returns 200 with `"degraded"`).
+
+Three endpoints:
+- `GET /health` — 200 if all critical components healthy, 503 if any critical unhealthy. Returns component-level breakdown.
+- `GET /health/live` — 200 always (liveness probe).
+- `GET /health/ready` — 200 if ready to serve, 503 if not (readiness probe).
+
+Critical components (503 on failure): PostgreSQL, LLM provider. Non-critical (reported but not 503): memory service, connections, messenger.
+
+Response includes component health, queue stats, and connection details.
+
+### Debug Configuration
+
+Expand from a single `server.debug` boolean (uvicorn reload only) to a structured section controlling diagnostic output:
+
+```yaml
+debug:
+  sql_queries: false
+  llm_prompts: false
+  llm_token_usage: true
+  request_bodies: false
+  enrichment_details: false
+  adapter_raw_items: false
+```
+
+Fields that would log PII (`llm_prompts`, `request_bodies`, `adapter_raw_items`) require double opt-in: both the debug flag AND `privacy.allow_pii_in_debug_logs: true`.
+
+### Alerting
+
+Messenger-based alerting via `AlertManager`, checked on each scheduler tick.
+
+| Condition | Default threshold | Cooldown |
+|---|---|---|
+| Connection unhealthy | Immediate (on state change) | 1 hour |
+| Dead letters accumulated | >= 3 | 4 hours |
+| Adapter consecutive failures | >= 3 | 1 hour |
+| LLM provider unreachable | >= 2 consecutive failures | 30 min |
+| Ingestion queue depth | >= 50 | 1 hour |
+| Triage queue stale | Oldest card > 3 days | 24 hours |
+
+```yaml
+alerting:
+  enabled: true
+  cooldown_minutes: 60
+  conditions:
+    dead_letter_threshold: 3
+    adapter_failure_threshold: 3
+    queue_depth_threshold: 50
+    stale_card_days: 3
+```
+
+### Diagnostic Endpoints
+
+Admin-only endpoints behind bearer auth at `/api/debug/`:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/debug/adapters` | Adapters with last poll time, items found, consecutive errors, connection health |
+| `GET /api/debug/pipeline` | Recent pipeline jobs (last 50) with per-stage timing |
+| `GET /api/debug/connections` | Connection health details, last initialized |
+| `GET /api/debug/identity` | Identity resolution stats: entity count, identity count, merge count |
+| `GET /api/debug/config` | Current config with secrets redacted |
+
+### Privacy: Log Sanitization
+
+`SanitizingProcessor` in the structlog processing chain. See ADR 0011.
+
+- Email addresses: always redacted (`[REDACTED:email]`)
+- Phone numbers: always redacted (`[REDACTED:phone]`)
+- Names: NOT redacted (too many false positives)
+- Free-text content: truncated to `max_content_in_logs` (default 200 chars) in log output
+- Extensible: workbench-meta adds patterns for PHIDs, employee IDs via `extra_patterns`
+
+```yaml
+privacy:
+  sanitize_logs: true
+  redact_emails: true
+  redact_phones: true
+  max_content_in_logs: 200
+  allow_pii_in_debug_logs: false
+```
+
+### Privacy: LLM Prompt Logging
+
+In normal mode, LLM calls log metadata only (item_id, source_type, token counts, duration, model). Content is never logged at INFO level or above.
+
+In debug mode with `debug.llm_prompts: true` AND `privacy.allow_pii_in_debug_logs: true`: full prompt and response logged at DEBUG level.
+
+### Data Retention
+
+Configurable time-based cleanup, executed by daily scheduler task after morning briefing.
+
+| Data type | Default (OSS) | workbench-meta override |
+|---|---|---|
+| Archived items | 90 days | 365 days |
+| Done action items | 90 days | 365 days |
+| Expired triage cards | 30 days | 365 days |
+| Responded triage cards | 90 days | 365 days |
+| Enrichment traces | 30 days | 365 days |
+| Dead letters (after purge) | 30 days | 365 days |
+| Interaction log | Never pruned | Never pruned |
+
+```yaml
+retention:
+  archived_items_days: 90
+  done_items_days: 90
+  expired_cards_days: 30
+  responded_cards_days: 90
+  enrichment_traces_days: 30
+  dead_letters_days: 30
+```
+
+workbench-meta config override:
+```yaml
+retention:
+  archived_items_days: 365
+  done_items_days: 365
+  expired_cards_days: 365
+  responded_cards_days: 365
+  enrichment_traces_days: 365
+  dead_letters_days: 365
+```
+
+### OSS / Internal Split
+
+**workbench (OSS)** owns all observability, operations, and privacy infrastructure — interfaces, wrappers, processors, config models, and endpoints. Generic and applied automatically to all providers regardless of origin.
+
+**workbench-meta (internal)** contributes code and config in three categories:
+
+#### 1. Meta Sanitizer Patterns (`workbench_meta/privacy.py`)
+
+A module that defines Meta-internal PII patterns and exposes them for the logging setup:
+
+```python
+# workbench_meta/privacy.py
+import re
+
+META_SANITIZER_PATTERNS = [
+    (re.compile(r'\bD\d{6,}\b'), '[REDACTED:phid]'),         # Phabricator diff IDs
+    (re.compile(r'\bT\d{6,}\b'), '[REDACTED:task_id]'),      # Task IDs
+    (re.compile(r'\b[a-z]{2,20}\b(?=@fb\.com)'), '[REDACTED:unixname]'),  # unixnames before @fb.com
+]
+```
+
+Loaded in the Meta entrypoint so the `SanitizingProcessor` includes these patterns from startup.
+
+#### 2. Meta Adapter/Enricher Structured Logging
+
+Meta adapters and enrichers (MetaTasks, Workplace, MetaDocs and their enrichers) use structlog with Meta-specific bound context. This is code within each provider, not a separate module:
+
+```python
+# Example: workbench_meta/providers/source/meta_tasks.py
+import structlog
+logger = structlog.get_logger(__name__)
+
+class MetaTasksAdapter(SourceAdapter):
+    async def poll(self, since):
+        logger.info("meta_tasks_poll_start", query_owner=self._config.query_filters.get("owner"))
+        # ... API calls ...
+        logger.info("meta_tasks_poll_complete",
+            tasks_found=len(items),
+            query_filters=self._config.query_filters,
+        )
+```
+
+Key context fields logged by Meta adapters/enrichers:
+
+| Provider | Context fields |
+|---|---|
+| `MetaTasksAdapter` | `query_owner`, `task_count`, `query_filters` |
+| `MetaTasksEnricher` | `task_id`, `subtask_count`, `blocker_count` |
+| `WorkplaceAdapter` | `group_ids`, `post_count` |
+| `WorkplaceEnricher` | `post_id`, `comment_count`, `author_role` |
+| `MetaDocsAdapter` | `wiki_spaces`, `doc_count`, `watch_tags` |
+| `MetaDocsEnricher` | `page_id`, `revision_id`, `edit_count` |
+| `InternConnection` | `auth_method`, `token_expiry` |
+
+These fields are automatically sanitized by the `SanitizingProcessor` (email/phone redaction, content truncation) and further cleaned by the Meta sanitizer patterns (PHID/task ID redaction).
+
+#### 3. Meta Config Overrides (`config.meta.yml`)
+
+Added to the existing config overlay:
+
+```yaml
+# config.meta.yml additions
+
+privacy:
+  sanitize_logs: true
+  redact_emails: true
+  redact_phones: true
+  max_content_in_logs: 500          # more generous for internal debugging
+
+retention:
+  archived_items_days: 365
+  done_items_days: 365
+  expired_cards_days: 365
+  responded_cards_days: 365
+  enrichment_traces_days: 365
+  dead_letters_days: 365
+
+alerting:
+  enabled: true
+  cooldown_minutes: 30              # faster alerting for internal use
+  conditions:
+    dead_letter_threshold: 2
+    adapter_failure_threshold: 2     # stricter — detect Intern API issues faster
+    queue_depth_threshold: 30
+
+logging:
+  format: json                       # JSON for internal log aggregation
+  level: INFO
+```
+
+#### What stays automatic (no workbench-meta code needed)
+
+- **Prometheus metrics** — `InstrumentedSourceAdapter` wraps Meta adapters at registry construction time. MetaTasksAdapter gets `workbench_adapter_polls_total{adapter="MetaTasksAdapter"}` without any code in workbench-meta.
+- **Health checks** — `InternConnection.is_healthy()` is called generically by the health endpoint iterating over `app.state.connections`.
+- **Diagnostic endpoints** — Meta adapters appear in `/api/debug/adapters` because they're in `app.state.sources`.
+- **AlertManager** — connection unhealthy alerts fire for `meta_intern` automatically.
+- **Correlation IDs** — Meta adapters run in the same async context as the pipeline, so request_id/job_id are automatically in their logs.
+- **Retention cleanup** — Meta data uses the same PG tables, cleaned by the same scheduler task with Meta-overridden retention periods.
 
 ## Verification
 
@@ -1203,9 +1522,26 @@ Phase 1d is complete when:
 42. React UI at `/ui/actions` renders categorized action list with mark done, change priority, and snooze
 43. React UI is built with Vite, served as static assets by FastAPI
 
+### Observability, Operations, and Privacy
+67. structlog replaces glog formatter; JSON output in production, console in dev; `AgeRotatingFileHandler` preserved
+68. Correlation ID middleware generates UUID4 per request, bound to structlog context, returned in `X-Request-ID`
+69. Prometheus `/metrics` endpoint exposes all defined counters, histograms, and gauges
+70. `InstrumentedSourceAdapter`, `InstrumentedLLMProvider`, `InstrumentedContextEnricher` wrappers applied by registry
+71. Health check returns 503 when critical components unhealthy; component-level breakdown in response
+72. `/health/live` always returns 200; `/health/ready` returns 503 when not ready
+73. `DebugConfig` section controls SQL, LLM, request body logging independently
+74. PII debug fields require double opt-in (debug flag + `privacy.allow_pii_in_debug_logs`)
+75. `SanitizingProcessor` redacts emails and phones in log output; truncates free-text to `max_content_in_logs`
+76. workbench-meta can add extra sanitizer patterns without modifying core code
+77. `AlertManager` sends messenger alerts for configured conditions with cooldown dedup
+78. Diagnostic endpoints (`/api/debug/adapters`, `/api/debug/pipeline`, `/api/debug/connections`, `/api/debug/identity`, `/api/debug/config`) return operational data
+79. Data retention scheduler task runs daily; cleans up according to `RetentionConfig`
+80. OTel auto-instrumentation works when `tracing.enabled: true`; disabled by default
+81. workbench-meta retention defaults are 365 days for all categories
+
 ### All Tracks
 44. `connections:` config section is parsed, validated, and connections are initialized at startup
-45. Registry supports two-arg constructor for connection injection
+45. Registry supports two-arg constructor for connection injection AND `state_store` injection via `inspect.signature`
 46. `create_composite_enricher()` correctly pops `source_types`/`connection`/`budget` and builds CompositeEnricher
 47. `EnrichmentConfig` model replaces old `dict | None` config (backward-compat normalizer for old format)
 48. Config version is bumped to `0.3.0`
@@ -1227,6 +1563,42 @@ Phase 1d is complete when:
 64. Pending `InterpretedResponse` stored in `card_content["pending_interpretation"]` for confirmation flow
 65. "Skip all" requires confirmation and routes through `execute_triage_response()` per card
 66. `awaiting_followup`/`awaiting_confirmation` timeout reverts to `sent` (not `queued`), keeps `bot_message_id`
+82. `entity_refs` uses list-of-dicts format `[{"type": "person", "id": "github:alice-gh"}]` (not tuples) — all enrichers, card generation, and memory queries use this format
+83. Identity resolution canonical IDs are always UUID4 — never source-qualified strings
+84. `TriageResponseResult` model exists in `models.py` and is returned by `execute_triage_response()`
+85. `GET /api/items` excludes action items by default (`?exclude_actions=true`)
+86. React UI index.html served via dedicated route with `__API_TOKEN__` substitution; other assets via `StaticFiles` at `/ui/assets`
+87. `InteractionEntry.type` is set for all interactions: `option_selected`, `interpreted_response`, `confirmation`
+88. `CompositeEnricher` wraps child enrichers with `InstrumentedContextEnricher` for per-enricher Prometheus metrics
+89. `format_card_for_chat` skips raw enrichment context when `card_body` is present (avoids duplication with LLM-generated body)
+90. GChat adapter's bot identity is auto-discovered via Chat API and cached on `GoogleConnection.bot_user_id`
+91. Config minor version mismatch logs a warning (not a hard error)
+
+## Resolved Questions (from Grilling Session 2026-06-03 — Plan Review Round 2)
+
+29. **Identity resolution canonical IDs in plan:** → Plan's Task 15 tests incorrectly use first source_id as canonical (e.g., `assert canonical == "github:alice-gh"`). Fix to always generate UUID4 for canonical IDs per spec and grilling decision #3. Tests should assert `uuid.UUID(canonical)` succeeds, not equality to source_id.
+30. **execute_triage_response consolidation not implemented:** → Plan's Task 18 puts response logic inline in `api/triage.py`, Task 19 puts free-text logic in scheduler — same duplication the spec says to eliminate. Fix: create shared `execute_triage_response()` in `pipeline/triage.py`. Both API route and scheduler call it. Returns `TriageResponseResult`. Matches grilling decision #6.
+31. **TriageResponseResult missing from Task 1:** → Add `TriageResponseResult(explanation: str, prompt: str | None, followup_status: str | None, actions_executed: list[str])` to Task 1 model changes. Needed for `execute_triage_response()` return type.
+32. **entity_refs as tuples serialize poorly to JSON:** → Change from list of tuples `[(EntityType.PERSON, "id")]` to list of dicts `[{"type": "person", "id": "github:alice-gh"}]`. Clean JSON/JSONB round-tripping, self-documenting, no tuple/list ambiguity. Update spec, enricher docs, card generation code.
+33. **React UI token injection contradicts grilling #23:** → Plan's main.py uses `StaticFiles(html=True)` which can't inject tokens. Fix: dedicated route for `/ui` that reads index.html, replaces `__API_TOKEN__` placeholder, returns HTML. Mount `StaticFiles` at `/ui/assets` for JS/CSS bundles.
+34. **AdapterStateStore injection missing from registry:** → Plan's Task 4 only adds `connection` injection. Add `state_store` injection alongside it. Registry checks for `state_store` in constructor signature and injects `PgAdapterStateStore` if present. Create `AdapterStateStore` interface + PG implementation in Task 2 (alongside migration).
+35. **enrichment_errors_total counter missing from metrics:** → Add `enrichment_errors: Counter` (labels: `enricher`, `source_type`) to `WorkbenchMetrics` in Task 6b. Pass metrics to `CompositeEnricher`, increment on exception. Matches grilling decision #24.
+36. **describe_image() and extract_pdf_text() not placed in any task:** → Add `describe_image()` as abstract method on `LLMProvider` base in Task 10 (Gmail Enricher — first consumer). Create `workbench/util/attachments.py` with `extract_pdf_text()` in same task.
+37. **GET /api/items returns action items:** → Add `exclude_actions=true` default query param to `GET /api/items`. Action items filtered out by default. `GET /api/actions` is the canonical view. Pass `?exclude_actions=false` to see everything.
+38. **BearerTokenMiddleware /metrics exemption:** → Consolidate auth exemptions in Task 6c Step 4: `/health`, `/health/live`, `/health/ready`, `/metrics`. Single auth.py change.
+39. **GChat adapter bot identity discovery:** → `GoogleConnection` auto-discovers bot user ID at initialization via Chat API and caches as `bot_user_id` property. GChat adapter uses it to filter bot's own messages. Falls back to explicit `bot_user_id` config if API call fails.
+40. **InternConnection auth investigation timing:** → Add investigation task early (before Group A) rather than deferring to Group M. It's on the critical path for 3 Meta adapters. Google adapters and Tracks B+C don't depend on it, but early investigation prevents late surprises.
+41. **AdapterStateStore.delete_state() in plan:** → Create `storage/adapter_state.py` in Task 2 with full interface: `get_state(name)`, `save_state(name, state)`, `delete_state(name)`. PG implementation uses `adapter_state` table from same migration. Don't split interface from table creation.
+42. **Config version minor version warning:** → When `config.version` minor is less than expected (e.g., 0.2.x with server expecting 0.3.x), log a warning. Don't hard-error — backward-compat normalizer handles it. Gives user visibility.
+43. **InteractionEntry type for numbered options:** → Set `type` for all triage interactions. Numbered option: `type="option_selected"`. Free text: `type="interpreted_response"`. Confirmation: `type="confirmation"`. Makes interaction log self-documenting and filterable.
+44. **CompositeEnricher per-enricher observability:** → `CompositeEnricher` wraps each individual enricher with `InstrumentedContextEnricher` at construction time. Per-enricher Prometheus metrics automatically. `InstrumentedContextEnricher` wraps the CompositeEnricher's children, not the CompositeEnricher itself.
+45. **format_card_for_chat redundant enrichment rendering:** → When `card_body` is present (LLM-generated), skip raw enrichment context rendering. LLM already incorporated that context. Only render raw enrichment context as fallback when `card_body` is absent (template fallback mode).
+46. **Leftover authoring commentary in plan:** → Strip debug text from plan markdown (lines like "Now I have everything I need...").
+47. **React UI auth approach:** → Plan's Task 23 uses `/api/auth/token` endpoint which has a circular auth dependency (need token to get token). Revert to `__API_TOKEN__` meta tag approach per grilling #23. Server replaces placeholder when serving index.html. React reads from `<meta name="api-token">`. No new endpoint, no bootstrapping problem. Update plan's verification "FIX 19" to match.
+48. **Meta sanitizer @fb.com only:** → Pattern `\b[a-z]{2,20}(?=@fb\.com)` misses `@meta.com` addresses. Fix regex to `\b[a-z]{2,20}(?=@(?:fb|meta)\.com)` to cover both.
+49. **Tailwind CSS missing from React UI:** → Spec calls for Tailwind CSS but plan's Task 23 uses inline styles. Add `tailwindcss` and `@tailwindcss/vite` to devDependencies. Replace inline styles with Tailwind utility classes.
+50. **Meta enrichers use tuple entity_refs:** → All three Meta enrichers in Task 24 use `("person", id)` tuples instead of `{"type": "person", "id": id}` dicts. Fix per decision #32.
+51. **config.meta.yml uses old enrichment format:** → Update to new `EnrichmentConfig` format with `providers:` list mapping each enricher to source_types. Otherwise Meta enrichers won't be routed through `CompositeEnricher`. Include both core enrichers and Meta-specific enrichers.
 
 ## Out of Scope
 
