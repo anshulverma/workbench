@@ -16,17 +16,17 @@ llm:
   base_url: https://api.anthropic.com
   model: claude-haiku-4-5-20251001
 
-# Embedder — OpenAI (default) or local sentence-transformers
+# Embedder — local sentence-transformers (default) or OpenAI
 embedder:
-  embedder_class: memory.embedder.OpenAIEmbedderWrapper
-  api_key: ${oc.env:OPENAI_API_KEY,}
-  model: text-embedding-3-small
-  embedding_dim: 1536
-# Local embedder (no API key needed, uses sentence-transformers):
+  embedder_class: memory.embedder.LocalEmbedder
+  model: all-MiniLM-L6-v2
+  embedding_dim: 384
+# OpenAI embedder (requires OPENAI_API_KEY):
 # embedder:
-#   embedder_class: memory.embedder.LocalEmbedder
-#   model: all-MiniLM-L6-v2
-#   embedding_dim: 384
+#   embedder_class: memory.embedder.OpenAIEmbedderWrapper
+#   api_key: ${oc.env:OPENAI_API_KEY,}
+#   model: text-embedding-3-small
+#   embedding_dim: 1536
 
 queue:
   max_attempts: 3
