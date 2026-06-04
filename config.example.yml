@@ -1,5 +1,5 @@
 # config.example.yml — copy to config.yml and edit
-version: "0.2.0"
+version: "0.3.0"
 
 server:
   port: 8421
@@ -54,19 +54,57 @@ messenger:
 #   space_id: ${oc.env:GOOGLE_CHAT_SPACE_ID}
 #   service_account_key_path: ${oc.env:GOOGLE_CHAT_SA_KEY_PATH,/app/credentials/chat-sa.json}
 
+# Shared connections — initialized at startup, injected into adapters/enrichers
+# connections:
+#   google:
+#     class: workbench.providers.connection.google.GoogleConnection
+#     credentials_path: ${oc.env:GOOGLE_CREDENTIALS_PATH}
+#     token_path: ${oc.env:GOOGLE_TOKEN_PATH}
+#     scopes:
+#       - https://www.googleapis.com/auth/gmail.readonly
+#       - https://www.googleapis.com/auth/calendar.readonly
+#       - https://www.googleapis.com/auth/chat.spaces.readonly
+
 sources: []
-# Example GitHub source:
-# sources:
+# Example sources:
 #   - class: workbench.providers.source.github.GitHubSourceAdapter
 #     repos:
 #       - "owner/repo"
+#   - class: workbench.providers.source.gmail.GmailAdapter
+#     connection: google
+#     label_filters: ["INBOX", "UNREAD"]
+#     max_results: 50
+#   - class: workbench.providers.source.gcalendar.GCalendarAdapter
+#     connection: google
+#     calendar_ids: ["primary"]
+#     lookahead_hours: 48
+#   - class: workbench.providers.source.gchat.GChatAdapter
+#     connection: google
+#     spaces: ["spaces/AAAA..."]
+#     exclude_spaces: []
+#     track: "participating"
+#     user_id: "users/user-me"
 
-# Enrichment — GitHub (production) or Stub (no enrichment)
+# Enrichment — CompositeEnricher routes by source_type
 enrichment:
   class: workbench.providers.enrichment.stub.StubEnricher
-# GitHub enrichment:
+# Composite enrichment:
 # enrichment:
-#   class: workbench.providers.enrichment.github.GitHubEnricher
+#   providers:
+#     - class: workbench.providers.enrichment.github.GitHubEnricher
+#       source_types: ["github"]
+#     - class: workbench.providers.enrichment.gmail.GmailEnricher
+#       connection: google
+#       source_types: ["email"]
+#       budget:
+#         max_api_calls: 8
+#         max_seconds: 20
+#     - class: workbench.providers.enrichment.gcalendar.GCalendarEnricher
+#       source_types: ["calendar"]
+#     - class: workbench.providers.enrichment.gchat.GChatEnricher
+#       source_types: ["chat"]
+#   default:
+#     class: workbench.providers.enrichment.stub.StubEnricher
 
 # Memory — HttpMemoryLayer (production) or NoopMemoryLayer (no memory service)
 memory:
