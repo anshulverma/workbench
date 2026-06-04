@@ -2,9 +2,11 @@
 import pytest
 from workbench.models import (
     Item, ItemStatus, ItemCategory, ItemOrigin, Priority,
-    RawItem, ExtractedItem, TriageCard, TriageOption,
+    RawItem, ExtractedItem, TriageCard, TriageOption, TriageResponse,
     FilterRule, InteractionEntry, PipelineJob, JobStatus, JobTrigger,
     IngestionQueueEntry, QueueEntryStatus,
+    EntityType, ActionCategory,
+    InterpretedResponse, SystemAction, UserTodo, TriageResponseResult,
 )
 
 def test_item_defaults():
@@ -86,3 +88,105 @@ def test_interaction_entry_choice_index_default():
 def test_interaction_entry_choice_index_set():
     entry = InteractionEntry(source_type="diff", item_summary="Review D123", choice_index=2)
     assert entry.choice_index == 2
+
+
+def test_entity_type_enum():
+    assert EntityType.PERSON == "person"
+    assert EntityType.REPO == "repo"
+    assert EntityType.TEAM == "team"
+    assert EntityType.SPACE == "space"
+    assert EntityType.GROUP == "group"
+
+
+def test_action_category_enum():
+    assert ActionCategory.DELEGATION == "delegation"
+    assert ActionCategory.COMMUNICATION == "communication"
+    assert ActionCategory.SCHEDULING == "scheduling"
+    assert ActionCategory.REVIEW == "review"
+    assert ActionCategory.CREATION == "creation"
+    assert ActionCategory.UPDATE == "update"
+    assert ActionCategory.DECISION == "decision"
+    assert ActionCategory.INVESTIGATION == "investigation"
+
+
+def test_triage_option_suggested_fields():
+    opt = TriageOption(label="Add todo P1", action="add_todo")
+    assert opt.suggested is False
+    assert opt.suggestion_reason is None
+    opt2 = TriageOption(
+        label="Skip", action="skip",
+        suggested=True, suggestion_reason="you usually skip bot PRs",
+    )
+    assert opt2.suggested is True
+    assert opt2.suggestion_reason == "you usually skip bot PRs"
+
+
+def test_triage_card_deferred_until():
+    card = TriageCard()
+    assert card.deferred_until is None
+
+
+def test_item_action_fields():
+    item = Item(
+        source_type="email", source_id="e1",
+        summary="test", category="action_item",
+        origin="manual", priority="P2",
+    )
+    assert item.parent_item_id is None
+    assert item.action_source is None
+    assert item.action_category is None
+    assert item.snoozed_until is None
+    assert item.completed_at is None
+    item2 = Item(
+        source_type="email", source_id="e2",
+        summary="Assign to bob",
+        category="action_item",
+        origin="triaged", priority="P2",
+        parent_item_id="parent-123",
+        action_source="triage_response",
+        action_category="delegation",
+    )
+    assert item2.parent_item_id == "parent-123"
+    assert item2.action_source == "triage_response"
+    assert item2.action_category == "delegation"
+
+
+def test_triage_response_choice_optional():
+    resp = TriageResponse(card_id="c1", choice=2)
+    assert resp.choice == 2
+    resp2 = TriageResponse(card_id="c1", raw_text="add as P3")
+    assert resp2.choice is None
+    assert resp2.raw_text == "add as P3"
+
+
+def test_interaction_entry_interpreted_fields():
+    entry = InteractionEntry(
+        source_type="email", item_summary="test",
+    )
+    assert entry.type is None
+    assert entry.interpreted is None
+    assert entry.confirmed is None
+
+
+def test_interpreted_response():
+    resp = InterpretedResponse(
+        system_actions=[SystemAction(action="add_todo", details={"priority": "P3"})],
+        user_todos=[UserTodo(summary="Assign to bob", action_category="delegation")],
+        explanation="Adding as P3 todo.",
+    )
+    assert len(resp.system_actions) == 1
+    assert resp.system_actions[0].action == "add_todo"
+    assert len(resp.user_todos) == 1
+    assert resp.user_todos[0].action_category == "delegation"
+
+
+def test_triage_response_result():
+    result = TriageResponseResult(
+        status="recorded",
+        action="add_todo",
+        system_actions_executed=["add_todo"],
+        user_todos_created=["todo-1"],
+        explanation="Added as P3 todo.",
+    )
+    assert result.status == "recorded"
+    assert result.action == "add_todo"

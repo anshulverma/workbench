@@ -29,6 +29,23 @@ class ItemOrigin(str, Enum):
     TRIAGED = "triaged"
     MANUAL = "manual"
 
+class EntityType(str, Enum):
+    PERSON = "person"
+    REPO = "repo"
+    TEAM = "team"
+    SPACE = "space"
+    GROUP = "group"
+
+class ActionCategory(str, Enum):
+    DELEGATION = "delegation"
+    COMMUNICATION = "communication"
+    SCHEDULING = "scheduling"
+    REVIEW = "review"
+    CREATION = "creation"
+    UPDATE = "update"
+    DECISION = "decision"
+    INVESTIGATION = "investigation"
+
 class JobStatus(str, Enum):
     QUEUED = "queued"
     PENDING = "pending"
@@ -65,6 +82,11 @@ class Item(BaseModel):
     raw_data: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    parent_item_id: str | None = None
+    action_source: str | None = None
+    action_category: str | None = None
+    snoozed_until: datetime | None = None
+    completed_at: datetime | None = None
 
 class ItemUpdate(BaseModel):
     priority: Priority | None = None
@@ -81,6 +103,8 @@ class TriageOption(BaseModel):
     label: str
     action: str
     details: dict = Field(default_factory=dict)
+    suggested: bool = False
+    suggestion_reason: str | None = None
 
 class TriageCard(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -96,10 +120,11 @@ class TriageCard(BaseModel):
     sent_at: datetime | None = None
     responded_at: datetime | None = None
     response: str | None = None
+    deferred_until: datetime | None = None
 
 class TriageResponse(BaseModel):
     card_id: str
-    choice: int
+    choice: int | None = None
     raw_text: str | None = None
 
 class FilterRule(BaseModel):
@@ -125,6 +150,9 @@ class InteractionEntry(BaseModel):
     enrichment_depth: str = "none"
     enrichment_calls: int = 0
     enrichment_time_ms: int = 0
+    type: str | None = None
+    interpreted: dict | None = None
+    confirmed: bool | None = None
 
 class EnrichmentTrace(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -228,3 +256,23 @@ class IngestionQueueEntry(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class SystemAction(BaseModel):
+    action: str
+    details: dict = Field(default_factory=dict)
+
+class UserTodo(BaseModel):
+    summary: str
+    action_category: str
+
+class InterpretedResponse(BaseModel):
+    system_actions: list[SystemAction] = Field(default_factory=list)
+    user_todos: list[UserTodo] = Field(default_factory=list)
+    explanation: str = ""
+
+class TriageResponseResult(BaseModel):
+    status: str
+    action: str | None = None
+    system_actions_executed: list[str] = Field(default_factory=list)
+    user_todos_created: list[str] = Field(default_factory=list)
+    explanation: str = ""
