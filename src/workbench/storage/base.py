@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from workbench.models import (
     EnrichmentTrace,
@@ -33,6 +34,8 @@ class ItemStore(ABC):
     async def update_item(self, item_id: str, updates: ItemUpdate) -> Item: ...
     @abstractmethod
     async def archive_item(self, item_id: str) -> None: ...
+    @abstractmethod
+    async def get_items_by_source(self, source_type: str) -> list[Item]: ...
 
 
 class TriageStore(ABC):
@@ -52,6 +55,10 @@ class TriageStore(ABC):
     async def expire_old_cards(self, expiry_days: int) -> int: ...
     @abstractmethod
     async def count_sent_today(self) -> int: ...
+    @abstractmethod
+    async def defer_card(self, card_id: str, until: datetime) -> None: ...
+    @abstractmethod
+    async def get_deferred_ready(self) -> list[TriageCard]: ...
 
 
 class PlanStore(ABC):

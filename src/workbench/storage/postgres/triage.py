@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
@@ -99,6 +99,22 @@ class PgTriageStore(TriageStore):
             "WHERE sent_at >= CURRENT_DATE"
         )
         return row["cnt"]  # type: ignore[index]
+
+    async def defer_card(self, card_id: str, until: datetime) -> None:
+        await self.pool.execute(
+            "UPDATE triage_cards SET status = 'queued', deferred_until = $1 "
+            "WHERE id = $2",
+            until,
+            card_id,
+        )
+
+    async def get_deferred_ready(self) -> list[TriageCard]:
+        rows = await self.pool.fetch(
+            "SELECT * FROM triage_cards WHERE status = 'queued' "
+            "AND deferred_until IS NOT NULL AND deferred_until <= NOW() "
+            "ORDER BY deferred_until ASC"
+        )
+        return [self._row_to_card(r) for r in rows]
 
     @staticmethod
     def _row_to_card(row: asyncpg.Record) -> TriageCard:

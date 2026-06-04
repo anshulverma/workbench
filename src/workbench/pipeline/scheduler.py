@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -181,6 +181,16 @@ class WorkbenchScheduler:
                 created_from_interaction_id=card.id,
             )
             await self.stores.filter_rules.add_rule(rule)
+
+        elif option.action == "defer":
+            hours = option.details.get("hours", 4)
+            card.deferred_until = datetime.now(timezone.utc) + timedelta(hours=hours)
+            card.status = "queued"
+            await self.stores.triage.update_card(card)
+
+        elif option.action == "other":
+            card.status = "awaiting_followup"
+            await self.stores.triage.update_card(card)
 
         entry = InteractionEntry(
             source_type=card.card_content.get("source_type", "unknown"),

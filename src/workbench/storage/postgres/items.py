@@ -95,6 +95,13 @@ class PgItemStore(ItemStore):
             item_id,
         )
 
+    async def get_items_by_source(self, source_type: str) -> list[Item]:
+        rows = await self.pool.fetch(
+            "SELECT * FROM items WHERE source_type = $1 ORDER BY created_at DESC",
+            source_type,
+        )
+        return [self._row_to_item(r) for r in rows]
+
     @staticmethod
     def _row_to_item(row: asyncpg.Record) -> Item:
         raw = row["raw_data"]

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
+from datetime import datetime, timezone, timedelta
 from workbench.models import (
     FilterRule, InteractionEntry, Item, ItemCategory, ItemOrigin,
     ItemStatus, ItemUpdate, Priority, TriageResponse,
@@ -20,6 +21,15 @@ async def respond_to_triage(response: TriageResponse, request: Request):
     card = await stores.triage.get_card(response.card_id)
     if not card:
         raise HTTPException(404, "Triage card not found")
+
+    # Free-text response (choice is None) -- handled in Task 19
+    if response.choice is None and response.raw_text:
+        # Will be implemented in Task 19
+        raise HTTPException(501, "Free-text responses not yet implemented")
+
+    if response.choice is None:
+        raise HTTPException(400, "Must provide either choice or raw_text")
+
     if response.choice < 1 or response.choice > len(card.options):
         raise HTTPException(400, f"Invalid choice {response.choice}, must be 1-{len(card.options)}")
 
@@ -27,6 +37,7 @@ async def respond_to_triage(response: TriageResponse, request: Request):
     await stores.triage.record_response(response.card_id, response)
 
     if option.action == "add_todo":
+        # FIX 32: Priority string -> enum conversion
         priority = Priority(option.details.get("priority", "P2"))
         if card.item_id:
             await stores.items.update_item(
@@ -57,8 +68,21 @@ async def respond_to_triage(response: TriageResponse, request: Request):
         )
         await stores.filter_rules.add_rule(rule)
 
+    elif option.action == "defer":
+        hours = option.details.get("hours", 4)
+        card.deferred_until = datetime.now(timezone.utc) + timedelta(hours=hours)
+        card.status = "queued"
+        await stores.triage.update_card(card)
+
+    elif option.action == "other":
+        # "Other" option transitions to awaiting_followup -- handled in Task 19
+        card.status = "awaiting_followup"
+        await stores.triage.update_card(card)
+
+    # Log interaction
     entry = InteractionEntry(
         source_type=card.card_content.get("source_type", "unknown"),
+        item_id=card.item_id,
         item_summary=card.card_content.get("summary", ""),
         triage_card_full=card.model_dump(),
         options_presented=[o.model_dump() for o in card.options],
