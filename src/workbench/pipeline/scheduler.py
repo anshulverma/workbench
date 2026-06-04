@@ -240,6 +240,23 @@ class WorkbenchScheduler:
             for i in p1:
                 lines.append(f"  • {i.summary} [{i.source_type}]")
 
+        action_items = [i for i in items if i.action_source is not None]
+        if action_items:
+            from collections import defaultdict
+            by_category = defaultdict(list)
+            for item in action_items:
+                cat = (item.action_category or "uncategorized").title()
+                parent_summary = ""
+                if item.parent_item_id:
+                    parent = await self.stores.items.get_item(item.parent_item_id)
+                    if parent:
+                        parent_summary = f" — from {parent.summary}"
+                by_category[cat].append(f"    • {item.summary}{parent_summary}")
+            lines.append(f"\n*Pending actions ({len(action_items)}):*")
+            for cat, cat_items in by_category.items():
+                lines.append(f"  {cat} ({len(cat_items)}):")
+                lines.extend(cat_items)
+
         if pending:
             oldest = min(c.sent_at or c.expires_at or datetime.now(timezone.utc) for c in pending)
             age_days = (datetime.now(timezone.utc) - oldest).days
@@ -250,7 +267,7 @@ class WorkbenchScheduler:
             if dead_letters:
                 lines.append(f"  ⚠ {len(dead_letters)} dead-letter entries need investigation")
 
-        if not p0 and not p1 and not pending:
+        if not p0 and not p1 and not pending and not action_items:
             lines.append("All clear! No P0/P1 items, no pending triage.")
 
         await self.messenger.send_card("\n".join(lines))
