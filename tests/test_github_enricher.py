@@ -181,3 +181,30 @@ async def test_enrich_works_without_memory(enricher):
 def test_provider_config():
     config = GitHubEnricher.ProviderConfig()
     assert config is not None
+
+
+@pytest.mark.asyncio
+async def test_enrich_returns_entity_refs_in_context(enricher):
+    item = _make_item()
+    gh_view_output = {
+        "files": [{"path": "auth.py"}],
+        "reviewDecision": "APPROVED",
+        "labels": [],
+        "statusCheckRollup": [],
+    }
+
+    with patch.object(enricher, "_gh_json", new_callable=AsyncMock, return_value=gh_view_output):
+        result = await enricher.enrich(item, "shallow", EnrichmentBudget())
+
+    ctx = result["context"]
+    assert "entity_refs" in ctx
+    refs = ctx["entity_refs"]
+    assert {"type": "person", "id": "github:alice"} in refs
+    assert {"type": "repo", "id": "github:owner/repo"} in refs
+
+
+@pytest.mark.asyncio
+async def test_enrich_entity_refs_empty_on_non_github(enricher):
+    item = _make_item(source_type="email", raw_text="raw email body")
+    result = await enricher.enrich(item, "shallow", EnrichmentBudget())
+    assert result["context"] == {}

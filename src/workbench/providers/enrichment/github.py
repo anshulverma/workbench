@@ -127,6 +127,13 @@ class GitHubEnricher(ContextEnricher):
             except Exception as e:
                 logger.warning("Memory record_entity failed for repo %s: %s", repo, e)
 
+        entity_refs: list[dict[str, str]] = []
+        if author_login != "unknown":
+            entity_refs.append({"type": "person", "id": f"github:{author_login}"})
+        if repo:
+            entity_refs.append({"type": "repo", "id": f"github:{repo}"})
+        context["entity_refs"] = entity_refs
+
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return {"calls_made": calls_made, "time_ms": elapsed_ms, "context": context}
 
