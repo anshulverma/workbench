@@ -268,6 +268,54 @@ def create_app() -> FastAPI:
         dead_letters = await store.dead_letter_count()
         return QueueDepthResponse(depth=depth, dead_letters=dead_letters)
 
+    @app.post("/admin/identity/merge")
+    async def admin_merge_identities(
+        entity_type: str = Query(...),
+        winner_id: str = Query(...),
+        loser_id: str = Query(...),
+    ):
+        if os.environ.get("MEMORY_ADMIN_ENABLED", "false") != "true":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Admin endpoints are disabled"},
+            )
+        store: PendingIngestionStore = app.state.store
+        merged = await store.late_discovery_merge(entity_type, winner_id, loser_id)
+        if not merged:
+            return {"status": "noop", "reason": "already same canonical or winner not found"}
+        return {"status": "merged", "canonical": winner_id}
+
+    @app.post("/admin/identity/split")
+    async def admin_split_identity(
+        entity_type: str = Query(...),
+        source_id: str = Query(...),
+    ):
+        if os.environ.get("MEMORY_ADMIN_ENABLED", "false") != "true":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Admin endpoints are disabled"},
+            )
+        store: PendingIngestionStore = app.state.store
+        await store.admin_split(entity_type, source_id)
+        return {"status": "split", "source_id": source_id}
+
+    @app.get("/admin/identity/list")
+    async def admin_list_identities(
+        entity_type: str = Query(...),
+        canonical_id: str = Query(...),
+    ):
+        if os.environ.get("MEMORY_ADMIN_ENABLED", "false") != "true":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Admin endpoints are disabled"},
+            )
+        store: PendingIngestionStore = app.state.store
+        aliases = await store.list_identities(entity_type, canonical_id)
+        return {"canonical_id": canonical_id, "aliases": aliases, "total": len(aliases)}
+
     return app
 
 

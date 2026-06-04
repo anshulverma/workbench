@@ -142,13 +142,13 @@ def create_app() -> FastAPI:
 
     from workbench.api import (
         actions, auth_token,
-        config as config_api, debug, filter_rules, health, items, jobs,
-        memory, process, queue, sources, triage,
+        config as config_api, debug, filter_rules, health, identity,
+        items, jobs, memory, process, queue, sources, triage,
     )
     for r in [
         health.router, items.router, triage.router, process.router,
         filter_rules.router, sources.router, config_api.router,
-        memory.router, jobs.router, queue.router,
+        memory.router, identity.router, jobs.router, queue.router,
         actions.router, auth_token.router, debug.router,
     ]:
         app.include_router(r)

@@ -294,3 +294,99 @@ class PendingIngestionStore:
         canonical = await self.get_canonical(entity_type, entity_id)
         target_id = canonical or entity_id
         return await self.get_entity(entity_type, target_id)
+
+    async def late_discovery_merge(
+        self, entity_type: str, winner_id: str, loser_id: str
+    ) -> bool:
+        """Merge loser entity into winner. All loser's aliases are re-pointed.
+        Facts are merged under winner. Returns True if merge happened, False if no-op.
+        """
+        if winner_id == loser_id:
+            return False
+
+        # Verify winner exists
+        winner = await self.get_entity(entity_type, winner_id)
+        if winner is None:
+            return False
+
+        # Get loser's facts (may not exist if only identity mappings)
+        loser = await self.get_entity(entity_type, loser_id)
+        loser_facts = loser["facts"] if loser else {}
+
+        # Merge loser's facts into winner
+        if loser_facts:
+            await self.upsert_entity(entity_type, winner_id, loser_facts)
+
+        # Re-point all aliases that pointed to loser_id -> winner_id
+        await self.pool.execute(
+            """
+            UPDATE entity_identities
+            SET canonical_id = $1, resolved_by = 'late_merge'
+            WHERE entity_type = $2 AND canonical_id = $3
+            """,
+            winner_id, entity_type, loser_id,
+        )
+
+        # Ensure loser_id itself maps to winner_id
+        await self.pool.execute(
+            """
+            INSERT INTO entity_identities (entity_type, source_id, canonical_id, resolved_by)
+            VALUES ($1, $2, $3, 'late_merge')
+            ON CONFLICT (entity_type, source_id)
+            DO UPDATE SET canonical_id = $3, resolved_by = 'late_merge'
+            """,
+            entity_type, loser_id, winner_id,
+        )
+
+        # Delete loser entity row (facts now live under winner)
+        if loser:
+            await self.pool.execute(
+                "DELETE FROM entities WHERE entity_type = $1 AND entity_id = $2",
+                entity_type, loser_id,
+            )
+
+        logger.info(
+            "Late-merge: %s:%s absorbed into %s:%s",
+            entity_type, loser_id, entity_type, winner_id,
+        )
+        return True
+
+    async def admin_split(
+        self, entity_type: str, source_id: str
+    ) -> None:
+        """Split a source_id out of its canonical group, making it self-mapped.
+
+        Does NOT create a new entity row -- the caller should upsert facts separately
+        if needed after splitting.
+        """
+        await self.pool.execute(
+            """
+            UPDATE entity_identities
+            SET canonical_id = $1, resolved_by = 'admin_split'
+            WHERE entity_type = $2 AND source_id = $1
+            """,
+            source_id, entity_type,
+        )
+
+    async def list_identities(
+        self, entity_type: str, canonical_id: str
+    ) -> list[dict]:
+        """List all source_ids that map to a given canonical_id."""
+        rows = await self.pool.fetch(
+            """
+            SELECT source_id, canonical_id, resolved_by, created_at
+            FROM entity_identities
+            WHERE entity_type = $1 AND canonical_id = $2
+            ORDER BY created_at
+            """,
+            entity_type, canonical_id,
+        )
+        return [
+            {
+                "source_id": r["source_id"],
+                "canonical_id": r["canonical_id"],
+                "resolved_by": r["resolved_by"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]

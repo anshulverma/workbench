@@ -182,3 +182,165 @@ async def test_query_entity_resolves_through_identity(store):
 async def test_get_entity_resolved_returns_none_for_unknown(store):
     entity = await store.get_entity_resolved("person", "nonexistent")
     assert entity is None
+
+
+# --- Late discovery merge ---
+
+
+@pytest.mark.asyncio
+async def test_late_discovery_merge(store):
+    """When new facts reveal two separate entities are the same person, merge them."""
+    # Two entities created separately with no overlap
+    await store.upsert_entity("person", "github:alice-gh", {
+        "name": "Alice Smith", "team": "infra",
+    })
+    await store.resolve_identity("person", "github:alice-gh", {
+        "name": "Alice Smith", "team": "infra",
+    })
+
+    await store.upsert_entity("person", "email:alice@meta.com", {
+        "name": "Alice S.", "role": "tech lead",
+    })
+    await store.resolve_identity("person", "email:alice@meta.com", {
+        "name": "Alice S.", "role": "tech lead",
+    })
+
+    # They should be separate at this point (names differ slightly)
+    c1 = await store.get_canonical("person", "github:alice-gh")
+    c2 = await store.get_canonical("person", "email:alice@meta.com")
+    assert c1 != c2
+
+    # Late discovery: we learn email:alice@meta.com has the same email as github:alice-gh
+    merged = await store.late_discovery_merge(
+        "person", "github:alice-gh", "email:alice@meta.com"
+    )
+    assert merged is True
+
+    # Now email alias resolves to github canonical
+    c_after = await store.get_canonical("person", "email:alice@meta.com")
+    assert c_after == "github:alice-gh"
+
+    # Facts should be merged under canonical
+    entity = await store.get_entity("person", "github:alice-gh")
+    assert entity is not None
+    assert entity["facts"]["team"] == "infra"
+    assert entity["facts"]["role"] == "tech lead"
+
+
+@pytest.mark.asyncio
+async def test_late_discovery_merge_cascades_aliases(store):
+    """If B had aliases, they should now point to A's canonical."""
+    await store.upsert_entity("person", "github:alice-gh", {
+        "email": "alice@meta.com",
+    })
+    await store.resolve_identity("person", "github:alice-gh", {
+        "email": "alice@meta.com",
+    })
+
+    await store.upsert_entity("person", "email:alice@meta.com", {
+        "email": "alice@meta.com",
+    })
+    await store.resolve_identity("person", "email:alice@meta.com", {
+        "email": "alice@meta.com",
+    })
+
+    # Add a third alias pointing to email:alice@meta.com
+    await store.upsert_entity("person", "slack:alice", {
+        "email": "alice@meta.com",
+    })
+    # Manually map slack:alice -> email:alice@meta.com
+    await store.pool.execute(
+        "INSERT INTO entity_identities (entity_type, source_id, canonical_id, resolved_by) "
+        "VALUES ($1, $2, $3, 'heuristic') ON CONFLICT DO NOTHING",
+        "person", "slack:alice", "email:alice@meta.com",
+    )
+
+    # Merge email -> github
+    await store.late_discovery_merge(
+        "person", "github:alice-gh", "email:alice@meta.com"
+    )
+
+    # slack:alice should now point to github:alice-gh (cascaded)
+    slack_canonical = await store.get_canonical("person", "slack:alice")
+    assert slack_canonical == "github:alice-gh"
+
+
+@pytest.mark.asyncio
+async def test_late_discovery_merge_noop_same_canonical(store):
+    """Merging two entities that are already the same canonical is a no-op."""
+    await store.upsert_entity("person", "github:alice-gh", {
+        "email": "alice@meta.com",
+    })
+    await store.resolve_identity("person", "github:alice-gh", {
+        "email": "alice@meta.com",
+    })
+
+    merged = await store.late_discovery_merge(
+        "person", "github:alice-gh", "github:alice-gh"
+    )
+    assert merged is False  # no-op
+
+
+@pytest.mark.asyncio
+async def test_late_discovery_merge_winner_not_found(store):
+    """Merging when the winner entity does not exist returns False."""
+    await store.upsert_entity("person", "email:alice@meta.com", {
+        "name": "Alice",
+    })
+    await store.resolve_identity("person", "email:alice@meta.com", {
+        "name": "Alice",
+    })
+
+    merged = await store.late_discovery_merge(
+        "person", "nonexistent", "email:alice@meta.com"
+    )
+    assert merged is False
+
+
+# --- Admin split ---
+
+
+@pytest.mark.asyncio
+async def test_admin_split_removes_alias(store):
+    """Admin split detaches a source_id from its canonical, creating a new entity."""
+    await store.upsert_entity("person", "github:alice-gh", {
+        "email": "alice@meta.com", "team": "infra",
+    })
+    await store.resolve_identity("person", "github:alice-gh", {
+        "email": "alice@meta.com", "team": "infra",
+    })
+
+    # email:alice@meta.com merges into github:alice-gh
+    await store.resolve_identity(
+        "person", "email:alice@meta.com",
+        {"email": "alice@meta.com"},
+    )
+
+    # Split email away from github
+    await store.admin_split("person", "email:alice@meta.com")
+
+    c_after = await store.get_canonical("person", "email:alice@meta.com")
+    assert c_after == "email:alice@meta.com"  # now self-mapped
+
+
+# --- List identities ---
+
+
+@pytest.mark.asyncio
+async def test_list_identities_for_canonical(store):
+    """List all source_ids that map to a given canonical."""
+    await store.upsert_entity("person", "github:alice-gh", {
+        "email": "alice@meta.com",
+    })
+    await store.resolve_identity("person", "github:alice-gh", {
+        "email": "alice@meta.com",
+    })
+    await store.resolve_identity(
+        "person", "email:alice@meta.com",
+        {"email": "alice@meta.com"},
+    )
+
+    aliases = await store.list_identities("person", "github:alice-gh")
+    source_ids = {a["source_id"] for a in aliases}
+    assert "github:alice-gh" in source_ids
+    assert "email:alice@meta.com" in source_ids
