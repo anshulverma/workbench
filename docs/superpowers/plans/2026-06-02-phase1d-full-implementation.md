@@ -68,11 +68,25 @@
 53. `CompositeEnricher` wraps each child enricher with `InstrumentedContextEnricher` at construction
 54. `format_card_for_chat` skips raw enrichment when `card_body` present (LLM already incorporated context)
 55. Strip authoring commentary from plan markdown
-56. React UI auth: revert to `__API_TOKEN__` meta tag approach (not /api/auth/token endpoint) — no bootstrapping problem
+56. React UI auth: use `/api/auth/token` endpoint approach — simpler than meta tag injection, no template rendering needed
 57. Meta sanitizer regex: `\b[a-z]{2,20}(?=@(?:fb|meta)\.com)` to match both @fb.com and @meta.com
 58. React UI: add Tailwind CSS per spec; replace inline styles with utility classes
 59. Meta enrichers: fix entity_refs from tuples to dicts per decision #41
 60. config.meta.yml: update enrichment to new `providers:` format with source_type routing for CompositeEnricher
+
+**Auto-Plan Grilling Review (2026-06-04 — Consistency Audit):**
+61. entity_refs format fixed: Tasks 7/13 now use `[{"type": "...", "id": "..."}]` dicts per decision #41 (was using tuples)
+62. Decision #56 corrected: use `/api/auth/token` endpoint (not meta tag) — matches FIX 19 and Task 21/23 implementation
+63. Task 8 file collision fixed: Connection ABC files already created by Task 3, Task 8 only creates google.py
+64. Meta sanitizer regex fixed: `(?=@(?:fb|meta)\.com)` matches both domains per decision #57 (was only @fb.com)
+65. Tailwind CSS added: package.json deps, config files, Tailwind utility classes replace inline styles per decision #58
+66. `TriageResponseResult` model added to Task 1 per decision #40
+67. `AdapterStateStore` interface + PG implementation added to Task 2 per decision #43/#50
+68. `state_store` injection added to `create_provider()` in Task 4 per decision #43
+69. `enrichment_errors` counter added to metrics + `InstrumentedContextEnricher` per decision #44
+70. `create_composite_enricher` wraps child enrichers with `InstrumentedContextEnricher` per decision #53
+71. React UI dropdown: added missing "decision" and "investigation" categories (all 8 ActionCategory values)
+72. Note: GChat `bot_user_id` auto-discovery (decision #48) deferred — sender_type filtering is sufficient
 
 **Test commands:**
 - Workbench: make test
@@ -275,6 +289,15 @@ class InterpretedResponse(BaseModel):
     system_actions: list[SystemAction] = Field(default_factory=list)
     user_todos: list[UserTodo] = Field(default_factory=list)
     explanation: str = ""
+
+
+class TriageResponseResult(BaseModel):
+    """Return type for execute_triage_response() (Decision #40)."""
+    status: str  # "recorded", "awaiting_confirmation", "error"
+    action: str | None = None
+    system_actions_executed: list[str] = Field(default_factory=list)
+    user_todos_created: list[str] = Field(default_factory=list)
+    explanation: str = ""
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -286,15 +309,16 @@ Expected: All pass, including new tests. Existing tests must remain green.
 
 ```bash
 git add src/workbench/models.py tests/test_models.py
-git commit -m "feat(models): add EntityType, ActionCategory enums, triage/item action fields, InterpretedResponse"
+git commit -m "feat(models): add EntityType, ActionCategory enums, triage/item action fields, InterpretedResponse, TriageResponseResult"
 ```
 
 ---
 
-### Task 2: Alembic Migration -- New Columns
+### Task 2: Alembic Migration -- New Columns + AdapterStateStore
 
 **Files:**
 - Create: `src/workbench/migrations/versions/003_phase1d_columns.py`
+- Create: `src/workbench/storage/adapter_state.py` (Decision #43/#50)
 - Modify: `src/workbench/storage/postgres/items.py`
 - Modify: `src/workbench/storage/postgres/triage.py`
 - Modify: `src/workbench/storage/postgres/interactions.py`
@@ -359,6 +383,67 @@ def downgrade() -> None:
     op.drop_column("items", "action_source")
     op.drop_column("items", "parent_item_id")
     op.drop_column("triage_cards", "deferred_until")
+```
+
+- [ ] **Step 1b: Create AdapterStateStore interface and PG implementation (Decision #43/#50)**
+
+Create `src/workbench/storage/adapter_state.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from abc import ABC, abstractmethod
+from datetime import datetime, timezone
+from typing import Any
+
+
+class AdapterStateStore(ABC):
+    @abstractmethod
+    async def get_state(self, adapter_name: str) -> dict | None:
+        """Get persisted state for an adapter, or None if not found."""
+        ...
+
+    @abstractmethod
+    async def save_state(self, adapter_name: str, state: dict) -> None:
+        """Upsert adapter state."""
+        ...
+
+    @abstractmethod
+    async def delete_state(self, adapter_name: str) -> None:
+        """Remove persisted state for an adapter."""
+        ...
+
+
+class PgAdapterStateStore(AdapterStateStore):
+    def __init__(self, pool):
+        self.pool = pool
+
+    async def get_state(self, adapter_name: str) -> dict | None:
+        row = await self.pool.fetchrow(
+            "SELECT state FROM adapter_state WHERE adapter_name = $1",
+            adapter_name,
+        )
+        if not row:
+            return None
+        state = row["state"]
+        return json.loads(state) if isinstance(state, str) else state
+
+    async def save_state(self, adapter_name: str, state: dict) -> None:
+        await self.pool.execute(
+            """INSERT INTO adapter_state (adapter_name, state, updated_at)
+               VALUES ($1, $2::jsonb, $3)
+               ON CONFLICT (adapter_name) DO UPDATE SET
+                 state = EXCLUDED.state,
+                 updated_at = EXCLUDED.updated_at""",
+            adapter_name, json.dumps(state), datetime.now(timezone.utc),
+        )
+
+    async def delete_state(self, adapter_name: str) -> None:
+        await self.pool.execute(
+            "DELETE FROM adapter_state WHERE adapter_name = $1",
+            adapter_name,
+        )
 ```
 
 - [ ] **Step 2: Update PgItemStore to include new columns**
@@ -871,7 +956,11 @@ class ProviderConfig(BaseModel):
     pass
 
 
-def create_provider(section: dict[str, Any], connections: dict[str, Any] | None = None) -> Any:
+def create_provider(
+    section: dict[str, Any],
+    connections: dict[str, Any] | None = None,
+    state_store: Any | None = None,
+) -> Any:
     section = dict(section)
     class_path = section.pop("class")
     connection_name = section.pop("connection", None)
@@ -896,31 +985,46 @@ def create_provider(section: dict[str, Any], connections: dict[str, Any] | None 
         if resolved_connection is None:
             raise ValueError(f"Connection '{connection_name}' not found in connections config")
 
-    # Use inspect.signature to check if constructor accepts a connection kwarg
-    # before attempting to pass it. This avoids TypeError for providers that
-    # don't expect it.
+    # Use inspect.signature to check if constructor accepts connection/state_store kwargs
+    # before attempting to pass them. This avoids TypeError for providers that
+    # don't expect them.
     if hasattr(cls, "ProviderConfig"):
         typed_config = cls.ProviderConfig(**section)
         sig = inspect.signature(cls.__init__)
+        kwargs = {}
         if 'connection' in sig.parameters and resolved_connection is not None:
-            return cls(typed_config, connection=resolved_connection)
-        return cls(typed_config)
+            kwargs['connection'] = resolved_connection
+        if 'state_store' in sig.parameters and state_store is not None:
+            kwargs['state_store'] = state_store
+        return cls(typed_config, **kwargs)
     else:
         sig = inspect.signature(cls.__init__)
+        kwargs = dict(section) if section else {}
         if 'connection' in sig.parameters and resolved_connection is not None:
-            return cls(connection=resolved_connection, **section) if section else cls(connection=resolved_connection)
-        return cls(**section) if section else cls()
+            kwargs['connection'] = resolved_connection
+        if 'state_store' in sig.parameters and state_store is not None:
+            kwargs['state_store'] = state_store
+        return cls(**kwargs)
 
 
-def create_providers_from_list(sections: list[dict[str, Any]], connections: dict[str, Any] | None = None) -> list[Any]:
-    return [create_provider(s, connections=connections) for s in sections]
+def create_providers_from_list(
+    sections: list[dict[str, Any]],
+    connections: dict[str, Any] | None = None,
+    state_store: Any | None = None,
+) -> list[Any]:
+    return [create_provider(s, connections=connections, state_store=state_store) for s in sections]
 
 
-def create_composite_enricher(config, connections: dict[str, Any] | None = None):
+def create_composite_enricher(
+    config,
+    connections: dict[str, Any] | None = None,
+    metrics: Any | None = None,
+):
     """Build a CompositeEnricher from an EnrichmentConfig.
 
     Routes enrichment by source_type to specific enricher instances,
     with a default fallback. Per-enricher budget overrides are supported.
+    Decision #53: wraps each child enricher with InstrumentedContextEnricher.
     """
     from workbench.providers.enrichment.composite import CompositeEnricher
     from workbench.models import EnrichmentBudget
@@ -932,6 +1036,10 @@ def create_composite_enricher(config, connections: dict[str, Any] | None = None)
         source_types = entry.pop("source_types", [])
         budget_dict = entry.pop("budget", None)
         provider = create_provider(entry, connections=connections)
+        if metrics:
+            from workbench.instrumentation import InstrumentedContextEnricher
+            enricher_name = entry.get("class", "").rsplit(".", 1)[-1] if "class" in entry else "unknown"
+            provider = InstrumentedContextEnricher(provider, enricher_name, metrics)
         for st in source_types:
             enrichers[st] = provider
         if budget_dict:
@@ -940,6 +1048,9 @@ def create_composite_enricher(config, connections: dict[str, Any] | None = None)
                 budgets[st] = budget
 
     default = create_provider(dict(config.default), connections=connections) if config.default else None
+    if default and metrics:
+        from workbench.instrumentation import InstrumentedContextEnricher
+        default = InstrumentedContextEnricher(default, "default", metrics)
     return CompositeEnricher(enrichers, default=default, budgets=budgets)
 
 
@@ -1795,6 +1906,7 @@ def test_all_metrics_registered():
     assert m.items_dropped is not None
     assert m.pipeline_stage_seconds is not None
     assert m.enrichment_seconds is not None
+    assert m.enrichment_errors is not None
     assert m.identity_merges is not None
     assert m.cards_generated is not None
     assert m.alerts_sent is not None
@@ -1880,6 +1992,8 @@ class WorkbenchMetrics:
     cards_generated: Counter
     alerts_sent: Counter
 
+    enrichment_errors: Counter
+
     # Histograms
     adapter_poll_seconds: Histogram
     llm_call_seconds: Histogram
@@ -1933,6 +2047,10 @@ def create_metrics(registry: CollectorRegistry | None = None) -> WorkbenchMetric
         alerts_sent=Counter(
             "workbench_alerts_sent_total", "Operational alerts sent",
             ["alert_type"], **kw,
+        ),
+        enrichment_errors=Counter(
+            "workbench_enrichment_errors_total", "Enrichment errors",
+            ["enricher", "error_type"], **kw,
         ),
         adapter_poll_seconds=Histogram(
             "workbench_adapter_poll_seconds", "Source adapter poll duration",
@@ -2098,6 +2216,9 @@ class InstrumentedContextEnricher:
             return result
         except Exception as e:
             elapsed = time.monotonic() - start
+            self._metrics.enrichment_errors.labels(
+                enricher=self._name, error_type=type(e).__name__,
+            ).inc()
             logger.error("enrichment_failed",
                 enricher=self._name, error=str(e), duration_ms=round(elapsed * 1000))
             raise
@@ -2140,18 +2261,19 @@ if config.metrics.enabled:
 
 - [ ] **Step 8: Update registry.py to apply instrumented wrappers**
 
-In `src/workbench/registry.py`, update `create_providers_from_list` to accept optional `metrics` and wrap adapters:
+In `src/workbench/registry.py`, update `create_providers_from_list` to accept optional `metrics` and wrap adapters (merges with `state_store` from Task 4):
 
 ```python
 def create_providers_from_list(
     sections: list[dict[str, Any]],
     connections: dict[str, Any] | None = None,
+    state_store: Any | None = None,
     metrics: WorkbenchMetrics | None = None,
 ) -> list[Any]:
     providers = []
     for s in sections:
         name = s.get("class", "").rsplit(".", 1)[-1] if "class" in s else "unknown"
-        provider = create_provider(s, connections=connections)
+        provider = create_provider(s, connections=connections, state_store=state_store)
         if metrics:
             from workbench.instrumentation import InstrumentedSourceAdapter
             provider = InstrumentedSourceAdapter(provider, name, metrics)
@@ -3139,7 +3261,7 @@ async def test_routes_by_source_type():
     email_enricher.enrich.return_value = {
         "calls_made": 1,
         "time_ms": 50,
-        "context": {"thread_id": "t1", "entity_refs": [("person", "email:alice@meta.com")]},
+        "context": {"thread_id": "t1", "entity_refs": [{"type": "person", "id": "email:alice@meta.com"}]},
     }
     github_enricher = AsyncMock()
     github_enricher.enrich.return_value = {
@@ -3277,8 +3399,8 @@ git commit -m "feat(enrichment): add CompositeEnricher with source_type routing 
 ### Task 8: GoogleConnection
 
 **Files:**
-- Create: `src/workbench/providers/connection/__init__.py`
-- Create: `src/workbench/providers/connection/base.py`
+- Exists (from Task 3): `src/workbench/providers/connection/__init__.py`
+- Exists (from Task 3): `src/workbench/providers/connection/base.py`
 - Create: `src/workbench/providers/connection/google.py`
 - Test: `tests/test_google_connection.py`
 
@@ -3401,32 +3523,7 @@ async def test_lazy_service_creation():
 Run: `python -m pytest tests/test_google_connection.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3: Create Connection ABC and GoogleConnection**
-
-```python
-# src/workbench/providers/connection/__init__.py
-# (empty)
-```
-
-```python
-# src/workbench/providers/connection/base.py
-from abc import ABC, abstractmethod
-from pydantic import BaseModel
-
-
-class Connection(ABC):
-    class ProviderConfig(BaseModel):
-        pass
-
-    @abstractmethod
-    async def initialize(self) -> None: ...
-
-    @abstractmethod
-    async def close(self) -> None: ...
-
-    @abstractmethod
-    def is_healthy(self) -> bool: ...
-```
+- [ ] **Step 3: Create GoogleConnection** (Connection ABC already created in Task 3)
 
 ```python
 # src/workbench/providers/connection/google.py
@@ -3949,7 +4046,7 @@ async def test_returns_entity_refs_in_context():
     ctx = result["context"]
     assert "entity_refs" in ctx
     refs = ctx["entity_refs"]
-    assert ("person", "email:alice@meta.com") in refs
+    assert {"type": "person", "id": "email:alice@meta.com"} in refs
 
 
 @pytest.mark.asyncio
@@ -3962,10 +4059,10 @@ async def test_extracts_all_participants():
     )
     result = await enricher.enrich(item, "shallow", EnrichmentBudget())
     refs = result["context"]["entity_refs"]
-    assert ("person", "email:alice@meta.com") in refs
-    assert ("person", "email:me@meta.com") in refs
-    assert ("person", "email:bob@meta.com") in refs
-    assert ("person", "email:carol@meta.com") in refs
+    assert {"type": "person", "id": "email:alice@meta.com"} in refs
+    assert {"type": "person", "id": "email:me@meta.com"} in refs
+    assert {"type": "person", "id": "email:bob@meta.com"} in refs
+    assert {"type": "person", "id": "email:carol@meta.com"} in refs
 
 
 @pytest.mark.asyncio
@@ -4074,13 +4171,13 @@ class GmailEnricher(ContextEnricher):
             elapsed_ms = int((time.monotonic() - start) * 1000)
             return {"calls_made": 0, "time_ms": elapsed_ms, "context": {}}
 
-        entity_refs: list[tuple[str, str]] = []
+        entity_refs: list[dict[str, str]] = []
         calls_made = 0
 
         # Extract sender entity
         sender = raw.get("sender", "")
         if sender:
-            entity_refs.append(("person", f"email:{sender}"))
+            entity_refs.append({"type": "person", "id": f"email:{sender}"})
             if memory:
                 try:
                     await memory.record_entity(
@@ -4094,7 +4191,7 @@ class GmailEnricher(ContextEnricher):
         # Extract recipient entities
         for recipient in raw.get("recipients_to", []) + raw.get("recipients_cc", []):
             if recipient:
-                entity_refs.append(("person", f"email:{recipient}"))
+                entity_refs.append({"type": "person", "id": f"email:{recipient}"})
 
         context = {
             "entity_refs": entity_refs,
@@ -4383,9 +4480,9 @@ async def test_enricher_extracts_entity_refs():
         "shallow", EnrichmentBudget(),
     )
     refs = result["context"]["entity_refs"]
-    assert ("person", "gcal:alice@meta.com") in refs
-    assert ("person", "gcal:bob@meta.com") in refs
-    assert ("person", "gcal:carol@meta.com") in refs
+    assert {"type": "person", "id": "gcal:alice@meta.com"} in refs
+    assert {"type": "person", "id": "gcal:bob@meta.com"} in refs
+    assert {"type": "person", "id": "gcal:carol@meta.com"} in refs
 
 
 @pytest.mark.asyncio
@@ -4603,19 +4700,19 @@ class GCalendarEnricher(ContextEnricher):
             elapsed_ms = int((time.monotonic() - start) * 1000)
             return {"calls_made": 0, "time_ms": elapsed_ms, "context": {}}
 
-        entity_refs: list[tuple[str, str]] = []
+        entity_refs: list[dict[str, str]] = []
         calls_made = 0
 
         # Organizer entity
         organizer = raw.get("organizer", "")
         if organizer:
-            entity_refs.append(("person", f"gcal:{organizer}"))
+            entity_refs.append({"type": "person", "id": f"gcal:{organizer}"})
 
         # Attendee entities
         for attendee in raw.get("attendees", []):
             email = attendee.get("email", "")
             if email:
-                entity_refs.append(("person", f"gcal:{email}"))
+                entity_refs.append({"type": "person", "id": f"gcal:{email}"})
 
         # Record organizer in memory
         if memory and organizer:
@@ -4998,8 +5095,8 @@ async def test_enricher_extracts_entity_refs():
     enricher = GChatEnricher(GChatEnricher.ProviderConfig())
     result = await enricher.enrich(_make_chat_item(), "shallow", EnrichmentBudget())
     refs = result["context"]["entity_refs"]
-    assert ("person", "gchat:users/alice") in refs
-    assert ("person", "gchat:users/bob") in refs
+    assert {"type": "person", "id": "gchat:users/alice"} in refs
+    assert {"type": "person", "id": "gchat:users/bob"} in refs
 
 
 @pytest.mark.asyncio
@@ -5007,7 +5104,7 @@ async def test_enricher_extracts_space_entity():
     enricher = GChatEnricher(GChatEnricher.ProviderConfig())
     result = await enricher.enrich(_make_chat_item(), "shallow", EnrichmentBudget())
     refs = result["context"]["entity_refs"]
-    assert ("space", "gchat:spaces/S/threads/t1") in refs
+    assert {"type": "space", "id": "gchat:spaces/S/threads/t1"} in refs
 
 
 @pytest.mark.asyncio
@@ -5260,7 +5357,7 @@ class GChatEnricher(ContextEnricher):
             elapsed_ms = int((time.monotonic() - start) * 1000)
             return {"calls_made": 0, "time_ms": elapsed_ms, "context": {}}
 
-        entity_refs: list[tuple[str, str]] = []
+        entity_refs: list[dict[str, str]] = []
         calls_made = 0
 
         # Extract participant entities (deduplicated)
@@ -5270,7 +5367,7 @@ class GChatEnricher(ContextEnricher):
             sender_display = msg.get("sender_display", "")
             if sender_name and sender_name not in seen_senders:
                 seen_senders.add(sender_name)
-                entity_refs.append(("person", f"gchat:{sender_name}"))
+                entity_refs.append({"type": "person", "id": f"gchat:{sender_name}"})
                 if memory:
                     try:
                         await memory.record_entity(
@@ -5284,7 +5381,7 @@ class GChatEnricher(ContextEnricher):
         # Thread/space as entity
         thread_name = raw.get("thread_name", "")
         if thread_name:
-            entity_refs.append(("space", f"gchat:{thread_name}"))
+            entity_refs.append({"type": "space", "id": f"gchat:{thread_name}"})
 
         context = {
             "entity_refs": entity_refs,
@@ -5341,8 +5438,8 @@ async def test_enrich_returns_entity_refs_in_context(enricher):
     ctx = result["context"]
     assert "entity_refs" in ctx
     refs = ctx["entity_refs"]
-    assert ("person", "github:alice") in refs
-    assert ("repo", "github:owner/repo") in refs
+    assert {"type": "person", "id": "github:alice"} in refs
+    assert {"type": "repo", "id": "github:owner/repo"} in refs
 
 
 @pytest.mark.asyncio
@@ -5362,12 +5459,12 @@ Expected: KeyError or assertion failure -- `entity_refs` not in context dict.
 In `src/workbench/providers/enrichment/github.py`, in the `enrich` method, add entity_refs population before the `return` statement:
 
 ```python
-        # Build entity_refs list for downstream card generation
-        entity_refs: list[tuple[str, str]] = []
+        # Build entity_refs list for downstream card generation (dict format per decision #41)
+        entity_refs: list[dict[str, str]] = []
         if author_login != "unknown":
-            entity_refs.append(("person", f"github:{author_login}"))
+            entity_refs.append({"type": "person", "id": f"github:{author_login}"})
         if repo:
-            entity_refs.append(("repo", f"github:{repo}"))
+            entity_refs.append({"type": "repo", "id": f"github:{repo}"})
         context["entity_refs"] = entity_refs
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -9047,6 +9144,9 @@ git commit -m "feat(scheduler): add pending actions section to morning briefing"
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
     "typescript": "^5.6.3",
     "vite": "^6.0.0"
   }
@@ -9098,6 +9198,39 @@ export default defineConfig({
     },
   },
 })
+```
+
+- [ ] **Step 3b: Create ui/tailwind.config.js (Decision #58)**
+
+```javascript
+// ui/tailwind.config.js
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: { extend: {} },
+  plugins: [],
+}
+```
+
+- [ ] **Step 3c: Create ui/postcss.config.js**
+
+```javascript
+// ui/postcss.config.js
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+```
+
+- [ ] **Step 3d: Create ui/src/index.css**
+
+```css
+/* ui/src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 ```
 
 - [ ] **Step 4: Create ui/index.html**
@@ -9217,11 +9350,11 @@ interface Props {
   onUpdate: () => void
 }
 
-const priorityColors: Record<string, string> = {
-  P0: '#dc2626',
-  P1: '#ea580c',
-  P2: '#2563eb',
-  P3: '#6b7280',
+const priorityClasses: Record<string, string> = {
+  P0: 'text-red-600 font-bold',
+  P1: 'text-orange-600 font-bold',
+  P2: 'text-blue-600 font-bold',
+  P3: 'text-gray-500 font-bold',
 }
 
 export function ActionItem({ item, onUpdate }: Props) {
@@ -9231,42 +9364,26 @@ export function ActionItem({ item, onUpdate }: Props) {
   const ageLabel = hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`
 
   return (
-    <li style={{ marginBottom: 12, listStyle: 'none' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span
-          style={{
-            fontWeight: 'bold',
-            color: priorityColors[item.priority] || '#333',
-            fontSize: 13,
-          }}
-        >
+    <li className="mb-3 list-none">
+      <div className="flex items-baseline gap-2">
+        <span className={`text-sm ${priorityClasses[item.priority] || 'text-gray-800 font-bold'}`}>
           [{item.priority}]
         </span>
         <span>{item.summary}</span>
         {item.parent_item && (
-          <span style={{ color: '#888', fontSize: 13 }}>
+          <span className="text-gray-500 text-sm">
             from {item.parent_item.summary}
           </span>
         )}
-        <span style={{ color: '#aaa', fontSize: 12 }}>{ageLabel}</span>
+        <span className="text-gray-400 text-xs">{ageLabel}</span>
       </div>
-      <div style={{ marginTop: 4, display: 'flex', gap: 4 }}>
-        <button onClick={() => markDone(item.id).then(onUpdate)}>Done</button>
-        <button onClick={() => changePriority(item.id, 'P0').then(onUpdate)}>
-          P0
-        </button>
-        <button onClick={() => changePriority(item.id, 'P1').then(onUpdate)}>
-          P1
-        </button>
-        <button onClick={() => changePriority(item.id, 'P2').then(onUpdate)}>
-          P2
-        </button>
-        <button onClick={() => changePriority(item.id, 'P3').then(onUpdate)}>
-          P3
-        </button>
-        <button onClick={() => snooze(item.id, 4).then(onUpdate)}>
-          Snooze 4h
-        </button>
+      <div className="mt-1 flex gap-1">
+        <button className="px-2 py-0.5 text-sm border rounded hover:bg-gray-100" onClick={() => markDone(item.id).then(onUpdate)}>Done</button>
+        <button className="px-2 py-0.5 text-sm border rounded hover:bg-gray-100" onClick={() => changePriority(item.id, 'P0').then(onUpdate)}>P0</button>
+        <button className="px-2 py-0.5 text-sm border rounded hover:bg-gray-100" onClick={() => changePriority(item.id, 'P1').then(onUpdate)}>P1</button>
+        <button className="px-2 py-0.5 text-sm border rounded hover:bg-gray-100" onClick={() => changePriority(item.id, 'P2').then(onUpdate)}>P2</button>
+        <button className="px-2 py-0.5 text-sm border rounded hover:bg-gray-100" onClick={() => changePriority(item.id, 'P3').then(onUpdate)}>P3</button>
+        <button className="px-2 py-0.5 text-sm border rounded hover:bg-gray-100" onClick={() => snooze(item.id, 4).then(onUpdate)}>Snooze 4h</button>
       </div>
     </li>
   )
@@ -9307,20 +9424,20 @@ export function ActionList() {
     load()
   }, [load])
 
-  if (loading && !data) return <div>Loading...</div>
-  if (error) return <div style={{ color: 'red' }}>Error: {error}</div>
+  if (loading && !data) return <div className="text-gray-500">Loading...</div>
+  if (error) return <div className="text-red-600">Error: {error}</div>
   if (!data) return null
 
   const categories = Object.entries(data.categories)
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-        <h1 style={{ margin: 0 }}>Action Items ({data.total})</h1>
+      <div className="flex items-center gap-4 mb-4">
+        <h1 className="m-0 text-2xl font-bold">Action Items ({data.total})</h1>
         <select
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          style={{ padding: '4px 8px' }}
+          className="px-2 py-1 border rounded"
         >
           <option value="">All categories</option>
           <option value="delegation">Delegation</option>
@@ -9329,17 +9446,19 @@ export function ActionList() {
           <option value="review">Review</option>
           <option value="creation">Creation</option>
           <option value="update">Update</option>
+          <option value="decision">Decision</option>
+          <option value="investigation">Investigation</option>
         </select>
-        <button onClick={load} disabled={loading}>
+        <button className="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50" onClick={load} disabled={loading}>
           Refresh
         </button>
       </div>
       {categories.map(([category, items]) => (
         <details key={category} open>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', marginBottom: 8 }}>
+          <summary className="cursor-pointer font-bold mb-2">
             {category.charAt(0).toUpperCase() + category.slice(1)} ({items.length})
           </summary>
-          <ul style={{ padding: 0 }}>
+          <ul className="p-0">
             {items.map((item) => (
               <ActionItem key={item.id} item={item} onUpdate={load} />
             ))}
@@ -9347,7 +9466,7 @@ export function ActionList() {
         </details>
       ))}
       {categories.length === 0 && (
-        <p style={{ color: '#888' }}>No pending actions. You are all caught up.</p>
+        <p className="text-gray-500">No pending actions. You are all caught up.</p>
       )}
     </div>
   )
@@ -9362,15 +9481,7 @@ import { ActionList } from './components/ActionList'
 
 export default function App() {
   return (
-    <div
-      style={{
-        maxWidth: 800,
-        margin: '0 auto',
-        padding: 20,
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
+    <div className="max-w-3xl mx-auto p-5 font-sans">
       <ActionList />
     </div>
   )
@@ -9384,6 +9495,7 @@ export default function App() {
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -9478,7 +9590,7 @@ import re
 META_SANITIZER_PATTERNS = [
     (re.compile(r'\bD\d{6,}\b'), '[REDACTED:phid]'),
     (re.compile(r'\bT\d{6,}\b'), '[REDACTED:task_id]'),
-    (re.compile(r'\b[a-z]{2,20}(?=@fb\.com)'), '[REDACTED:unixname]'),
+    (re.compile(r'\b[a-z]{2,20}(?=@(?:fb|meta)\.com)'), '[REDACTED:unixname]'),
 ]
 ```
 
@@ -9768,13 +9880,13 @@ class MetaTasksEnricher(ContextEnricher):
         # Extract assignee info
         assignee = raw.get("ownerPHID", "")
         if assignee:
-            entity_refs.append(("person", f"phab:{assignee}"))
+            entity_refs.append({"type": "person", "id": f"phab:{assignee}"})
             context["assignee_phid"] = assignee
 
         # Extract subscriber info
         subscribers = raw.get("subscriberPHIDs", [])
         for sub in subscribers[:5]:
-            entity_refs.append(("person", f"phab:{sub}"))
+            entity_refs.append({"type": "person", "id": f"phab:{sub}"})
 
         context["priority"] = raw.get("priority", "")
         context["status"] = raw.get("status", "")
@@ -9848,7 +9960,7 @@ class WorkplaceEnricher(ContextEnricher):
 
         author = raw.get("from", {})
         if author.get("id"):
-            entity_refs.append(("person", f"workplace:{author['id']}"))
+            entity_refs.append({"type": "person", "id": f"workplace:{author['id']}"})
             context["author_name"] = author.get("name", "")
 
         context["group_name"] = raw.get("group_name", "")
@@ -9904,7 +10016,7 @@ class MetaDocsEnricher(ContextEnricher):
 
         author_phid = raw.get("authorPHID", "")
         if author_phid:
-            entity_refs.append(("person", f"phab:{author_phid}"))
+            entity_refs.append({"type": "person", "id": f"phab:{author_phid}"})
 
         context["title"] = raw.get("title", "")
         context["last_editor"] = raw.get("lastEditorPHID", "")
@@ -9912,7 +10024,7 @@ class MetaDocsEnricher(ContextEnricher):
 
         collaborators = raw.get("collaboratorPHIDs", [])
         for collab in collaborators[:5]:
-            entity_refs.append(("person", f"phab:{collab}"))
+            entity_refs.append({"type": "person", "id": f"phab:{collab}"})
 
         return {
             "calls_made": 0,
