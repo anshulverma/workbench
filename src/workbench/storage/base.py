@@ -36,6 +36,10 @@ class ItemStore(ABC):
     async def archive_item(self, item_id: str) -> None: ...
     @abstractmethod
     async def get_items_by_source(self, source_type: str) -> list[Item]: ...
+    @abstractmethod
+    async def delete_older_than(self, status: str, days: int) -> int:
+        """Delete items with given status older than days. Returns count deleted."""
+        ...
 
 
 class TriageStore(ABC):
@@ -59,6 +63,10 @@ class TriageStore(ABC):
     async def defer_card(self, card_id: str, until: datetime) -> None: ...
     @abstractmethod
     async def get_deferred_ready(self) -> list[TriageCard]: ...
+    @abstractmethod
+    async def delete_older_than(self, status: str, days: int) -> int:
+        """Delete triage cards with given status older than days. Returns count deleted."""
+        ...
 
 
 class PlanStore(ABC):
@@ -95,6 +103,10 @@ class EnrichmentTraceStore(ABC):
     async def log_trace(self, trace: EnrichmentTrace) -> None: ...
     @abstractmethod
     async def get_traces(self, filters: TraceFilters) -> list[EnrichmentTrace]: ...
+    @abstractmethod
+    async def delete_older_than(self, days: int) -> int:
+        """Delete enrichment traces older than days. Returns count deleted."""
+        ...
 
 
 class SourceConfigStore(ABC):
@@ -152,6 +164,10 @@ class IngestionQueueStore(ABC):
     async def recover_stuck(self) -> int: ...
     @abstractmethod
     async def queue_depth(self) -> int: ...
+    @abstractmethod
+    async def delete_dead_letters_older_than(self, days: int) -> int:
+        """Delete dead letter entries older than days. Returns count deleted."""
+        ...
 
 
 class Stores:

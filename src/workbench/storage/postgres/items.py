@@ -102,6 +102,13 @@ class PgItemStore(ItemStore):
         )
         return [self._row_to_item(r) for r in rows]
 
+    async def delete_older_than(self, status: str, days: int) -> int:
+        result = await self.pool.execute(
+            "DELETE FROM items WHERE status = $1 AND updated_at < NOW() - INTERVAL '1 day' * $2",
+            status, days,
+        )
+        return int(result.split()[-1])
+
     @staticmethod
     def _row_to_item(row: asyncpg.Record) -> Item:
         raw = row["raw_data"]

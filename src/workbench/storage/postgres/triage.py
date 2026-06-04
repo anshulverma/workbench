@@ -116,6 +116,14 @@ class PgTriageStore(TriageStore):
         )
         return [self._row_to_card(r) for r in rows]
 
+    async def delete_older_than(self, status: str, days: int) -> int:
+        result = await self.pool.execute(
+            "DELETE FROM triage_cards WHERE status = $1 AND "
+            "COALESCE(responded_at, sent_at, expires_at) < NOW() - INTERVAL '1 day' * $2",
+            status, days,
+        )
+        return int(result.split()[-1])
+
     @staticmethod
     def _row_to_card(row: asyncpg.Record) -> TriageCard:
         card_content = row["card_content"]

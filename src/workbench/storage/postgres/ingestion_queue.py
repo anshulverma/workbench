@@ -130,6 +130,14 @@ class PgIngestionQueueStore(IngestionQueueStore):
         )
         return row["cnt"]  # type: ignore[index]
 
+    async def delete_dead_letters_older_than(self, days: int) -> int:
+        result = await self.pool.execute(
+            "DELETE FROM ingestion_queue WHERE status = 'dead_letter' "
+            "AND updated_at < NOW() - INTERVAL '1 day' * $1",
+            days,
+        )
+        return int(result.split()[-1])
+
     @staticmethod
     def _row_to_entry(row: asyncpg.Record) -> IngestionQueueEntry:
         signals = row["urgency_signals"]

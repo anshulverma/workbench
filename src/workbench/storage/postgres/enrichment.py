@@ -43,6 +43,13 @@ class PgEnrichmentTraceStore(EnrichmentTraceStore):
         rows = await self.pool.fetch(query, *params)
         return [self._row_to_trace(r) for r in rows]
 
+    async def delete_older_than(self, days: int) -> int:
+        result = await self.pool.execute(
+            "DELETE FROM enrichment_trace WHERE timestamp < NOW() - INTERVAL '1 day' * $1",
+            days,
+        )
+        return int(result.split()[-1])
+
     @staticmethod
     def _row_to_trace(row: asyncpg.Record) -> EnrichmentTrace:
         ctx = row["context_retrieved"]

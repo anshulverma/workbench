@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from workbench.config import AppConfig
+from workbench.config import AppConfig, RetentionConfig
 from workbench.memory.base import MemoryLayer
 from workbench.models import (
     FilterRule, InteractionEntry, Item, ItemCategory, ItemOrigin,
@@ -271,3 +271,29 @@ class WorkbenchScheduler:
             lines.append("All clear! No P0/P1 items, no pending triage.")
 
         await self.messenger.send_card("\n".join(lines))
+
+        # Run daily retention cleanup after briefing
+        try:
+            retention_result = await run_retention_cleanup(self.stores, self.config.retention)
+            total = sum(retention_result.values())
+            if total > 0:
+                logger.info("Retention cleanup ran after morning briefing", extra=retention_result)
+        except Exception:
+            logger.error("Retention cleanup failed", exc_info=True)
+
+
+async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, int]:
+    """Run daily retention cleanup. Returns counts of deleted rows."""
+    results: dict[str, int] = {}
+
+    results["archived_items"] = await stores.items.delete_older_than("archived", config.archived_items_days)
+    results["done_items"] = await stores.items.delete_older_than("done", config.done_items_days)
+    results["expired_cards"] = await stores.triage.delete_older_than("expired", config.expired_cards_days)
+    results["responded_cards"] = await stores.triage.delete_older_than("responded", config.responded_cards_days)
+    results["enrichment_traces"] = await stores.enrichment.delete_older_than(config.enrichment_traces_days)
+    results["dead_letters"] = await stores.ingestion_queue.delete_dead_letters_older_than(config.dead_letters_days)
+
+    total = sum(results.values())
+    if total > 0:
+        logger.info("retention_cleanup_complete", extra={**results, "total": total})
+    return results

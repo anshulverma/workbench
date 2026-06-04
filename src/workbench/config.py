@@ -76,6 +76,15 @@ class TracingConfig(BaseModel):
     sample_rate: float = 1.0
 
 
+class RetentionConfig(BaseModel):
+    archived_items_days: int = 90
+    done_items_days: int = 90
+    expired_cards_days: int = 30
+    responded_cards_days: int = 90
+    enrichment_traces_days: int = 30
+    dead_letters_days: int = 30
+
+
 class SchedulerConfig(BaseModel):
     poll_interval_minutes: int = 15
     morning_briefing_hour: int = 9
@@ -104,6 +113,7 @@ class AppConfig(BaseModel):
     debug: DebugConfig = Field(default_factory=DebugConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
     connections: dict[str, dict] = Field(default_factory=dict)
 
     @model_validator(mode="before")
