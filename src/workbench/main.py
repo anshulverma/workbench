@@ -13,6 +13,7 @@ from workbench.config import AppConfig, load_config
 from workbench.instrumentation import InstrumentedLLMProvider
 from workbench.logging import setup_logging
 from workbench.memory.noop import NoopMemoryLayer
+from workbench.privacy import SanitizingProcessor
 from workbench.metrics import create_metrics
 from workbench.middleware import CorrelationIdMiddleware
 from workbench.registry import close_provider, create_provider, create_providers_from_list, create_composite_enricher
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
 
     log_cfg = config.logging
     log_dir = log_cfg.log_dir or os.environ.get("WORKBENCH_LOG_DIR", "logs")
+    sanitizer = SanitizingProcessor(config.privacy)
     setup_logging(
         log_format=log_cfg.format,
         log_dir=log_dir,
@@ -42,6 +44,7 @@ async def lifespan(app: FastAPI):
         max_bytes=log_cfg.max_bytes,
         max_age_days=log_cfg.max_age_days,
         timezone=log_cfg.timezone,
+        extra_processors=[sanitizer],
     )
     logger.info("Config loaded (version=%s, port=%d)", config.version, config.server.port)
 

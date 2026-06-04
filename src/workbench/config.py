@@ -52,6 +52,30 @@ class MetricsConfig(BaseModel):
     endpoint: str = "/metrics"
 
 
+class DebugConfig(BaseModel):
+    sql_queries: bool = False
+    llm_prompts: bool = False
+    llm_token_usage: bool = True
+    request_bodies: bool = False
+    enrichment_details: bool = False
+    adapter_raw_items: bool = False
+
+
+class PrivacyConfig(BaseModel):
+    sanitize_logs: bool = True
+    redact_emails: bool = True
+    redact_phones: bool = True
+    max_content_in_logs: int = 200
+    allow_pii_in_debug_logs: bool = False
+
+
+class TracingConfig(BaseModel):
+    enabled: bool = False
+    exporter: str = "console"
+    otlp_endpoint: str | None = None
+    sample_rate: float = 1.0
+
+
 class SchedulerConfig(BaseModel):
     poll_interval_minutes: int = 15
     morning_briefing_hour: int = 9
@@ -77,6 +101,9 @@ class AppConfig(BaseModel):
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     memory: dict | None = None
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    debug: DebugConfig = Field(default_factory=DebugConfig)
+    privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
     connections: dict[str, dict] = Field(default_factory=dict)
 
     @model_validator(mode="before")
