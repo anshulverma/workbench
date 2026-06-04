@@ -1,30 +1,30 @@
-# Deep Plan Skill Implementation Plan
+# Auto Plan Skill Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Create the `deep-plan` skill — an autonomous planning agent that wraps grill-with-docs with contextual auto-answering, iterative deepening, and sub-agent orchestration to produce fully-grilled specs, ADRs, and implementation plans.
+**Goal:** Create the `auto-plan` skill — an autonomous planning agent that wraps grill-with-docs with contextual auto-answering, iterative deepening, and sub-agent orchestration to produce fully-grilled specs, ADRs, and implementation plans.
 
-**Architecture:** A Claude Code skill (`~/.claude/skills/deep-plan/SKILL.md`) with 7 supporting protocol/template files. The main SKILL.md contains orchestrator instructions (phases 0–4, sub-agent dispatch, state management, preference store). Supporting files are read on-demand when dispatching specific sub-agent types. No code — all markdown.
+**Architecture:** A Claude Code skill (`~/.claude/skills/auto-plan/SKILL.md`) with 7 supporting protocol/template files. The main SKILL.md contains orchestrator instructions (phases 0–4, sub-agent dispatch, state management, preference store). Supporting files are read on-demand when dispatching specific sub-agent types. No code — all markdown.
 
 **Tech Stack:** Markdown (skill definitions), JSON (state file format), Graphviz DOT (branch tree visualization)
 
 **Test commands:**
-- Invoke: `/deep-plan <topic>` in Claude Code
-- Verify: check that the skill produces the expected artifacts in `docs/deep-plan/`
-- Check sub-agent dispatch: observe `[deep-plan]` progress lines in output
+- Invoke: `/auto-plan <topic>` in Claude Code
+- Verify: check that the skill produces the expected artifacts in `docs/auto-plan/`
+- Check sub-agent dispatch: observe `[auto-plan]` progress lines in output
 
 ---
 
 ## Task 1: GRILLER-PROTOCOL.md — Distilled Grill-with-Docs Protocol
 
 **Files:**
-- Create: `~/.claude/skills/deep-plan/GRILLER-PROTOCOL.md`
+- Create: `~/.claude/skills/auto-plan/GRILLER-PROTOCOL.md`
 
 This is the first file because Grillers are the core sub-agent type. Every other protocol builds on or references the grilling approach.
 
 - [ ] **Step 1: Create the distilled protocol**
 
-Create `~/.claude/skills/deep-plan/GRILLER-PROTOCOL.md`:
+Create `~/.claude/skills/auto-plan/GRILLER-PROTOCOL.md`:
 
 ```markdown
 # Griller Protocol
@@ -69,14 +69,14 @@ Walk down every branch of the design for your assigned topic. For each decision 
 - [ ] **Step 2: Verify the file is readable**
 
 ```bash
-cat ~/.claude/skills/deep-plan/GRILLER-PROTOCOL.md | head -5
+cat ~/.claude/skills/auto-plan/GRILLER-PROTOCOL.md | head -5
 ```
 Expected: Shows `# Griller Protocol` header.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git init 2>/dev/null; git add GRILLER-PROTOCOL.md && git commit -m "feat(deep-plan): add distilled griller protocol"
+cd ~/.claude/skills/auto-plan && git init 2>/dev/null; git add GRILLER-PROTOCOL.md && git commit -m "feat(auto-plan): add distilled griller protocol"
 ```
 
 ---
@@ -84,11 +84,11 @@ cd ~/.claude/skills/deep-plan && git init 2>/dev/null; git add GRILLER-PROTOCOL.
 ## Task 2: GRILLER-RESPONSE-TEMPLATE.md — Structured Response Format
 
 **Files:**
-- Create: `~/.claude/skills/deep-plan/GRILLER-RESPONSE-TEMPLATE.md`
+- Create: `~/.claude/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md`
 
 - [ ] **Step 1: Create the response template**
 
-Create `~/.claude/skills/deep-plan/GRILLER-RESPONSE-TEMPLATE.md`:
+Create `~/.claude/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md`:
 
 ```markdown
 # Griller Response Template
@@ -138,14 +138,14 @@ Sub-topics discovered during grilling that need their own deep-dive:
 - [ ] **Step 2: Verify the file**
 
 ```bash
-cat ~/.claude/skills/deep-plan/GRILLER-RESPONSE-TEMPLATE.md | head -5
+cat ~/.claude/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md | head -5
 ```
 Expected: Shows `# Griller Response Template` header.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git add GRILLER-RESPONSE-TEMPLATE.md && git commit -m "feat(deep-plan): add griller response template"
+cd ~/.claude/skills/auto-plan && git add GRILLER-RESPONSE-TEMPLATE.md && git commit -m "feat(auto-plan): add griller response template"
 ```
 
 ---
@@ -153,11 +153,11 @@ cd ~/.claude/skills/deep-plan && git add GRILLER-RESPONSE-TEMPLATE.md && git com
 ## Task 3: WRITER-SPEC-PROTOCOL.md — Spec Document Structure
 
 **Files:**
-- Create: `~/.claude/skills/deep-plan/WRITER-SPEC-PROTOCOL.md`
+- Create: `~/.claude/skills/auto-plan/WRITER-SPEC-PROTOCOL.md`
 
 - [ ] **Step 1: Create the spec protocol**
 
-Create `~/.claude/skills/deep-plan/WRITER-SPEC-PROTOCOL.md`:
+Create `~/.claude/skills/auto-plan/WRITER-SPEC-PROTOCOL.md`:
 
 ```markdown
 # Writer Spec Protocol
@@ -221,14 +221,14 @@ Bulleted list of what this explicitly does NOT include.
 - [ ] **Step 2: Verify the file**
 
 ```bash
-cat ~/.claude/skills/deep-plan/WRITER-SPEC-PROTOCOL.md | head -5
+cat ~/.claude/skills/auto-plan/WRITER-SPEC-PROTOCOL.md | head -5
 ```
 Expected: Shows `# Writer Spec Protocol` header.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git add WRITER-SPEC-PROTOCOL.md && git commit -m "feat(deep-plan): add writer spec protocol"
+cd ~/.claude/skills/auto-plan && git add WRITER-SPEC-PROTOCOL.md && git commit -m "feat(auto-plan): add writer spec protocol"
 ```
 
 ---
@@ -236,11 +236,11 @@ cd ~/.claude/skills/deep-plan && git add WRITER-SPEC-PROTOCOL.md && git commit -
 ## Task 4: WRITER-PLAN-PROTOCOL.md — Distilled Writing-Plans Format
 
 **Files:**
-- Create: `~/.claude/skills/deep-plan/WRITER-PLAN-PROTOCOL.md`
+- Create: `~/.claude/skills/auto-plan/WRITER-PLAN-PROTOCOL.md`
 
 - [ ] **Step 1: Create the plan protocol**
 
-Create `~/.claude/skills/deep-plan/WRITER-PLAN-PROTOCOL.md`:
+Create `~/.claude/skills/auto-plan/WRITER-PLAN-PROTOCOL.md`:
 
 ```markdown
 # Writer Plan Protocol
@@ -315,14 +315,14 @@ Expected: PASS
 - [ ] **Step 2: Verify the file**
 
 ```bash
-cat ~/.claude/skills/deep-plan/WRITER-PLAN-PROTOCOL.md | head -5
+cat ~/.claude/skills/auto-plan/WRITER-PLAN-PROTOCOL.md | head -5
 ```
 Expected: Shows `# Writer Plan Protocol` header.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git add WRITER-PLAN-PROTOCOL.md && git commit -m "feat(deep-plan): add writer plan protocol"
+cd ~/.claude/skills/auto-plan && git add WRITER-PLAN-PROTOCOL.md && git commit -m "feat(auto-plan): add writer plan protocol"
 ```
 
 ---
@@ -330,13 +330,13 @@ cd ~/.claude/skills/deep-plan && git add WRITER-PLAN-PROTOCOL.md && git commit -
 ## Task 5: Review Checklists — SPEC, PLAN, FINAL
 
 **Files:**
-- Create: `~/.claude/skills/deep-plan/SPEC-REVIEW-CHECKLIST.md`
-- Create: `~/.claude/skills/deep-plan/PLAN-REVIEW-CHECKLIST.md`
-- Create: `~/.claude/skills/deep-plan/FINAL-REVIEW-CHECKLIST.md`
+- Create: `~/.claude/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md`
+- Create: `~/.claude/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md`
+- Create: `~/.claude/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md`
 
 - [ ] **Step 1: Create SPEC-REVIEW-CHECKLIST.md**
 
-Create `~/.claude/skills/deep-plan/SPEC-REVIEW-CHECKLIST.md`:
+Create `~/.claude/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md`:
 
 ```markdown
 # Spec Review Checklist
@@ -370,7 +370,7 @@ You are reviewing a design spec produced by a Writer sub-agent. Check each item 
 
 - [ ] **Step 2: Create PLAN-REVIEW-CHECKLIST.md**
 
-Create `~/.claude/skills/deep-plan/PLAN-REVIEW-CHECKLIST.md`:
+Create `~/.claude/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md`:
 
 ```markdown
 # Plan Review Checklist
@@ -404,12 +404,12 @@ You are reviewing an implementation plan produced by a Writer sub-agent. Check e
 
 - [ ] **Step 3: Create FINAL-REVIEW-CHECKLIST.md**
 
-Create `~/.claude/skills/deep-plan/FINAL-REVIEW-CHECKLIST.md`:
+Create `~/.claude/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md`:
 
 ```markdown
 # Final Cross-Cutting Review Checklist
 
-You are doing a final review of ALL artifacts produced by deep-plan: spec, ADRs, implementation plan, and CONTEXT.md updates. Check for cross-artifact consistency.
+You are doing a final review of ALL artifacts produced by auto-plan: spec, ADRs, implementation plan, and CONTEXT.md updates. Check for cross-artifact consistency.
 
 ## Checklist
 
@@ -439,16 +439,16 @@ You are doing a final review of ALL artifacts produced by deep-plan: spec, ADRs,
 - [ ] **Step 4: Verify all three files**
 
 ```bash
-head -1 ~/.claude/skills/deep-plan/SPEC-REVIEW-CHECKLIST.md
-head -1 ~/.claude/skills/deep-plan/PLAN-REVIEW-CHECKLIST.md
-head -1 ~/.claude/skills/deep-plan/FINAL-REVIEW-CHECKLIST.md
+head -1 ~/.claude/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md
+head -1 ~/.claude/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md
+head -1 ~/.claude/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md
 ```
 Expected: Each shows its respective `# ... Checklist` header.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git add SPEC-REVIEW-CHECKLIST.md PLAN-REVIEW-CHECKLIST.md FINAL-REVIEW-CHECKLIST.md && git commit -m "feat(deep-plan): add spec, plan, and final review checklists"
+cd ~/.claude/skills/auto-plan && git add SPEC-REVIEW-CHECKLIST.md PLAN-REVIEW-CHECKLIST.md FINAL-REVIEW-CHECKLIST.md && git commit -m "feat(auto-plan): add spec, plan, and final review checklists"
 ```
 
 ---
@@ -456,21 +456,21 @@ cd ~/.claude/skills/deep-plan && git add SPEC-REVIEW-CHECKLIST.md PLAN-REVIEW-CH
 ## Task 6: SKILL.md — Main Skill Definition (Part 1: Frontmatter + Phases 0–1)
 
 **Files:**
-- Create: `~/.claude/skills/deep-plan/SKILL.md`
+- Create: `~/.claude/skills/auto-plan/SKILL.md`
 
 The SKILL.md is the largest file (~400 lines). Split into two tasks for manageability: Part 1 covers frontmatter, overview, configuration, and Phases 0–1. Part 2 covers Phases 2–4, sub-agent dispatch, state management, and observability.
 
 - [ ] **Step 1: Create SKILL.md with frontmatter, overview, config, and Phases 0–1**
 
-Create `~/.claude/skills/deep-plan/SKILL.md`:
+Create `~/.claude/skills/auto-plan/SKILL.md`:
 
 ```markdown
 ---
-name: deep-plan
+name: auto-plan
 description: Use when planning a multi-step feature or grilling an existing spec. Autonomous planning agent that wraps grill-with-docs with contextual auto-answering, iterative deepening, and sub-agent orchestration. Produces fully-grilled specs, ADRs, and implementation plans.
 ---
 
-# Deep Plan
+# Auto Plan
 
 Autonomous planning skill. Builds a contextual model of the user's preferences, auto-answers grilling questions where confident, prompts only when genuinely uncertain, and produces fully-grilled design artifacts.
 
@@ -508,7 +508,7 @@ digraph deep_plan {
 
 ## Configuration
 
-**Invocation:** `/deep-plan <topic or spec-path> [--flags]`
+**Invocation:** `/auto-plan <topic or spec-path> [--flags]`
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -581,7 +581,7 @@ digraph deep_plan {
 - [from explicit args and conversation context]
 ```
 
-**Output:** `[deep-plan] Phase 0: loaded N memories, N ADRs, detected domains: x, y`
+**Output:** `[auto-plan] Phase 0: loaded N memories, N ADRs, detected domains: x, y`
 
 ## Phase 0.5: Idea Clarification (topic input only)
 
@@ -598,20 +598,20 @@ digraph deep_plan {
 
 **Scope decomposition:** If the topic describes 4+ independent subsystems, suggest decomposition with natural seams. Plan one sub-project at a time. User re-invokes for the rest.
 
-**Output:** `[deep-plan] Phase 0.5: idea clarification — N questions answered, N asked`
+**Output:** `[auto-plan] Phase 0.5: idea clarification — N questions answered, N asked`
 ```
 
 - [ ] **Step 2: Verify the file**
 
 ```bash
-head -3 ~/.claude/skills/deep-plan/SKILL.md
+head -3 ~/.claude/skills/auto-plan/SKILL.md
 ```
 Expected: Shows the YAML frontmatter opening `---`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git add SKILL.md && git commit -m "feat(deep-plan): SKILL.md part 1 — frontmatter, config, phases 0-0.5"
+cd ~/.claude/skills/auto-plan && git add SKILL.md && git commit -m "feat(auto-plan): SKILL.md part 1 — frontmatter, config, phases 0-0.5"
 ```
 
 ---
@@ -619,11 +619,11 @@ cd ~/.claude/skills/deep-plan && git add SKILL.md && git commit -m "feat(deep-pl
 ## Task 7: SKILL.md — Part 2: Phases 1–4, Sub-Agent Dispatch, State Management
 
 **Files:**
-- Modify: `~/.claude/skills/deep-plan/SKILL.md`
+- Modify: `~/.claude/skills/auto-plan/SKILL.md`
 
 - [ ] **Step 1: Append Phase 1 through Phase 4 and all remaining sections**
 
-Append to `~/.claude/skills/deep-plan/SKILL.md`:
+Append to `~/.claude/skills/auto-plan/SKILL.md`:
 
 ```markdown
 
@@ -640,7 +640,7 @@ Append to `~/.claude/skills/deep-plan/SKILL.md`:
 
 **Small scope fast path:** If ≤3 branches and none `uncertain`, handle grilling inline — no sub-agents. Still follow the grill-with-docs protocol, still produce artifacts.
 
-**Output:** `[deep-plan] Phase 1: skeleton has N branches (N known, N likely, N uncertain)`
+**Output:** `[auto-plan] Phase 1: skeleton has N branches (N known, N likely, N uncertain)`
 
 ## Phase 2: Grill + Deepen
 
@@ -733,13 +733,13 @@ If `--max-iterations` is hit with uncertain branches remaining:
 - Produce **partial artifacts** with `UNRESOLVED: [question — recommended: answer]` markers
 - **No implementation plan** produced (can't plan unresolved design)
 - Planning report flags unresolved branches
-- User can re-run `/deep-plan <spec-path>` to continue grilling
+- User can re-run `/auto-plan <spec-path>` to continue grilling
 
-**Output per iteration:** `[deep-plan] Phase 2/iter N: N decisions resolved, N unresolved, N new branches`
+**Output per iteration:** `[auto-plan] Phase 2/iter N: N decisions resolved, N unresolved, N new branches`
 
 ### State File
 
-After each iteration, write full state to `docs/deep-plan/reports/YYYY-MM-DD-<topic>-state.json`. **Full rewrite each time** (not incremental — avoids JSON corruption). This is the source of truth — survives context compression and session interruption.
+After each iteration, write full state to `docs/auto-plan/reports/YYYY-MM-DD-<topic>-state.json`. **Full rewrite each time** (not incremental — avoids JSON corruption). This is the source of truth — survives context compression and session interruption.
 
 State file structure:
 ```json
@@ -763,7 +763,7 @@ State file structure:
 
 State file is **always kept** (not deleted on completion). Required for `--redo` and `--resume`.
 
-**Output:** `[deep-plan] State saved to docs/deep-plan/reports/YYYY-MM-DD-<topic>-state.json`
+**Output:** `[auto-plan] State saved to docs/auto-plan/reports/YYYY-MM-DD-<topic>-state.json`
 
 ## Phase 3: Artifacts
 
@@ -813,7 +813,7 @@ Agent({
 ```
 
 4. If FAIL → Writer fixes → Reviewer re-reviews → loop until PASS
-5. Save to `docs/deep-plan/specs/YYYY-MM-DD-<topic>-design.md`
+5. Save to `docs/auto-plan/specs/YYYY-MM-DD-<topic>-design.md`
 6. Commit (if approved)
 
 ### 3. ADRs
@@ -832,10 +832,10 @@ For each ADR candidate that meets all three criteria (hard to reverse + surprisi
 2. Dispatch Writer sub-agent with spec + plan protocol
 3. Dispatch Reviewer with `PLAN-REVIEW-CHECKLIST.md`
 4. Fix → re-review → loop until PASS
-5. Save to `docs/deep-plan/plans/YYYY-MM-DD-<topic>.md`
+5. Save to `docs/auto-plan/plans/YYYY-MM-DD-<topic>.md`
 6. Commit
 
-**Output:** `[deep-plan] Phase 3: spec PASS, N ADRs written, plan PASS`
+**Output:** `[auto-plan] Phase 3: spec PASS, N ADRs written, plan PASS`
 
 ## Phase 4: Final Verification
 
@@ -858,12 +858,12 @@ Agent({
 
 If FAIL → fix affected artifacts → re-review → loop until PASS.
 
-**Output:** `[deep-plan] Phase 4: final verification PASS`
+**Output:** `[auto-plan] Phase 4: final verification PASS`
 
 ## --redo Support
 
 ```
-/deep-plan docs/deep-plan/specs/topic-design.md --redo "use SQLite instead of PostgreSQL"
+/auto-plan docs/auto-plan/specs/topic-design.md --redo "use SQLite instead of PostgreSQL"
 ```
 
 1. Load state file for the spec
@@ -878,7 +878,7 @@ If FAIL → fix affected artifacts → re-review → loop until PASS.
 ## --resume Support
 
 ```
-/deep-plan docs/deep-plan/specs/topic-design.md --resume
+/auto-plan docs/auto-plan/specs/topic-design.md --resume
 ```
 
 1. Load state file
@@ -889,7 +889,7 @@ Also triggered automatically: if the skill detects a state file for the topic on
 
 ## Planning Report
 
-At the end of execution, produce and commit `docs/deep-plan/reports/YYYY-MM-DD-<topic>-report.md`:
+At the end of execution, produce and commit `docs/auto-plan/reports/YYYY-MM-DD-<topic>-report.md`:
 
 ```markdown
 # Planning Report: {topic}
@@ -935,7 +935,7 @@ Skeleton (N branches)
 └── Branch C (N decisions) [from ADR]
 ```
 
-2. **Graphviz .dot file** at `docs/deep-plan/reports/YYYY-MM-DD-<topic>-tree.dot`:
+2. **Graphviz .dot file** at `docs/auto-plan/reports/YYYY-MM-DD-<topic>-tree.dot`:
    Color coding: palegreen=auto-answered, lightskyblue=user input, lightgray=ADR/memory, lightyellow=discovered, lightcoral=unresolved, salmon=failed
 
 3. **Rendered PNG** via `dot -Tpng` (best-effort — skip if graphviz not installed, note in report)
@@ -965,7 +965,7 @@ Write to `~/.claude/projects/.../memory/`. Update MEMORY.md index.
 ## Output File Layout
 
 ```
-docs/deep-plan/
+docs/auto-plan/
   specs/YYYY-MM-DD-<topic>-design.md
   plans/YYYY-MM-DD-<topic>.md
   reports/
@@ -980,24 +980,24 @@ docs/adr/NNNN-<slug>.md
 - [ ] **Step 2: Verify the complete SKILL.md**
 
 ```bash
-wc -l ~/.claude/skills/deep-plan/SKILL.md
+wc -l ~/.claude/skills/auto-plan/SKILL.md
 ```
 Expected: ~400 lines.
 
 ```bash
-head -3 ~/.claude/skills/deep-plan/SKILL.md
+head -3 ~/.claude/skills/auto-plan/SKILL.md
 ```
 Expected: YAML frontmatter.
 
 ```bash
-tail -5 ~/.claude/skills/deep-plan/SKILL.md
+tail -5 ~/.claude/skills/auto-plan/SKILL.md
 ```
 Expected: Shows the output file layout closing.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git add SKILL.md && git commit -m "feat(deep-plan): SKILL.md part 2 — phases 1-4, sub-agent dispatch, state management, observability"
+cd ~/.claude/skills/auto-plan && git add SKILL.md && git commit -m "feat(auto-plan): SKILL.md part 2 — phases 1-4, sub-agent dispatch, state management, observability"
 ```
 
 ---
@@ -1007,7 +1007,7 @@ cd ~/.claude/skills/deep-plan && git add SKILL.md && git commit -m "feat(deep-pl
 - [ ] **Step 1: Verify all 8 files exist**
 
 ```bash
-ls -la ~/.claude/skills/deep-plan/
+ls -la ~/.claude/skills/auto-plan/
 ```
 Expected: 8 files:
 ```
@@ -1024,12 +1024,12 @@ FINAL-REVIEW-CHECKLIST.md
 - [ ] **Step 2: Verify SKILL.md frontmatter**
 
 ```bash
-head -4 ~/.claude/skills/deep-plan/SKILL.md
+head -4 ~/.claude/skills/auto-plan/SKILL.md
 ```
 Expected:
 ```
 ---
-name: deep-plan
+name: auto-plan
 description: Use when planning a multi-step feature or grilling an existing spec...
 ---
 ```
@@ -1037,27 +1037,27 @@ description: Use when planning a multi-step feature or grilling an existing spec
 - [ ] **Step 3: Verify no file uses `@` references to force-load other files**
 
 ```bash
-grep -r "^@" ~/.claude/skills/deep-plan/ || echo "No @ references found"
+grep -r "^@" ~/.claude/skills/auto-plan/ || echo "No @ references found"
 ```
 Expected: "No @ references found"
 
 - [ ] **Step 4: Verify SKILL.md references all supporting files by name**
 
 ```bash
-grep -c "GRILLER-PROTOCOL.md" ~/.claude/skills/deep-plan/SKILL.md
-grep -c "GRILLER-RESPONSE-TEMPLATE.md" ~/.claude/skills/deep-plan/SKILL.md
-grep -c "WRITER-SPEC-PROTOCOL.md" ~/.claude/skills/deep-plan/SKILL.md
-grep -c "WRITER-PLAN-PROTOCOL.md" ~/.claude/skills/deep-plan/SKILL.md
-grep -c "SPEC-REVIEW-CHECKLIST.md" ~/.claude/skills/deep-plan/SKILL.md
-grep -c "PLAN-REVIEW-CHECKLIST.md" ~/.claude/skills/deep-plan/SKILL.md
-grep -c "FINAL-REVIEW-CHECKLIST.md" ~/.claude/skills/deep-plan/SKILL.md
+grep -c "GRILLER-PROTOCOL.md" ~/.claude/skills/auto-plan/SKILL.md
+grep -c "GRILLER-RESPONSE-TEMPLATE.md" ~/.claude/skills/auto-plan/SKILL.md
+grep -c "WRITER-SPEC-PROTOCOL.md" ~/.claude/skills/auto-plan/SKILL.md
+grep -c "WRITER-PLAN-PROTOCOL.md" ~/.claude/skills/auto-plan/SKILL.md
+grep -c "SPEC-REVIEW-CHECKLIST.md" ~/.claude/skills/auto-plan/SKILL.md
+grep -c "PLAN-REVIEW-CHECKLIST.md" ~/.claude/skills/auto-plan/SKILL.md
+grep -c "FINAL-REVIEW-CHECKLIST.md" ~/.claude/skills/auto-plan/SKILL.md
 ```
 Expected: Each returns at least 1 (each supporting file is referenced at least once).
 
 - [ ] **Step 5: Verify no placeholders in any file**
 
 ```bash
-grep -ri "TBD\|TODO\|placeholder\|fill in\|implement later" ~/.claude/skills/deep-plan/ || echo "No placeholders found"
+grep -ri "TBD\|TODO\|placeholder\|fill in\|implement later" ~/.claude/skills/auto-plan/ || echo "No placeholders found"
 ```
 Expected: "No placeholders found" (matches in example text within templates are acceptable).
 
@@ -1066,7 +1066,7 @@ Expected: "No placeholders found" (matches in example text within templates are 
 Invoke the skill with `--dry-run` on a simple topic to verify it loads and shows the skeleton:
 
 ```
-/deep-plan add retry logic to the ingestion queue worker --dry-run
+/auto-plan add retry logic to the ingestion queue worker --dry-run
 ```
 
 Expected: The skill loads, reads preferences, detects domains, produces a skeleton with branches and confidence levels, then stops.
@@ -1074,7 +1074,7 @@ Expected: The skill loads, reads preferences, detects domains, produces a skelet
 - [ ] **Step 7: Commit verification results**
 
 ```bash
-cd ~/.claude/skills/deep-plan && git add -A && git status
+cd ~/.claude/skills/auto-plan && git add -A && git status
 ```
 Expected: Nothing to commit (all files already committed in previous tasks).
 

@@ -1,10 +1,10 @@
-# Deep Plan Skill — Design Spec
+# Auto Plan Skill — Design Spec
 
 ## Context
 
 Planning complex features requires exhaustive design exploration — walking every branch of the design tree, challenging assumptions, sharpening language, and producing spec/plan artifacts that survive implementation. The existing `mp-grill-with-docs` skill does this interactively, but requires a human to answer every grilling question. For large plans (30+ design decisions), this is slow and repetitive — the human often gives answers consistent with their established preferences.
 
-The deep-plan skill automates the grilling process. It builds a contextual model of the user's preferences, auto-answers grilling questions where confident, prompts the user only when genuinely uncertain, and produces fully-grilled design artifacts autonomously.
+The auto-plan skill automates the grilling process. It builds a contextual model of the user's preferences, auto-answers grilling questions where confident, prompts the user only when genuinely uncertain, and produces fully-grilled design artifacts autonomously.
 
 ## Goals
 
@@ -18,7 +18,7 @@ The deep-plan skill automates the grilling process. It builds a contextual model
 ## Architecture
 
 ```
-/deep-plan <topic or spec-path> [--flags]
+/auto-plan <topic or spec-path> [--flags]
      │
      ▼
 ┌─────────────────────────────────┐
@@ -80,12 +80,12 @@ The skill accepts two input modes, detected automatically:
 | **Existing spec path** | Args resolve to a `.md` file on disk | Skip Phase 0.5. Treat the spec as the skeleton for Phase 1. Grill its sections, rewrite with decisions applied. |
 
 ```
-/deep-plan phase2-memory-system                    → start from scratch
-/deep-plan docs/specs/phase2-spec.md               → grill existing spec
-/deep-plan docs/specs/phase2-spec.md --skip-plan   → grill spec only, no plan
-/deep-plan docs/specs/phase2-spec.md --plan-only   → plan from grilled spec
-/deep-plan docs/specs/phase2-spec.md --resume      → continue interrupted session
-/deep-plan docs/specs/phase2-spec.md --redo "use SQLite instead of PostgreSQL"
+/auto-plan phase2-memory-system                    → start from scratch
+/auto-plan docs/specs/phase2-spec.md               → grill existing spec
+/auto-plan docs/specs/phase2-spec.md --skip-plan   → grill spec only, no plan
+/auto-plan docs/specs/phase2-spec.md --plan-only   → plan from grilled spec
+/auto-plan docs/specs/phase2-spec.md --resume      → continue interrupted session
+/auto-plan docs/specs/phase2-spec.md --redo "use SQLite instead of PostgreSQL"
 ```
 
 **`--plan-only` with UNRESOLVED markers:** If the input spec contains `UNRESOLVED:` markers (from a previous max-iterations run), the skill lists them and offers three options: (a) plan around them with `BLOCKED` markers on affected tasks, (b) run grilling first to resolve them, (c) abort.
@@ -211,7 +211,7 @@ Skipped when the input is an existing spec file.
 6. Once confident: propose 2-3 architectural approaches if the design space is open, or proceed to skeleton if the approach is obvious
 7. **Exit condition:** the orchestrator can write a one-paragraph summary of what's being built and why, and the user agrees it's accurate
 
-**Scope decomposition:** If the topic describes 4+ independent subsystems with no shared state, the skill suggests decomposition with natural seams. The user picks which sub-project to plan first. The skill plans that one through to completion. The user re-invokes `/deep-plan` for subsequent sub-projects. Separate invocations keep context fresh and let the user re-prioritize between sub-projects.
+**Scope decomposition:** If the topic describes 4+ independent subsystems with no shared state, the skill suggests decomposition with natural seams. The user picks which sub-project to plan first. The skill plans that one through to completion. The user re-invokes `/auto-plan` for subsequent sub-projects. Separate invocations keep context fresh and let the user re-prioritize between sub-projects.
 
 ### Phase 1: Skeleton (main agent)
 
@@ -260,7 +260,7 @@ For each `uncertain` or `likely` branch:
 
 **Loop exit:**
 - No `uncertain` branches remain AND no sub-agent returned unanswerable questions → proceed to Phase 3
-- `--max-iterations` reached → produce partial artifacts with `UNRESOLVED: [question with recommendation]` markers. No implementation plan produced (can't plan unresolved design). Planning report flags unresolved branches. User can re-run `/deep-plan <spec-path>` to continue grilling.
+- `--max-iterations` reached → produce partial artifacts with `UNRESOLVED: [question with recommendation]` markers. No implementation plan produced (can't plan unresolved design). Planning report flags unresolved branches. User can re-run `/auto-plan <spec-path>` to continue grilling.
 
 **Small scope fast path:** If the skeleton has ≤3 branches and none are `uncertain`, the orchestrator handles grilling inline — no sub-agents dispatched. Still follows the grill-with-docs protocol, still produces artifacts, just no orchestration overhead. `--dry-run` shows: "skeleton has N branches (all likely). Fast path — no sub-agents needed."
 
@@ -348,7 +348,7 @@ The orchestrator reads this holistically (not brittle parsing). The template ens
 
 ## State Management
 
-The orchestrator maintains state **on disk** at `docs/deep-plan/reports/YYYY-MM-DD-<topic>-state.json`, not just in conversation context. This is the single source of truth.
+The orchestrator maintains state **on disk** at `docs/auto-plan/reports/YYYY-MM-DD-<topic>-state.json`, not just in conversation context. This is the single source of truth.
 
 **Written after each iteration. Contains:**
 
@@ -429,7 +429,7 @@ The orchestrator maintains state **on disk** at `docs/deep-plan/reports/YYYY-MM-
 
 **Invocation:**
 ```
-/deep-plan docs/deep-plan/specs/topic-design.md --redo "use SQLite instead of PostgreSQL"
+/auto-plan docs/auto-plan/specs/topic-design.md --redo "use SQLite instead of PostgreSQL"
 ```
 
 **Flow:**
@@ -517,7 +517,7 @@ The skill does not implement a timeout. When it needs user input, the session pa
 
 ## Configuration
 
-Invoked as: `/deep-plan <topic or spec-path> [--flags]`
+Invoked as: `/auto-plan <topic or spec-path> [--flags]`
 
 | Argument | Default | Description |
 |----------|---------|-------------|
@@ -554,26 +554,26 @@ Args are parsed from the raw string by the orchestrator (Claude reading text, no
 One-line updates at key moments during execution:
 
 ```
-[deep-plan] Phase 0: loaded 5 memories, 3 ADRs, detected domains: backend, frontend
-[deep-plan] Phase 0.5: idea clarification — 3 questions answered, 1 asked
-[deep-plan] Phase 1: skeleton has 15 branches (3 known, 8 likely, 4 uncertain)
-[deep-plan] Phase 2/iter 1: spawning 4 grillers for uncertain branches
-[deep-plan] Griller "connections" done: 4 decisions auto-answered
-[deep-plan] Griller "triage cards" done: 6 auto-answered, 2 need user input
-[deep-plan] Conflict detected: entity_refs format — spawning resolution griller
-[deep-plan] Waiting for user on 3 questions...
-[deep-plan] Phase 2/iter 2: 2 new branches discovered, spawning grillers
-[deep-plan] State saved to docs/deep-plan/reports/2026-06-03-topic-state.json
-[deep-plan] Phase 3: writing spec...
-[deep-plan] Spec reviewer found 1 issue, fixing...
-[deep-plan] Phase 3: writing plan...
-[deep-plan] Phase 4: final verification clean
-[deep-plan] All artifacts pass. Done.
+[auto-plan] Phase 0: loaded 5 memories, 3 ADRs, detected domains: backend, frontend
+[auto-plan] Phase 0.5: idea clarification — 3 questions answered, 1 asked
+[auto-plan] Phase 1: skeleton has 15 branches (3 known, 8 likely, 4 uncertain)
+[auto-plan] Phase 2/iter 1: spawning 4 grillers for uncertain branches
+[auto-plan] Griller "connections" done: 4 decisions auto-answered
+[auto-plan] Griller "triage cards" done: 6 auto-answered, 2 need user input
+[auto-plan] Conflict detected: entity_refs format — spawning resolution griller
+[auto-plan] Waiting for user on 3 questions...
+[auto-plan] Phase 2/iter 2: 2 new branches discovered, spawning grillers
+[auto-plan] State saved to docs/auto-plan/reports/2026-06-03-topic-state.json
+[auto-plan] Phase 3: writing spec...
+[auto-plan] Spec reviewer found 1 issue, fixing...
+[auto-plan] Phase 3: writing plan...
+[auto-plan] Phase 4: final verification clean
+[auto-plan] All artifacts pass. Done.
 ```
 
 ### Planning Report
 
-Committed to `docs/deep-plan/reports/YYYY-MM-DD-<topic>-report.md` at the end of execution:
+Committed to `docs/auto-plan/reports/YYYY-MM-DD-<topic>-report.md` at the end of execution:
 
 ```markdown
 # Planning Report: <topic>
@@ -616,9 +616,9 @@ Skeleton (15 branches)
 
 ## Artifacts Produced
 - CONTEXT.md — 4 terms added, 2 updated
-- docs/deep-plan/specs/2026-06-03-<topic>-design.md
+- docs/auto-plan/specs/2026-06-03-<topic>-design.md
 - docs/adr/0012-<slug>.md
-- docs/deep-plan/plans/2026-06-03-<topic>.md
+- docs/auto-plan/plans/2026-06-03-<topic>.md
 ```
 
 ### Visual Branch Tree
@@ -627,7 +627,7 @@ Three formats produced:
 
 1. **ASCII tree** in the planning report (immediately readable, no tooling needed)
 
-2. **Graphviz `.dot` file** at `docs/deep-plan/reports/YYYY-MM-DD-<topic>-tree.dot`:
+2. **Graphviz `.dot` file** at `docs/auto-plan/reports/YYYY-MM-DD-<topic>-tree.dot`:
 
 ```dot
 digraph planning {
@@ -657,12 +657,12 @@ digraph planning {
 }
 ```
 
-3. **Rendered PNG** at `docs/deep-plan/reports/YYYY-MM-DD-<topic>-tree.png` — best-effort via `dot -Tpng`. Skipped if `graphviz` is not installed (no error, just a note in the report).
+3. **Rendered PNG** at `docs/auto-plan/reports/YYYY-MM-DD-<topic>-tree.png` — best-effort via `dot -Tpng`. Skipped if `graphviz` is not installed (no error, just a note in the report).
 
 ## Skill File Layout
 
 ```
-~/.claude/skills/deep-plan/
+~/.claude/skills/auto-plan/
   SKILL.md                          # Skill definition (frontmatter + instructions)
   GRILLER-PROTOCOL.md               # Distilled grill-with-docs protocol (~30 lines)
   GRILLER-RESPONSE-TEMPLATE.md      # Response format for Griller sub-agents
@@ -678,8 +678,8 @@ digraph planning {
 ## Output File Layout
 
 ```
-docs/deep-plan/
-  specs/                            # Design specs produced by deep-plan
+docs/auto-plan/
+  specs/                            # Design specs produced by auto-plan
     YYYY-MM-DD-<topic>-design.md
   plans/                            # Implementation plans
     YYYY-MM-DD-<topic>.md
@@ -698,10 +698,10 @@ docs/adr/                           # ADRs (shared with rest of project)
 | Skill | Relationship |
 |-------|-------------|
 | `mp-grill-with-docs` | **Wrapped** — each Griller sub-agent runs the distilled grill-with-docs protocol from `GRILLER-PROTOCOL.md`. Deep-plan adds the auto-answer layer and orchestration. |
-| `brainstorming` | **Replaced for planning** — deep-plan subsumes the brainstorming → spec flow for multi-step features (Phase 0.5 covers idea clarification, approach selection). Brainstorming is still useful for quick idea exploration. |
+| `brainstorming` | **Replaced for planning** — auto-plan subsumes the brainstorming → spec flow for multi-step features (Phase 0.5 covers idea clarification, approach selection). Brainstorming is still useful for quick idea exploration. |
 | `writing-plans` | **Delegated to** — the Writer sub-agent for implementation plans follows writing-plans protocol. |
-| `subagent-driven-development` | **Downstream consumer** — after deep-plan produces a plan, subagent-driven-development can execute it. |
-| `dispatching-parallel-agents` | **Used internally** — deep-plan spawns parallel Griller sub-agents for independent branches. |
+| `subagent-driven-development` | **Downstream consumer** — after auto-plan produces a plan, subagent-driven-development can execute it. |
+| `dispatching-parallel-agents` | **Used internally** — auto-plan spawns parallel Griller sub-agents for independent branches. |
 
 ## Resolved Questions (from Grilling Session 2026-06-03)
 
@@ -753,7 +753,7 @@ docs/adr/                           # ADRs (shared with rest of project)
 
 ## Verification
 
-The deep-plan skill is working correctly when:
+The auto-plan skill is working correctly when:
 
 1. Domain detection correctly identifies the planning domain(s) from the input
 2. Domain-tagged preferences are loaded and used to auto-answer questions
