@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from workbench.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.memory.base import MemoryLayer
 from workbench.models import (
@@ -29,6 +30,7 @@ class WorkbenchScheduler:
         self.messenger = messenger
         self.config = config
         self.sources = sources or []
+        self.alert_manager = AlertManager(messenger, config.alerting)
         self.scheduler = AsyncIOScheduler(
             timezone=ZoneInfo(config.logging.timezone),
         )
@@ -48,6 +50,12 @@ class WorkbenchScheduler:
                 "poll_sources", "interval",
                 {"minutes": self.config.scheduler.poll_interval_minutes},
                 self._poll_sources,
+            ))
+        if self.config.alerting.enabled:
+            jobs.append((
+                "alert_check", "interval",
+                {"minutes": self.config.scheduler.poll_interval_minutes},
+                self._alert_check,
             ))
         for job_id, trigger, kwargs, func in jobs:
             logger.info(f"Scheduling job '{job_id}' ({trigger})")
@@ -90,6 +98,31 @@ class WorkbenchScheduler:
                 logger.info("Polled %s: %d items (since=%s)", adapter_type, len(raw_items), since)
             except Exception as e:
                 logger.error("Source adapter %s poll failed: %s", adapter_type, e)
+
+    async def _alert_check(self):
+        """Build health dict and run alert checks."""
+        try:
+            health: dict = {}
+
+            # Dead letter count
+            dead_letters = await self.stores.ingestion_queue.get_dead_letters()
+            health["dead_letter_count"] = len(dead_letters) if dead_letters else 0
+
+            # Ingestion queue depth
+            health["ingestion_queue_depth"] = await self.stores.ingestion_queue.queue_depth()
+
+            # Connection health
+            connections = {}
+            for name, conn in getattr(self, '_connections', {}).items():
+                try:
+                    connections[name] = conn.is_healthy() if hasattr(conn, 'is_healthy') else True
+                except Exception:
+                    connections[name] = False
+            health["connections"] = connections
+
+            await self.alert_manager.check_and_alert(health)
+        except Exception:
+            logger.error("Alert check failed", exc_info=True)
 
     async def _manage_triage_queue(self):
         if not self.messenger:

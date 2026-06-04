@@ -85,6 +85,20 @@ class RetentionConfig(BaseModel):
     dead_letters_days: int = 30
 
 
+class AlertConditions(BaseModel):
+    dead_letter_threshold: int = 3
+    adapter_failure_threshold: int = 3
+    queue_depth_threshold: int = 50
+    stale_card_days: int = 3
+    llm_failure_threshold: int = 2
+
+
+class AlertConfig(BaseModel):
+    enabled: bool = True
+    cooldown_minutes: int = 60
+    conditions: AlertConditions = Field(default_factory=AlertConditions)
+
+
 class SchedulerConfig(BaseModel):
     poll_interval_minutes: int = 15
     morning_briefing_hour: int = 9
@@ -114,6 +128,7 @@ class AppConfig(BaseModel):
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
+    alerting: AlertConfig = Field(default_factory=AlertConfig)
     connections: dict[str, dict] = Field(default_factory=dict)
 
     @model_validator(mode="before")
