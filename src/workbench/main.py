@@ -133,6 +133,7 @@ def create_app() -> FastAPI:
     app.add_middleware(CorrelationIdMiddleware)
 
     from workbench.api import (
+        actions, auth_token,
         config as config_api, filter_rules, health, items, jobs,
         memory, process, queue, sources, triage,
     )
@@ -140,6 +141,7 @@ def create_app() -> FastAPI:
         health.router, items.router, triage.router, process.router,
         filter_rules.router, sources.router, config_api.router,
         memory.router, jobs.router, queue.router,
+        actions.router, auth_token.router,
     ]:
         app.include_router(r)
 
