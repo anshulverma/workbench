@@ -55,3 +55,17 @@ class RelationshipsResponse(BaseModel):
 class QueueDepthResponse(BaseModel):
     depth: int
     dead_letters: int
+
+
+# --- Identity resolution signal tiers ---
+
+STRONG_SIGNAL_KEYS = {"email", "phone", "platform_uid"}
+MEDIUM_SIGNAL_KEYS = {"name", "username"}
+WEAK_SIGNAL_KEYS = {"first_name", "timezone", "title"}
+
+SIGNAL_SCORES = {
+    "strong": 10,
+    "medium": 5,
+    "weak": 1,
+}
+MERGE_THRESHOLD = 10

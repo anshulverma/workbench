@@ -38,6 +38,22 @@ CREATE TABLE IF NOT EXISTS entities (
 )
 """
 
+CREATE_ENTITY_IDENTITIES = """
+CREATE TABLE IF NOT EXISTS entity_identities (
+    entity_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    canonical_id TEXT NOT NULL,
+    resolved_by TEXT NOT NULL DEFAULT 'heuristic',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entity_type, source_id)
+)
+"""
+
+CREATE_ENTITY_IDENTITIES_IDX = """
+CREATE INDEX IF NOT EXISTS idx_entity_identities_canonical
+ON entity_identities(entity_type, canonical_id)
+"""
+
 
 class PendingIngestionStore:
     def __init__(self, dsn: str, max_attempts: int = 3):
@@ -49,6 +65,8 @@ class PendingIngestionStore:
         self.pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=5)
         await self.pool.execute(CREATE_PENDING_INGESTIONS)
         await self.pool.execute(CREATE_ENTITIES)
+        await self.pool.execute(CREATE_ENTITY_IDENTITIES)
+        await self.pool.execute(CREATE_ENTITY_IDENTITIES_IDX)
 
     async def close(self) -> None:
         if self.pool:
@@ -168,3 +186,111 @@ class PendingIngestionStore:
         await self.pool.execute(
             "UPDATE entities SET graph_uuid = NULL, updated_at = NOW()"
         )
+
+    # --- Identity Resolution ---
+
+    async def resolve_identity(
+        self, entity_type: str, source_id: str, facts: dict
+    ) -> str:
+        """Resolve source_id to a canonical entity ID using signal-tiered matching.
+
+        Returns the canonical_id (which may be source_id itself if no match found).
+        """
+        from memory.models import (
+            STRONG_SIGNAL_KEYS, MEDIUM_SIGNAL_KEYS, WEAK_SIGNAL_KEYS,
+            SIGNAL_SCORES, MERGE_THRESHOLD,
+        )
+
+        # Check if we already have a mapping for this source_id
+        existing = await self.pool.fetchrow(
+            "SELECT canonical_id FROM entity_identities "
+            "WHERE entity_type = $1 AND source_id = $2",
+            entity_type, source_id,
+        )
+        if existing:
+            return existing["canonical_id"]
+
+        # Search for matches among existing entities of the same type
+        existing_entities = await self.pool.fetch(
+            "SELECT entity_id, facts FROM entities WHERE entity_type = $1",
+            entity_type,
+        )
+
+        best_canonical = None
+        best_score = 0
+
+        for row in existing_entities:
+            existing_facts = row["facts"]
+            if isinstance(existing_facts, str):
+                existing_facts = json.loads(existing_facts)
+
+            score = 0
+            for key in STRONG_SIGNAL_KEYS:
+                if (
+                    key in facts
+                    and key in existing_facts
+                    and facts[key]
+                    and existing_facts[key]
+                    and facts[key] == existing_facts[key]
+                ):
+                    score += SIGNAL_SCORES["strong"]
+
+            for key in MEDIUM_SIGNAL_KEYS:
+                if (
+                    key in facts
+                    and key in existing_facts
+                    and facts[key]
+                    and existing_facts[key]
+                    and facts[key] == existing_facts[key]
+                ):
+                    score += SIGNAL_SCORES["medium"]
+
+            for key in WEAK_SIGNAL_KEYS:
+                if (
+                    key in facts
+                    and key in existing_facts
+                    and facts[key]
+                    and existing_facts[key]
+                    and facts[key] == existing_facts[key]
+                ):
+                    score += SIGNAL_SCORES["weak"]
+
+            if score > best_score:
+                best_score = score
+                best_canonical = row["entity_id"]
+
+        if best_score >= MERGE_THRESHOLD and best_canonical:
+            canonical_id = best_canonical
+        else:
+            canonical_id = source_id
+
+        # Insert the identity mapping (ON CONFLICT DO NOTHING for idempotency)
+        await self.pool.execute(
+            """
+            INSERT INTO entity_identities (entity_type, source_id, canonical_id, resolved_by)
+            VALUES ($1, $2, $3, 'heuristic')
+            ON CONFLICT (entity_type, source_id) DO NOTHING
+            """,
+            entity_type, source_id, canonical_id,
+        )
+
+        return canonical_id
+
+    async def get_canonical(
+        self, entity_type: str, source_id: str
+    ) -> str | None:
+        """Look up the canonical ID for a source_id, or None if not mapped."""
+        row = await self.pool.fetchrow(
+            "SELECT canonical_id FROM entity_identities "
+            "WHERE entity_type = $1 AND source_id = $2",
+            entity_type, source_id,
+        )
+        return row["canonical_id"] if row else None
+
+    async def get_entity_resolved(
+        self, entity_type: str, entity_id: str
+    ) -> dict | None:
+        """Get entity, resolving through identity mapping first."""
+        canonical = await self.get_canonical(entity_type, entity_id)
+        target_id = canonical or entity_id
+        return await self.get_entity(entity_type, target_id)

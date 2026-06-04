@@ -120,10 +120,13 @@ class GraphitiMemoryLayer:
         from graphiti_core.nodes import EntityNode
         from graphiti_core.edges import EntityEdge
 
-        # Graph writes first — if this fails, PG is never written
+        # Step 1: Identity resolution in PG store
+        canonical_id = await store.resolve_identity(entity_type, entity_id, facts)
+
+        # Step 2: Graph writes using canonical_id
         source_node = EntityNode(
             uuid=str(uuid4()),
-            name=f"{entity_type}:{entity_id}",
+            name=f"{entity_type}:{canonical_id}",
             labels=["Entity"],
             attributes={"entity_type": entity_type},
             group_id="workbench",
@@ -141,14 +144,13 @@ class GraphitiMemoryLayer:
             edge = EntityEdge(
                 uuid=str(uuid4()),
                 name=f"has_fact_{key}",
-                fact=f"{entity_type}:{entity_id} has {key} = {value}",
+                fact=f"{entity_type}:{canonical_id} has {key} = {value}",
                 source_node_uuid=source_node.uuid,
                 target_node_uuid=fact_node.uuid,
                 created_at=datetime.now(timezone.utc),
                 group_id="workbench",
             )
             result = await self.graphiti.add_triplet(source_node, edge, fact_node)
-            # Capture the resolved UUID from the result
             if result and hasattr(result, "nodes") and result.nodes:
                 for node in result.nodes:
                     if hasattr(node, "name") and node.name == source_node.name:
@@ -157,17 +159,17 @@ class GraphitiMemoryLayer:
             if graph_uuid is None:
                 graph_uuid = source_node.uuid
 
-        # PG write only after graph succeeds
-        await store.upsert_entity(entity_type, entity_id, facts)
+        # Step 3: PG write only after graph succeeds -- upsert under canonical_id
+        await store.upsert_entity(entity_type, canonical_id, facts)
         if graph_uuid:
-            await store.update_graph_uuid(entity_type, entity_id, graph_uuid)
+            await store.update_graph_uuid(entity_type, canonical_id, graph_uuid)
 
         return graph_uuid
 
     async def query_entity(
         self, entity_type: str, entity_id: str, store
     ) -> dict | None:
-        return await store.get_entity(entity_type, entity_id)
+        return await store.get_entity_resolved(entity_type, entity_id)
 
     async def record_decision(
         self,

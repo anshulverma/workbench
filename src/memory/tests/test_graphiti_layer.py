@@ -186,8 +186,10 @@ async def test_record_triage_prefers_edge_has_priority(layer, mock_graphiti):
 def mock_store():
     s = AsyncMock()
     s.get_entity = AsyncMock(return_value=None)
+    s.get_entity_resolved = AsyncMock(return_value=None)
     s.upsert_entity = AsyncMock()
     s.update_graph_uuid = AsyncMock()
+    s.resolve_identity = AsyncMock(side_effect=lambda et, eid, facts: eid)
     s.enqueue = AsyncMock(return_value="entry-123")
     return s
 
@@ -234,7 +236,7 @@ async def test_record_entity_does_not_write_pg_on_graph_failure(layer, mock_grap
 
 @pytest.mark.asyncio
 async def test_query_entity_returns_from_store(layer, mock_store):
-    mock_store.get_entity.return_value = {
+    mock_store.get_entity_resolved.return_value = {
         "entity_type": "person",
         "entity_id": "p1",
         "facts": {"name": "Alice"},
@@ -249,7 +251,7 @@ async def test_query_entity_returns_from_store(layer, mock_store):
 
 @pytest.mark.asyncio
 async def test_query_entity_returns_none_when_not_found(layer, mock_store):
-    mock_store.get_entity.return_value = None
+    mock_store.get_entity_resolved.return_value = None
 
     result = await layer.query_entity("person", "p99", mock_store)
     assert result is None
