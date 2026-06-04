@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import re
@@ -33,8 +34,57 @@ class AgeRotatingFileHandler(RotatingFileHandler):
                     os.remove(path)
 
 
+_GLOG_SEVERITY = {
+    "debug": "D",
+    "info": "I",
+    "warning": "W",
+    "error": "E",
+    "critical": "F",
+}
+
+
+class GlogRenderer:
+    """Render log lines in glog format.
+
+    Output: ``I0604 13:15:30.123456 12345 module.py:42] message key=value ...``
+    """
+
+    def __call__(self, logger: Any, method: str, event_dict: dict[str, Any]) -> str:
+        level = event_dict.pop("level", method)
+        severity = _GLOG_SEVERITY.get(level, "I")
+
+        # Timestamp -- prefer the structlog-injected ISO timestamp, fall back to now.
+        ts_raw = event_dict.pop("timestamp", None)
+        if ts_raw and isinstance(ts_raw, str):
+            try:
+                dt = datetime.datetime.fromisoformat(ts_raw)
+            except (ValueError, TypeError):
+                dt = datetime.datetime.now()
+        else:
+            dt = datetime.datetime.now()
+
+        date_part = dt.strftime("%m%d")
+        time_part = dt.strftime("%H:%M:%S.%f")
+
+        pid = os.getpid()
+
+        # Location: prefer logger_name, fall back to filename:lineno if present.
+        logger_name = event_dict.pop("logger", None)
+        location = logger_name or "unknown"
+
+        event = event_dict.pop("event", "")
+
+        # Remaining keys as key=value pairs.
+        extras = " ".join(f"{k}={v}" for k, v in event_dict.items()) if event_dict else ""
+
+        msg = f"{severity}{date_part} {time_part} {pid} {location}] {event}"
+        if extras:
+            msg = f"{msg} {extras}"
+        return msg
+
+
 def setup_logging(
-    log_format: str = "console",
+    log_format: str = "glog",
     log_dir: str | None = None,
     level: int = logging.INFO,
     max_bytes: int = 10 * 1024 * 1024,
@@ -42,10 +92,10 @@ def setup_logging(
     timezone: str = "America/Los_Angeles",
     extra_processors: list | None = None,
 ) -> None:
-    """Configure structlog with JSON or console output.
+    """Configure structlog with glog, JSON, or console output.
 
     Args:
-        log_format: "json" for production, "console" for dev.
+        log_format: "glog" (default), "json" for production, "console" for dev.
         log_dir: Directory for log files. None = stderr only.
         level: Logging level.
         max_bytes: Max log file size before rotation.
@@ -67,8 +117,10 @@ def setup_logging(
 
     if log_format == "json":
         renderer = structlog.processors.JSONRenderer()
-    else:
+    elif log_format == "console":
         renderer = structlog.dev.ConsoleRenderer()
+    else:
+        renderer = GlogRenderer()
 
     structlog.configure(
         processors=[

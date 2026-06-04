@@ -39,7 +39,7 @@ class PipelineConfig(BaseModel):
 
 
 class LoggingConfig(BaseModel):
-    format: str = "console"  # "json" | "console"
+    format: str = "glog"  # "glog" | "json" | "console"
     level: str = "INFO"
     log_dir: str | None = None
     max_bytes: int = 10 * 1024 * 1024
