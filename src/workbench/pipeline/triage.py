@@ -155,16 +155,19 @@ def _template_card(
 def format_card_for_chat(
     card: TriageCard, position: int = 1, total: int = 1
 ) -> str:
-    """Format a triage card as text for Google Chat."""
-    summary = card.card_content.get("summary", "Unknown item")
+    body = card.card_content.get(
+        "card_body", card.card_content.get("summary", "Unknown item")
+    )
     source = card.card_content.get("source_type", "unknown")
+
     lines = []
     if total > 1:
         lines.append(f"*{total} items to triage. Here's #{position} of {total}:*")
-    lines.append(f"*[{source}]* {summary}")
+
+    lines.append(f"*[{source}]* {body}")
 
     enrichment = card.card_content.get("enrichment", {})
-    ctx = enrichment.get("context", {}) if enrichment else {}
+    ctx = enrichment.get("context", {}) if isinstance(enrichment, dict) else {}
     if ctx:
         parts = []
         if "author" in ctx:
@@ -176,14 +179,21 @@ def format_card_for_chat(
         if "labels" in ctx:
             parts.append(ctx["labels"])
         if parts:
-            lines.append(f"_{' · '.join(parts)}_")
-        handled = {"author", "files_changed", "review_status", "labels"}
+            lines.append(f"_{' . '.join(parts)}_")
+        handled = {"author", "files_changed", "review_status", "labels", "entity_refs"}
         extra = {k: v for k, v in ctx.items() if k not in handled}
         if extra:
             lines.append(f"_{', '.join(f'{k}: {v}' for k, v in extra.items())}_")
 
     lines.append("")
-    lines.append("*What do you want to do?*")
+
     for i, opt in enumerate(card.options, 1):
-        lines.append(f"{i}. {opt.label}")
+        suggested_hint = ""
+        if opt.suggested and opt.suggestion_reason:
+            suggested_hint = f" _(suggested: {opt.suggestion_reason})_"
+        lines.append(f"{i}. {opt.label}{suggested_hint}")
+
+    lines.append("")
+    lines.append("_Or just reply with what you'd like to do._")
+
     return "\n".join(lines)
