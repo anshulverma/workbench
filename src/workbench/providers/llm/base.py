@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from workbench.models import ExtractedItem, FilterRule, TriageCard, Fact
+from workbench.models import ExtractedItem, FilterRule, TriageCard, Fact, InterpretedResponse
 
 
 class LLMProvider(ABC):
@@ -8,7 +8,9 @@ class LLMProvider(ABC):
     @abstractmethod
     async def score_relevance(self, item: ExtractedItem, preference_facts: list[Fact], rules: list[FilterRule]) -> tuple[int, int]: ...
     @abstractmethod
-    async def generate_triage_card(self, item: ExtractedItem, enrichment_context: dict, source_type: str) -> TriageCard: ...
+    async def generate_triage_card(self, item: ExtractedItem, enrichment_context: dict, source_type: str, *, memory_context: dict | None = None) -> TriageCard: ...
+    @abstractmethod
+    async def interpret_triage_response(self, card: TriageCard, raw_text: str) -> InterpretedResponse: ...
 
     async def close(self) -> None:
         pass

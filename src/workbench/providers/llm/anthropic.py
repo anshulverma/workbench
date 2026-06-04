@@ -1,12 +1,15 @@
 import json
 import asyncio
+import logging
 from typing import Any
 
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
 from workbench.providers.llm.base import LLMProvider
-from workbench.models import ExtractedItem, ItemCategory, RawItem, FilterRule, TriageCard, TriageOption, Fact
+from workbench.models import ExtractedItem, ItemCategory, RawItem, FilterRule, TriageCard, TriageOption, Fact, InterpretedResponse, SystemAction, UserTodo
+
+logger = logging.getLogger(__name__)
 
 EXTRACT_PROMPT = """Extract actionable items from the following content. For each item, provide:
 - summary: what needs to be done or noted
@@ -91,13 +94,61 @@ class AnthropicLLM(LLMProvider):
         except (json.JSONDecodeError, KeyError):
             return 50, 30
 
-    async def generate_triage_card(self, item: ExtractedItem, enrichment_context: dict, source_type: str) -> TriageCard:
+    async def generate_triage_card(self, item: ExtractedItem, enrichment_context: dict, source_type: str, *, memory_context: dict | None = None) -> TriageCard:
         summary = item.summary
         options = self._template_options(source_type)
+
+        # If memory_context is available, use LLM to generate a richer card body
+        if memory_context:
+            card_body = await self._generate_card_body(
+                summary, source_type, enrichment_context, memory_context
+            )
+        else:
+            card_body = summary
+
         return TriageCard(
-            card_content={"summary": summary, "source_type": source_type, "enrichment": enrichment_context},
+            card_content={
+                "card_body": card_body,
+                "summary": summary,
+                "source_type": source_type,
+                "enrichment": enrichment_context,
+            },
             options=options,
         )
+
+    async def _generate_card_body(
+        self, summary: str, source_type: str,
+        enrichment_context: dict, memory_context: dict,
+    ) -> str:
+        entity_lines = []
+        for key, facts in memory_context.get("entity_facts", {}).items():
+            fact_str = ", ".join(f"{k}: {v}" for k, v in facts.items())
+            entity_lines.append(f"  {key}: {fact_str}")
+
+        pref_lines = [
+            f"  - {p}" for p in memory_context.get("preference_facts", [])
+        ]
+
+        prompt = f"""Generate a concise triage card body (1-3 sentences) for this item.
+Include relevant context about people, teams, and user preferences.
+
+Item: {summary}
+Source type: {source_type}
+Enrichment context: {enrichment_context}
+
+Known entities:
+{chr(10).join(entity_lines) if entity_lines else '  (none)'}
+
+User preference history:
+{chr(10).join(pref_lines) if pref_lines else '  (none)'}
+
+Write a brief, informative description that helps the user decide what to do.
+Return ONLY the card body text, no JSON wrapping."""
+
+        try:
+            return await self._call_with_retry(prompt)
+        except Exception:
+            return summary
 
     def _template_options(self, source_type: str) -> list[TriageOption]:
         base = [
@@ -112,6 +163,137 @@ class AnthropicLLM(LLMProvider):
         else:
             base.append(TriageOption(label="Never surface items like this", action="mute_pattern"))
         return base
+
+    async def interpret_triage_response(self, card: TriageCard, raw_text: str) -> InterpretedResponse:
+        """Interpret free-text triage response using Anthropic tool use."""
+        summary = card.card_content.get("summary", card.card_content.get("card_body", ""))
+        source_type = card.card_content.get("source_type", "unknown")
+        options_text = "\n".join(
+            f"  {i}. {o.label} (action={o.action})"
+            for i, o in enumerate(card.options, 1)
+        )
+
+        # FIX 5: Full Anthropic tool use prompt with constrained enums
+        tools = [
+            {
+                "name": "interpret_response",
+                "description": "Parse a user's free-text triage response into structured actions.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "system_actions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "add_todo", "skip", "mute_pattern",
+                                            "defer",
+                                        ],
+                                    },
+                                    "details": {
+                                        "type": "object",
+                                        "properties": {
+                                            "priority": {
+                                                "type": "string",
+                                                "enum": ["P0", "P1", "P2", "P3"],
+                                            },
+                                            "hours": {"type": "integer"},
+                                        },
+                                    },
+                                },
+                                "required": ["action"],
+                            },
+                        },
+                        "user_todos": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "summary": {"type": "string"},
+                                    "action_category": {
+                                        "type": "string",
+                                        "enum": [
+                                            "delegation", "communication",
+                                            "scheduling", "review",
+                                            "creation", "update",
+                                        ],
+                                    },
+                                },
+                                "required": ["summary", "action_category"],
+                            },
+                        },
+                        "explanation": {"type": "string"},
+                    },
+                    "required": ["system_actions", "explanation"],
+                },
+            }
+        ]
+
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"The user is triaging this item:\n"
+                    f"  Summary: {summary}\n"
+                    f"  Source: {source_type}\n"
+                    f"  Options presented:\n{options_text}\n\n"
+                    f"Instead of choosing a number, the user replied:\n"
+                    f'  "{raw_text}"\n\n'
+                    f"Parse this into system actions and any user todos. "
+                    f"Use the interpret_response tool."
+                ),
+            }
+        ]
+
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=1000,
+                tools=tools,
+                tool_choice={"type": "tool", "name": "interpret_response"},
+                messages=messages,
+            )
+
+            # Extract tool use result
+            for block in response.content:
+                if block.type == "tool_use" and block.name == "interpret_response":
+                    result = block.input
+                    return InterpretedResponse(
+                        system_actions=[
+                            SystemAction(
+                                action=a["action"],
+                                details=a.get("details", {}),
+                            )
+                            for a in result.get("system_actions", [])
+                        ],
+                        user_todos=[
+                            UserTodo(
+                                summary=t["summary"],
+                                action_category=t["action_category"],
+                            )
+                            for t in result.get("user_todos", [])
+                        ],
+                        explanation=result.get("explanation", ""),
+                    )
+
+            # Fallback if no tool use block found
+            return InterpretedResponse(
+                system_actions=[
+                    SystemAction(action="add_todo", details={"priority": "P2"})
+                ],
+                explanation=f"Could not parse response, defaulting to P2 todo: {raw_text}",
+            )
+        except Exception as e:
+            logger.warning("interpret_triage_response failed: %s", e)
+            return InterpretedResponse(
+                system_actions=[
+                    SystemAction(action="add_todo", details={"priority": "P2"})
+                ],
+                explanation=f"LLM interpretation failed, defaulting to P2 todo: {raw_text}",
+            )
 
     async def _call_with_retry(self, prompt: str, max_retries: int = 3) -> str:
         for attempt in range(max_retries):
