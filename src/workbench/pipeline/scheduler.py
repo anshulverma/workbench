@@ -58,6 +58,12 @@ class WorkbenchScheduler:
         for source in self.sources:
             adapter_type = source.adapter_type()
             try:
+                connection = getattr(source, '_connection', None)
+                if connection is not None and hasattr(connection, 'is_healthy'):
+                    if not connection.is_healthy():
+                        logger.warning("Skipping %s: connection unhealthy", adapter_type)
+                        continue
+
                 since = None
                 stored = await self.stores.config.get(f"source_last_polled:{adapter_type}")
                 if stored:

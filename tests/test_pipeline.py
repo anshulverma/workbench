@@ -456,3 +456,35 @@ async def test_e2e_auto_drop(stores, mock_llm):
 
     assert len(await stores.triage.get_pending()) == 0
     assert len(await stores.items.get_items(ItemFilters())) == 0
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_unhealthy_connection(stores, mock_llm):
+    from workbench.pipeline.scheduler import WorkbenchScheduler
+    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.config import AppConfig, StorageConfig
+    from unittest.mock import AsyncMock, MagicMock
+
+    config = AppConfig(
+        storage=StorageConfig(postgres_dsn="postgres://x:x@localhost/x"),
+        llm={"class": "x"},
+    )
+    memory = NoopMemoryLayer()
+    pipeline = PipelineEngine(stores, memory, mock_llm, StubEnricher())
+
+    unhealthy_conn = MagicMock()
+    unhealthy_conn.is_healthy.return_value = False
+
+    adapter = AsyncMock()
+    adapter.adapter_type = MagicMock(return_value="email")
+    adapter._connection = unhealthy_conn
+    adapter.poll.return_value = []
+
+    scheduler = WorkbenchScheduler(
+        stores, memory, pipeline, None, config,
+        sources=[adapter],
+    )
+    await scheduler._poll_sources()
+
+    adapter.poll.assert_not_called()
