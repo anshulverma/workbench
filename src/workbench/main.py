@@ -107,6 +107,7 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = WorkbenchScheduler(
         app.state.stores, app.state.memory, app.state.pipeline,
         app.state.messenger, config, sources=app.state.sources,
+        llm=app.state.llm,
     )
     app.state.scheduler.start()
     logger.info("Workbench %s ready on port %d", __version__, config.server.port)

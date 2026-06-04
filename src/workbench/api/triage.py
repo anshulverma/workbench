@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from workbench.models import (
-    FilterRule, InteractionEntry, Item, ItemCategory, ItemOrigin,
-    ItemStatus, ItemUpdate, Priority, TriageResponse,
+    FilterRule, InteractionEntry, InterpretedResponse,
+    Item, ItemCategory, ItemOrigin, ItemStatus, ItemUpdate,
+    Priority, TriageResponse, TriageResponseResult,
 )
 
 router = APIRouter(prefix="/api", tags=["triage"])
@@ -22,10 +23,28 @@ async def respond_to_triage(response: TriageResponse, request: Request):
     if not card:
         raise HTTPException(404, "Triage card not found")
 
-    # Free-text response (choice is None) -- handled in Task 19
+    # Free-text response (choice is None) -- interpret via LLM
     if response.choice is None and response.raw_text:
-        # Will be implemented in Task 19
-        raise HTTPException(501, "Free-text responses not yet implemented")
+        llm = getattr(request.app.state, "llm", None)
+        if not llm:
+            raise HTTPException(503, "LLM provider not configured for free-text interpretation")
+
+        interpreted = await llm.interpret_triage_response(card, response.raw_text)
+
+        # Use the scheduler's execute logic
+        scheduler = getattr(request.app.state, "scheduler", None)
+        if scheduler:
+            await scheduler._execute_interpreted_response(interpreted, card)
+        else:
+            raise HTTPException(503, "Scheduler not available")
+
+        return TriageResponseResult(
+            status="interpreted",
+            action="free_text",
+            system_actions_executed=[a.action for a in interpreted.system_actions],
+            user_todos_created=[t.summary for t in interpreted.user_todos],
+            explanation=interpreted.explanation,
+        )
 
     if response.choice is None:
         raise HTTPException(400, "Must provide either choice or raw_text")

@@ -10,11 +10,13 @@ from workbench.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.memory.base import MemoryLayer
 from workbench.models import (
-    FilterRule, InteractionEntry, Item, ItemCategory, ItemOrigin,
-    ItemStatus, ItemUpdate, JobTrigger, Priority, TriageResponse,
+    FilterRule, InteractionEntry, InterpretedResponse,
+    Item, ItemCategory, ItemOrigin, ItemStatus, ItemUpdate,
+    JobTrigger, Priority, SystemAction, TriageResponse, UserTodo,
 )
 from workbench.pipeline.engine import PipelineEngine
 from workbench.pipeline.triage import format_card_for_chat
+from workbench.providers.llm.base import LLMProvider
 from workbench.providers.messenger.base import Messenger
 from workbench.storage.base import Stores
 
@@ -23,13 +25,15 @@ logger = logging.getLogger(__name__)
 
 class WorkbenchScheduler:
     def __init__(self, stores: Stores, memory: MemoryLayer, pipeline: PipelineEngine,
-                 messenger: Messenger | None, config: AppConfig, sources: list | None = None):
+                 messenger: Messenger | None, config: AppConfig, sources: list | None = None,
+                 llm: LLMProvider | None = None):
         self.stores = stores
         self.memory = memory
         self.pipeline = pipeline
         self.messenger = messenger
         self.config = config
         self.sources = sources or []
+        self.llm = llm
         self.alert_manager = AlertManager(messenger, config.alerting)
         self.scheduler = AsyncIOScheduler(
             timezone=ZoneInfo(config.logging.timezone),
@@ -142,15 +146,46 @@ class WorkbenchScheduler:
         if not pending:
             return
 
+        # Timeout check for awaiting_followup/awaiting_confirmation cards
+        for c in pending:
+            if c.status in ("awaiting_followup", "awaiting_confirmation"):
+                if c.sent_at and (datetime.now(timezone.utc) - c.sent_at).total_seconds() > 3600:
+                    c.status = "expired"
+                    c.response = "timed_out"
+                    await self.stores.triage.update_card(c)
+                    continue
+
         sent_cards = [c for c in pending if c.status == "sent"]
+        awaiting_followup = [c for c in pending if c.status == "awaiting_followup"]
+        awaiting_confirmation = [c for c in pending if c.status == "awaiting_confirmation"]
+
+        # Handle awaiting_confirmation cards first
+        for card in awaiting_confirmation:
+            responses = await self.messenger.poll_responses(card.bot_message_id)
+            for resp in responses:
+                text = resp.get("text", "").strip().lower()
+                await self._handle_confirmation(card, text)
+                return
+
+        # Handle awaiting_followup cards
+        for card in awaiting_followup:
+            responses = await self.messenger.poll_responses(card.bot_message_id)
+            for resp in responses:
+                text = resp.get("text", "").strip()
+                if text and self.llm:
+                    interpreted = await self.llm.interpret_triage_response(card, text)
+                    await self._execute_interpreted_response(interpreted, card)
+                    return
+
         if sent_cards:
             card = sent_cards[0]
             responses = await self.messenger.poll_responses(card.bot_message_id)
             if responses:
                 logger.info("Got %d responses for card %s (msg=%s)", len(responses), card.id, card.bot_message_id)
             for resp in responses:
-                text = resp.get("text", "").strip().lower()
-                if text in ("skip all", "skip remaining"):
+                text = resp.get("text", "").strip()
+                lower_text = text.lower()
+                if lower_text in ("skip all", "skip remaining"):
                     for c in pending:
                         if c.responded_at is None:
                             await self.stores.triage.record_response(
@@ -160,10 +195,21 @@ class WorkbenchScheduler:
                 try:
                     choice = int(text)
                     if 1 <= choice <= len(card.options):
+                        option = card.options[choice - 1]
+                        if option.action == "other":
+                            # Transition to awaiting_followup
+                            card.status = "awaiting_followup"
+                            await self.stores.triage.update_card(card)
+                            await self.messenger.send_card("What would you like to do?")
+                            return
                         await self._handle_triage_response(card, choice)
                         return
                 except ValueError:
-                    pass
+                    # Free-text response -- interpret via LLM
+                    if self.llm:
+                        interpreted = await self.llm.interpret_triage_response(card, text)
+                        await self._execute_interpreted_response(interpreted, card)
+                        return
             return
 
         card = await self.stores.triage.get_next_unsent()
@@ -225,18 +271,186 @@ class WorkbenchScheduler:
             card.status = "awaiting_followup"
             await self.stores.triage.update_card(card)
 
+        # FIX 6: Actual InteractionEntry, not a placeholder comment
         entry = InteractionEntry(
             source_type=card.card_content.get("source_type", "unknown"),
+            item_id=card.item_id,
             item_summary=card.card_content.get("summary", ""),
             triage_card_full=card.card_content,
             options_presented=[o.model_dump() for o in card.options],
             option_chosen=option.label,
+            choice_index=choice,
         )
         await self.stores.interactions.append(entry)
         await self.memory.record_triage(card, response)
 
         if self.messenger:
-            await self.messenger.send_card(f"Got it — {option.label}")
+            await self.messenger.send_card(f"Got it -- {option.label}")
+
+    async def _execute_interpreted_response(
+        self, interpreted: InterpretedResponse, card
+    ) -> None:
+        """Execute an LLM-interpreted free-text response.
+
+        FIX 34: Destructive actions (skip, mute_pattern) require confirmation
+        and return early. Defer also returns early.
+        FIX 20: Store pending InterpretedResponse before entering awaiting_confirmation.
+        FIX 6: Append actual InteractionEntry with interpreted data.
+        FIX 32: Priority string -> enum conversion.
+        """
+        for action in interpreted.system_actions:
+            # Destructive actions require confirmation
+            if action.action in ("skip", "mute_pattern"):
+                # FIX 20: Store pending InterpretedResponse in card_content
+                card.card_content["pending_interpreted"] = interpreted.model_dump()
+                card.status = "awaiting_confirmation"
+                await self.stores.triage.update_card(card)
+                if self.messenger:
+                    await self.messenger.send_card(
+                        f"I understood: {interpreted.explanation}\n"
+                        f"Reply 'yes' to confirm or 'no' to cancel."
+                    )
+                # FIX 34: Return early -- do not process further actions
+                return
+
+            elif action.action == "add_todo":
+                # FIX 32: Priority string -> enum
+                priority = Priority(action.details.get("priority", "P2"))
+                if card.item_id:
+                    await self.stores.items.update_item(
+                        card.item_id,
+                        ItemUpdate(priority=priority, status=ItemStatus.ACTIVE),
+                    )
+                else:
+                    item = Item(
+                        source_type=card.card_content.get("source_type", "unknown"),
+                        source_id=card.id,
+                        summary=card.card_content.get("summary", ""),
+                        category=ItemCategory.ACTION_ITEM,
+                        origin=ItemOrigin.TRIAGED,
+                        priority=priority,
+                        status=ItemStatus.ACTIVE,
+                    )
+                    await self.stores.items.save_item(item)
+
+            elif action.action == "defer":
+                hours = action.details.get("hours", 4)
+                card.deferred_until = datetime.now(timezone.utc) + timedelta(hours=hours)
+                card.status = "queued"
+                await self.stores.triage.update_card(card)
+                # FIX 34: Defer returns early
+                return
+
+        # Create user todos as action items
+        for todo in interpreted.user_todos:
+            new_item = Item(
+                source_type=card.card_content.get("source_type", "unknown"),
+                source_id=card.id,
+                summary=todo.summary,
+                category=ItemCategory.ACTION_ITEM,
+                origin=ItemOrigin.TRIAGED,
+                priority=Priority.P2,
+                status=ItemStatus.ACTIVE,
+                parent_item_id=card.item_id,
+                action_source="triage_response",
+                action_category=todo.action_category,
+            )
+            await self.stores.items.save_item(new_item)
+
+        # Mark card as responded
+        card.status = "responded"
+        card.responded_at = datetime.now(timezone.utc)
+        await self.stores.triage.update_card(card)
+
+        # FIX 6: Append actual InteractionEntry with interpreted response data
+        entry = InteractionEntry(
+            source_type=card.card_content.get("source_type", "unknown"),
+            item_id=card.item_id,
+            item_summary=card.card_content.get("summary", ""),
+            triage_card_full=card.card_content,
+            options_presented=[o.model_dump() for o in card.options],
+            option_chosen="free_text",
+            type="free_text",
+            interpreted=interpreted.model_dump(),
+        )
+        await self.stores.interactions.append(entry)
+
+        if self.messenger:
+            await self.messenger.send_card(
+                f"Done! {interpreted.explanation}"
+            )
+
+    async def _handle_confirmation(self, card, text: str) -> None:
+        """FIX 7: Handle 'yes'/'no' response to awaiting_confirmation cards.
+
+        FIX 20: Retrieve stored InterpretedResponse from card.card_content["pending_interpreted"].
+        """
+        if text.lower() in ("yes", "y", "confirm"):
+            pending_data = card.card_content.get("pending_interpreted")
+            if not pending_data:
+                logger.warning("No pending_interpreted found for card %s", card.id)
+                card.status = "responded"
+                card.responded_at = datetime.now(timezone.utc)
+                await self.stores.triage.update_card(card)
+                return
+
+            # Reconstruct InterpretedResponse
+            interpreted = InterpretedResponse(**pending_data)
+
+            # Execute the destructive actions directly (no re-confirmation)
+            for action in interpreted.system_actions:
+                if action.action == "skip":
+                    if card.item_id:
+                        await self.stores.items.update_item(
+                            card.item_id, ItemUpdate(status=ItemStatus.ARCHIVED)
+                        )
+                elif action.action == "mute_pattern":
+                    rule = FilterRule(
+                        source_type=card.card_content.get("source_type"),
+                        pattern=card.card_content.get("summary", ""),
+                        action="drop",
+                        created_from_interaction_id=card.id,
+                    )
+                    await self.stores.filter_rules.add_rule(rule)
+
+            # Mark card as responded
+            card.status = "responded"
+            card.responded_at = datetime.now(timezone.utc)
+            # Clean up pending data
+            card.card_content.pop("pending_interpreted", None)
+            await self.stores.triage.update_card(card)
+
+            # FIX 6: Log interaction
+            entry = InteractionEntry(
+                source_type=card.card_content.get("source_type", "unknown"),
+                item_id=card.item_id,
+                item_summary=card.card_content.get("summary", ""),
+                triage_card_full=card.card_content,
+                options_presented=[o.model_dump() for o in card.options],
+                option_chosen="confirmed",
+                type="free_text",
+                interpreted=interpreted.model_dump(),
+                confirmed=True,
+            )
+            await self.stores.interactions.append(entry)
+
+            if self.messenger:
+                await self.messenger.send_card("Confirmed. Done!")
+
+        elif text.lower() in ("no", "n", "cancel"):
+            card.status = "sent"  # Return to sent state for re-triage
+            card.card_content.pop("pending_interpreted", None)
+            await self.stores.triage.update_card(card)
+
+            if self.messenger:
+                await self.messenger.send_card("Cancelled. The card is back in your queue.")
+
+        else:
+            # Unrecognized -- re-prompt
+            if self.messenger:
+                await self.messenger.send_card(
+                    "Please reply 'yes' to confirm or 'no' to cancel."
+                )
 
     async def _expire_cards(self):
         expired = await self.stores.triage.expire_old_cards(self.config.triage.expiry_days)
