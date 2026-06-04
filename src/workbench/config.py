@@ -47,6 +47,11 @@ class LoggingConfig(BaseModel):
     timezone: str = "America/Los_Angeles"
 
 
+class MetricsConfig(BaseModel):
+    enabled: bool = True
+    endpoint: str = "/metrics"
+
+
 class SchedulerConfig(BaseModel):
     poll_interval_minutes: int = 15
     morning_briefing_hour: int = 9
@@ -71,6 +76,7 @@ class AppConfig(BaseModel):
     sources: list[dict] = Field(default_factory=list)
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     memory: dict | None = None
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     connections: dict[str, dict] = Field(default_factory=dict)
 
     @model_validator(mode="before")

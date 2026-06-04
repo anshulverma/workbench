@@ -10,8 +10,10 @@ from fastapi import FastAPI
 from workbench import __version__
 from workbench.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
+from workbench.instrumentation import InstrumentedLLMProvider
 from workbench.logging import setup_logging
 from workbench.memory.noop import NoopMemoryLayer
+from workbench.metrics import create_metrics
 from workbench.middleware import CorrelationIdMiddleware
 from workbench.registry import close_provider, create_provider, create_providers_from_list, create_composite_enricher
 from workbench.storage.factory import create_stores
@@ -43,6 +45,8 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Config loaded (version=%s, port=%d)", config.version, config.server.port)
 
+    app.state.metrics = create_metrics()
+
     app.state.stores = await create_stores(config)
     logger.info("Storage connected")
 
@@ -55,7 +59,7 @@ async def lifespan(app: FastAPI):
         logger.info("Connection '%s' initialized", name)
     app.state.connections = connections
 
-    app.state.llm = create_provider(config.llm)
+    app.state.llm = InstrumentedLLMProvider(create_provider(config.llm), app.state.metrics)
 
     if config.messenger:
         app.state.messenger = create_provider(config.messenger)
@@ -78,7 +82,7 @@ async def lifespan(app: FastAPI):
     else:
         app.state.queue_scorer = None
 
-    app.state.sources = create_providers_from_list(config.sources, connections=connections)
+    app.state.sources = create_providers_from_list(config.sources, connections=connections, metrics=app.state.metrics)
 
     from workbench.pipeline.engine import PipelineEngine
     app.state.pipeline = PipelineEngine(
@@ -144,6 +148,14 @@ def create_app() -> FastAPI:
         actions.router, auth_token.router,
     ]:
         app.include_router(r)
+
+    # Prometheus metrics endpoint (unauthenticated, excluded from schema)
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from starlette.responses import Response
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics_endpoint():
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     ui_dir = os.path.join(os.path.dirname(__file__), "../../ui/dist")
     if os.path.exists(ui_dir):

@@ -62,8 +62,17 @@ def create_providers_from_list(
     sections: list[dict[str, Any]],
     connections: dict[str, Any] | None = None,
     state_store: Any | None = None,
+    metrics: Any | None = None,
 ) -> list[Any]:
-    return [create_provider(s, connections=connections, state_store=state_store) for s in sections]
+    providers = []
+    for s in sections:
+        name = s.get("class", "").rsplit(".", 1)[-1] if "class" in s else "unknown"
+        provider = create_provider(s, connections=connections, state_store=state_store)
+        if metrics:
+            from workbench.instrumentation import InstrumentedSourceAdapter
+            provider = InstrumentedSourceAdapter(provider, name, metrics)
+        providers.append(provider)
+    return providers
 
 
 def create_composite_enricher(

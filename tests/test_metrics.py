@@ -1,0 +1,30 @@
+# tests/test_metrics.py
+
+import pytest
+from prometheus_client import CollectorRegistry
+
+from workbench.metrics import create_metrics
+
+
+def test_all_metrics_registered():
+    """All expected metrics are created."""
+    registry = CollectorRegistry()
+    m = create_metrics(registry)
+    assert m.items_ingested is not None
+    assert m.adapter_polls is not None
+    assert m.adapter_poll_seconds is not None
+    assert m.llm_calls is not None
+    assert m.llm_errors is not None
+    assert m.llm_call_seconds is not None
+    assert m.items_triaged is not None
+    assert m.items_dropped is not None
+    assert m.pipeline_stage_seconds is not None
+    assert m.enrichment_seconds is not None
+    assert m.enrichment_errors is not None
+    assert m.identity_merges is not None
+    assert m.cards_generated is not None
+    assert m.alerts_sent is not None
+    assert m.ingestion_queue_depth is not None
+    assert m.triage_queue_depth is not None
+    assert m.dead_letter_count is not None
+    assert m.connection_healthy is not None
