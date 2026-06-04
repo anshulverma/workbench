@@ -21,6 +21,7 @@ dependencies = [
     "google-api-python-client>=2.100",
     "google-auth>=2.0",
     "google-auth-httplib2>=0.2",
+    "structlog>=24.0",
 ]
 
 [project.optional-dependencies]

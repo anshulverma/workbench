@@ -4,6 +4,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 
 from workbench import __version__
@@ -11,11 +12,12 @@ from workbench.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
 from workbench.logging import setup_logging
 from workbench.memory.noop import NoopMemoryLayer
+from workbench.middleware import CorrelationIdMiddleware
 from workbench.registry import close_provider, create_provider, create_providers_from_list, create_composite_enricher
 from workbench.storage.factory import create_stores
 
 setup_logging()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def get_config() -> AppConfig:
@@ -32,6 +34,7 @@ async def lifespan(app: FastAPI):
     log_cfg = config.logging
     log_dir = log_cfg.log_dir or os.environ.get("WORKBENCH_LOG_DIR", "logs")
     setup_logging(
+        log_format=log_cfg.format,
         log_dir=log_dir,
         level=getattr(logging, log_cfg.level.upper(), logging.INFO),
         max_bytes=log_cfg.max_bytes,
@@ -127,6 +130,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="Workbench", version=__version__, lifespan=lifespan)
     app.add_middleware(BearerTokenMiddleware)
+    app.add_middleware(CorrelationIdMiddleware)
 
     from workbench.api import (
         config as config_api, filter_rules, health, items, jobs,
