@@ -41,3 +41,82 @@ async def test_fake_connection_lifecycle():
     await conn.initialize()
     assert conn.is_healthy()
     await conn.close()
+
+
+from workbench.registry import create_provider
+from workbench.providers.enrichment.stub import StubEnricher
+
+
+class StubConnection(Connection):
+    class ProviderConfig(BaseModel):
+        pass
+
+    def __init__(self, config=None):
+        pass
+
+    async def initialize(self):
+        pass
+
+    async def close(self):
+        pass
+
+    def is_healthy(self):
+        return True
+
+
+class ConnectionAwareProvider:
+    class ProviderConfig(BaseModel):
+        mode: str = "default"
+
+    def __init__(self, config: ProviderConfig, connection=None):
+        self.config = config
+        self.connection = connection
+
+
+class ConnectionUnawareProvider:
+    class ProviderConfig(BaseModel):
+        mode: str = "default"
+
+    def __init__(self, config: ProviderConfig):
+        self.config = config
+
+
+def test_create_provider_injects_connection_when_accepted():
+    conn = StubConnection()
+    section = {
+        "class": "tests.test_registry.ConnectionAwareProvider",
+        "connection": "test_conn",
+        "mode": "test",
+    }
+    connections = {"test_conn": conn}
+    provider = create_provider(section, connections=connections)
+    assert isinstance(provider, ConnectionAwareProvider)
+    assert provider.connection is conn
+
+
+def test_create_provider_skips_connection_when_not_accepted():
+    conn = StubConnection()
+    section = {
+        "class": "tests.test_registry.ConnectionUnawareProvider",
+        "connection": "test_conn",
+        "mode": "test",
+    }
+    connections = {"test_conn": conn}
+    provider = create_provider(section, connections=connections)
+    assert isinstance(provider, ConnectionUnawareProvider)
+    assert not hasattr(provider, "connection")
+
+
+def test_create_provider_without_connection():
+    section = {"class": "workbench.providers.enrichment.stub.StubEnricher"}
+    provider = create_provider(section)
+    assert isinstance(provider, StubEnricher)
+
+
+def test_create_provider_raises_on_missing_connection():
+    section = {
+        "class": "workbench.providers.enrichment.stub.StubEnricher",
+        "connection": "nonexistent",
+    }
+    with pytest.raises(ValueError, match="not found"):
+        create_provider(section, connections={})
