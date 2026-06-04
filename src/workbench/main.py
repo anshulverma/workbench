@@ -11,7 +11,7 @@ from workbench.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
 from workbench.logging import setup_logging
 from workbench.memory.noop import NoopMemoryLayer
-from workbench.registry import close_provider, create_provider
+from workbench.registry import close_provider, create_provider, create_providers_from_list, create_composite_enricher
 from workbench.storage.factory import create_stores
 
 setup_logging()
@@ -43,6 +43,15 @@ async def lifespan(app: FastAPI):
     app.state.stores = await create_stores(config)
     logger.info("Storage connected")
 
+    # Initialize shared connections
+    connections = {}
+    for name, conn_cfg in config.connections.items():
+        conn = create_provider(conn_cfg)
+        await conn.initialize()
+        connections[name] = conn
+        logger.info("Connection '%s' initialized", name)
+    app.state.connections = connections
+
     app.state.llm = create_provider(config.llm)
 
     if config.messenger:
@@ -50,8 +59,8 @@ async def lifespan(app: FastAPI):
     else:
         app.state.messenger = None
 
-    if config.enrichment:
-        app.state.enricher = create_provider(config.enrichment)
+    if config.enrichment.providers:
+        app.state.enricher = create_composite_enricher(config.enrichment, connections=connections)
     else:
         from workbench.providers.enrichment.stub import StubEnricher
         app.state.enricher = StubEnricher()
@@ -66,9 +75,7 @@ async def lifespan(app: FastAPI):
     else:
         app.state.queue_scorer = None
 
-    app.state.sources = []
-    for source_cfg in config.sources:
-        app.state.sources.append(create_provider(source_cfg))
+    app.state.sources = create_providers_from_list(config.sources, connections=connections)
 
     from workbench.pipeline.engine import PipelineEngine
     app.state.pipeline = PipelineEngine(
@@ -110,6 +117,9 @@ async def lifespan(app: FastAPI):
     for source in app.state.sources:
         await close_provider(source)
 
+    for conn in app.state.connections.values():
+        await close_provider(conn)
+
     if hasattr(app.state.stores, 'close'):
         await app.state.stores.close()
 
@@ -128,6 +138,11 @@ def create_app() -> FastAPI:
         memory.router, jobs.router, queue.router,
     ]:
         app.include_router(r)
+
+    ui_dir = os.path.join(os.path.dirname(__file__), "../../ui/dist")
+    if os.path.exists(ui_dir):
+        from starlette.staticfiles import StaticFiles
+        app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
 
     return app
 

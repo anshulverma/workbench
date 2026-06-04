@@ -11,3 +11,5 @@ internal/
 *.egg-info/
 build/
 neo4j-user-logs.xml
+ui/node_modules/
+ui/dist/
