@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 from omegaconf import OmegaConf
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ServerConfig(BaseModel):
@@ -51,8 +51,13 @@ class SchedulerConfig(BaseModel):
     morning_briefing_hour: int = 9
 
 
+class EnrichmentConfig(BaseModel):
+    providers: list[dict] = Field(default_factory=list)
+    default: dict = Field(default_factory=lambda: {"class": "workbench.providers.enrichment.stub.StubEnricher"})
+
+
 class AppConfig(BaseModel):
-    version: str = "0.2.1"
+    version: str = "0.3.0"
     server: ServerConfig = Field(default_factory=ServerConfig)
     storage: StorageConfig
     llm: dict
@@ -63,8 +68,17 @@ class AppConfig(BaseModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     messenger: dict | None = None
     sources: list[dict] = Field(default_factory=list)
-    enrichment: dict | None = None
+    enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     memory: dict | None = None
+    connections: dict[str, dict] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_enrichment(cls, values):
+        enrichment = values.get("enrichment")
+        if isinstance(enrichment, dict) and "class" in enrichment:
+            values["enrichment"] = {"providers": [], "default": enrichment}
+        return values
 
 
 def load_config(config_path: str, override_path: str | None = None) -> AppConfig:
@@ -91,3 +105,9 @@ def load_config(config_path: str, override_path: str | None = None) -> AppConfig
         sys.exit(1)
 
     return config
+
+
+def load_config_from_string(yaml_str: str) -> AppConfig:
+    raw = OmegaConf.create(yaml_str)
+    resolved = OmegaConf.to_container(raw, resolve=True)
+    return AppConfig(**resolved)
