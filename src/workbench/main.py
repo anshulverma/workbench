@@ -175,5 +175,5 @@ app = create_app()
 def cli_main():
     import uvicorn
     config = get_config()
-    uvicorn.run("workbench.main:app", host="0.0.0.0", port=config.server.port,
+    uvicorn.run("workbench.main:app", host="::", port=config.server.port,
                 reload=config.server.debug)

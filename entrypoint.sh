@@ -11,4 +11,4 @@ if [ -f alembic.ini ]; then
 fi
 
 echo "Starting Workbench server (logs: $WORKBENCH_LOG_DIR)..."
-exec uvicorn workbench.main:app --host 0.0.0.0 --port 8421
+exec uvicorn workbench.main:app --host :: --port 8421
