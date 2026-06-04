@@ -4,27 +4,59 @@
 
 **Goal:** Create the `auto-plan` skill — an autonomous planning agent that wraps grill-with-docs with contextual auto-answering, iterative deepening, and sub-agent orchestration to produce fully-grilled specs, ADRs, and implementation plans.
 
-**Architecture:** A Claude Code skill (`~/.claude/skills/auto-plan/SKILL.md`) with 7 supporting protocol/template files. The main SKILL.md contains orchestrator instructions (phases 0–4, sub-agent dispatch, state management, preference store). Supporting files are read on-demand when dispatching specific sub-agent types. No code — all markdown.
+**Architecture:** A Claude Code skill (`~/workspace/skills/auto-plan/SKILL.md`) with 7 supporting protocol/template files, installed via symlink to `~/.claude/skills/auto-plan`. The main SKILL.md contains orchestrator instructions (phases 0–4, sub-agent dispatch, state management, preference store). Supporting files are read on-demand when dispatching specific sub-agent types. No code — all markdown.
 
 **Tech Stack:** Markdown (skill definitions), JSON (state file format), Graphviz DOT (branch tree visualization)
 
 **Test commands:**
-- Invoke: `/auto-plan <topic>` in Claude Code
+- Invoke: `/auto-plan <topic>` in Claude Code (requires new session after installation)
 - Verify: check that the skill produces the expected artifacts in `docs/auto-plan/`
 - Check sub-agent dispatch: observe `[auto-plan]` progress lines in output
+
+**Grilling Decisions Applied:**
+1. Skill files live in `~/workspace/skills/auto-plan/` (git repo), installed via symlink to `~/.claude/skills/auto-plan`
+2. Single commit after all files written and verified (skill is atomic)
+3. SKILL.md written as one task (no fragile append)
+4. Griller protocol updated: file-read requests via Files Needed section, explicit constraint handling
+5. Response template gains `### Files Needed` section
+6. Writer spec protocol: Resolved Questions populated from decision log
+7. Review checklists: "included in your prompt below" not "provided by the orchestrator"
+8. Verification: symlink first, automated checks, manual dry-run noted as post-install step
+9. Output directories created at runtime by the skill (`mkdir -p` in Phase 2 instructions)
+
+---
+
+## Task 0: Repository Setup
+
+**Files:**
+- Create: `~/workspace/skills/` (git repo)
+- Create: `~/workspace/skills/auto-plan/` (directory)
+
+- [ ] **Step 1: Create the skills repository**
+
+```bash
+mkdir -p ~/workspace/skills/auto-plan
+cd ~/workspace/skills
+git init
+```
+
+- [ ] **Step 2: Verify the directory structure**
+
+```bash
+ls -la ~/workspace/skills/auto-plan/
+```
+Expected: Empty directory.
 
 ---
 
 ## Task 1: GRILLER-PROTOCOL.md — Distilled Grill-with-Docs Protocol
 
 **Files:**
-- Create: `~/.claude/skills/auto-plan/GRILLER-PROTOCOL.md`
-
-This is the first file because Grillers are the core sub-agent type. Every other protocol builds on or references the grilling approach.
+- Create: `~/workspace/skills/auto-plan/GRILLER-PROTOCOL.md`
 
 - [ ] **Step 1: Create the distilled protocol**
 
-Create `~/.claude/skills/auto-plan/GRILLER-PROTOCOL.md`:
+Create `~/workspace/skills/auto-plan/GRILLER-PROTOCOL.md`:
 
 ```markdown
 # Griller Protocol
@@ -37,11 +69,11 @@ Walk down every branch of the design for your assigned topic. For each decision 
 
 ## The Protocol
 
-1. **Challenge against the glossary.** Check every term against the CONTEXT.md provided. Does each term mean what the spec thinks it means? If a term is used inconsistently or vaguely, flag it in your CONTEXT.md Updates section.
+1. **Challenge against the glossary.** Check every term against the CONTEXT.md included in your prompt. Does each term mean what the spec thinks it means? If a term is used inconsistently or vaguely, flag it in your CONTEXT.md Updates section.
 
 2. **Sharpen fuzzy language.** Words like "handle," "process," "manage," "appropriate" are red flags. Replace with precise verbs. Propose canonical terms for vague concepts.
 
-3. **Cross-reference with code.** When the spec describes behavior, check the codebase context provided. Does the code already do this? Does it contradict the spec? Surface any mismatches.
+3. **Cross-reference with code.** When the spec describes behavior, check the codebase context included in your prompt. Does the code already do this? Does it contradict the spec? Surface any mismatches.
 
 4. **Walk concrete scenarios.** For each decision, imagine a specific real-world case that exercises it. Does the design hold? What breaks at the edges?
 
@@ -49,6 +81,7 @@ Walk down every branch of the design for your assigned topic. For each decision 
 
 6. **Auto-answer using the user model.** For each question:
    - Check the user model brief for a matching preference or constraint
+   - Check the settled decisions included in your prompt — these are NOT up for debate. Treat them as facts. If you find a settled decision that seems wrong given your analysis, note the conflict in your Unresolved section rather than re-deciding.
    - If high confidence (direct match in memory/ADR/codebase): answer and move on
    - If medium confidence (consistent with principles but no direct match): answer with your reasoning
    - If low confidence (genuinely novel trade-off): flag as unresolved with your recommendation
@@ -62,33 +95,27 @@ Walk down every branch of the design for your assigned topic. For each decision 
 
 - Don't ask the user questions — you're a sub-agent, not interactive
 - Don't re-decide things marked as settled constraints
-- Don't explore the full codebase — use only the context provided
+- Don't explore the full codebase yourself — use the context included in your prompt. If you need additional files to answer a question, list them in your Files Needed section and the orchestrator will provide them in the next iteration.
 - Don't write long narratives — be concise and structured
 ```
 
 - [ ] **Step 2: Verify the file is readable**
 
 ```bash
-cat ~/.claude/skills/auto-plan/GRILLER-PROTOCOL.md | head -5
+head -5 ~/workspace/skills/auto-plan/GRILLER-PROTOCOL.md
 ```
 Expected: Shows `# Griller Protocol` header.
-
-- [ ] **Step 3: Commit**
-
-```bash
-cd ~/.claude/skills/auto-plan && git init 2>/dev/null; git add GRILLER-PROTOCOL.md && git commit -m "feat(auto-plan): add distilled griller protocol"
-```
 
 ---
 
 ## Task 2: GRILLER-RESPONSE-TEMPLATE.md — Structured Response Format
 
 **Files:**
-- Create: `~/.claude/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md`
+- Create: `~/workspace/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md`
 
 - [ ] **Step 1: Create the response template**
 
-Create `~/.claude/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md`:
+Create `~/workspace/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md`:
 
 ```markdown
 # Griller Response Template
@@ -133,36 +160,36 @@ New terms or sharpened definitions:
 Sub-topics discovered during grilling that need their own deep-dive:
 
 - [Topic] — [why this needs separate exploration, what questions it raises]
+
+### Files Needed
+
+Files you need to see to answer questions in the Unresolved section. The orchestrator will fetch these and re-dispatch you with the additional context.
+
+- [file path or search query] — needed to answer: [which question from Unresolved]
 ```
 
 - [ ] **Step 2: Verify the file**
 
 ```bash
-cat ~/.claude/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md | head -5
+head -5 ~/workspace/skills/auto-plan/GRILLER-RESPONSE-TEMPLATE.md
 ```
 Expected: Shows `# Griller Response Template` header.
-
-- [ ] **Step 3: Commit**
-
-```bash
-cd ~/.claude/skills/auto-plan && git add GRILLER-RESPONSE-TEMPLATE.md && git commit -m "feat(auto-plan): add griller response template"
-```
 
 ---
 
 ## Task 3: WRITER-SPEC-PROTOCOL.md — Spec Document Structure
 
 **Files:**
-- Create: `~/.claude/skills/auto-plan/WRITER-SPEC-PROTOCOL.md`
+- Create: `~/workspace/skills/auto-plan/WRITER-SPEC-PROTOCOL.md`
 
 - [ ] **Step 1: Create the spec protocol**
 
-Create `~/.claude/skills/auto-plan/WRITER-SPEC-PROTOCOL.md`:
+Create `~/workspace/skills/auto-plan/WRITER-SPEC-PROTOCOL.md`:
 
-```markdown
+````markdown
 # Writer Spec Protocol
 
-When writing a design spec, follow this structure. Every section is required unless marked optional. Fill each section from the resolved decisions provided by the orchestrator.
+When writing a design spec, follow this structure. Every section is required unless marked optional. Fill each section from the resolved decisions included in your prompt.
 
 ---
 
@@ -201,8 +228,8 @@ Numbered checklist. "This is done when..."
 Each item is independently testable.
 
 ## Resolved Questions
-From grilling sessions. Format:
-N. **[Topic]:** → [Decision]. [Brief rationale if non-obvious.]
+Populated from the decision log included in your prompt. Each decision becomes one entry:
+N. **[Question topic]:** → [Answer]. [Source/rationale if non-obvious.]
 
 ## Out of Scope
 Bulleted list of what this explicitly does NOT include.
@@ -211,38 +238,33 @@ Bulleted list of what this explicitly does NOT include.
 ## Rules
 
 - Use terms from CONTEXT.md exactly — don't introduce synonyms
-- Every design decision from the grilling sessions must appear in a design section
+- Every design decision from the decision log must appear in a design section
+- Populate the Resolved Questions section from the full decision log
 - No placeholders (TBD, TODO, "to be determined")
 - No fuzzy language ("handle appropriately", "as needed")
 - Code blocks for anything that has a concrete shape (schemas, configs, interfaces)
 - Keep sections focused — if a section exceeds ~200 lines, it probably needs splitting
-```
+````
 
 - [ ] **Step 2: Verify the file**
 
 ```bash
-cat ~/.claude/skills/auto-plan/WRITER-SPEC-PROTOCOL.md | head -5
+head -5 ~/workspace/skills/auto-plan/WRITER-SPEC-PROTOCOL.md
 ```
 Expected: Shows `# Writer Spec Protocol` header.
-
-- [ ] **Step 3: Commit**
-
-```bash
-cd ~/.claude/skills/auto-plan && git add WRITER-SPEC-PROTOCOL.md && git commit -m "feat(auto-plan): add writer spec protocol"
-```
 
 ---
 
 ## Task 4: WRITER-PLAN-PROTOCOL.md — Distilled Writing-Plans Format
 
 **Files:**
-- Create: `~/.claude/skills/auto-plan/WRITER-PLAN-PROTOCOL.md`
+- Create: `~/workspace/skills/auto-plan/WRITER-PLAN-PROTOCOL.md`
 
 - [ ] **Step 1: Create the plan protocol**
 
-Create `~/.claude/skills/auto-plan/WRITER-PLAN-PROTOCOL.md`:
+Create `~/workspace/skills/auto-plan/WRITER-PLAN-PROTOCOL.md`:
 
-```markdown
+````markdown
 # Writer Plan Protocol
 
 Distilled from the writing-plans skill. Follow this format exactly when producing an implementation plan.
@@ -310,33 +332,27 @@ Expected: PASS
 - **Exact file paths** — never use relative or ambiguous paths
 - **Frequent commits** — commit after each task (not each step)
 - **DRY, YAGNI** — don't add abstractions or features beyond what the spec requires
-```
+````
 
 - [ ] **Step 2: Verify the file**
 
 ```bash
-cat ~/.claude/skills/auto-plan/WRITER-PLAN-PROTOCOL.md | head -5
+head -5 ~/workspace/skills/auto-plan/WRITER-PLAN-PROTOCOL.md
 ```
 Expected: Shows `# Writer Plan Protocol` header.
-
-- [ ] **Step 3: Commit**
-
-```bash
-cd ~/.claude/skills/auto-plan && git add WRITER-PLAN-PROTOCOL.md && git commit -m "feat(auto-plan): add writer plan protocol"
-```
 
 ---
 
 ## Task 5: Review Checklists — SPEC, PLAN, FINAL
 
 **Files:**
-- Create: `~/.claude/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md`
-- Create: `~/.claude/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md`
-- Create: `~/.claude/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md`
+- Create: `~/workspace/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md`
+- Create: `~/workspace/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md`
+- Create: `~/workspace/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md`
 
 - [ ] **Step 1: Create SPEC-REVIEW-CHECKLIST.md**
 
-Create `~/.claude/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md`:
+Create `~/workspace/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md`:
 
 ```markdown
 # Spec Review Checklist
@@ -345,7 +361,7 @@ You are reviewing a design spec produced by a Writer sub-agent. Check each item 
 
 ## Checklist
 
-1. **Decision coverage.** Every resolved decision from the grilling sessions is reflected in the spec. Cross-reference the decision log (provided by the orchestrator). List any decisions not found in the spec.
+1. **Decision coverage.** Every resolved decision from the grilling sessions is reflected in the spec. Cross-reference the decision log included in your prompt below. List any decisions not found in the spec.
 
 2. **No internal contradictions.** Read each section and check: does any statement contradict another section? Pay special attention to schemas, interfaces, and behavioral descriptions that appear in multiple places.
 
@@ -370,12 +386,12 @@ You are reviewing a design spec produced by a Writer sub-agent. Check each item 
 
 - [ ] **Step 2: Create PLAN-REVIEW-CHECKLIST.md**
 
-Create `~/.claude/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md`:
+Create `~/workspace/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md`:
 
 ```markdown
 # Plan Review Checklist
 
-You are reviewing an implementation plan produced by a Writer sub-agent. Check each item below against the design spec (provided by the orchestrator).
+You are reviewing an implementation plan produced by a Writer sub-agent. Check each item below against the design spec included in your prompt below.
 
 ## Checklist
 
@@ -404,12 +420,12 @@ You are reviewing an implementation plan produced by a Writer sub-agent. Check e
 
 - [ ] **Step 3: Create FINAL-REVIEW-CHECKLIST.md**
 
-Create `~/.claude/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md`:
+Create `~/workspace/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md`:
 
 ```markdown
 # Final Cross-Cutting Review Checklist
 
-You are doing a final review of ALL artifacts produced by auto-plan: spec, ADRs, implementation plan, and CONTEXT.md updates. Check for cross-artifact consistency.
+You are doing a final review of ALL artifacts produced by auto-plan: spec, ADRs, implementation plan, and CONTEXT.md updates. All artifacts are included in your prompt below. Check for cross-artifact consistency.
 
 ## Checklist
 
@@ -439,30 +455,24 @@ You are doing a final review of ALL artifacts produced by auto-plan: spec, ADRs,
 - [ ] **Step 4: Verify all three files**
 
 ```bash
-head -1 ~/.claude/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md
-head -1 ~/.claude/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md
-head -1 ~/.claude/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md
+head -1 ~/workspace/skills/auto-plan/SPEC-REVIEW-CHECKLIST.md
+head -1 ~/workspace/skills/auto-plan/PLAN-REVIEW-CHECKLIST.md
+head -1 ~/workspace/skills/auto-plan/FINAL-REVIEW-CHECKLIST.md
 ```
 Expected: Each shows its respective `# ... Checklist` header.
 
-- [ ] **Step 5: Commit**
-
-```bash
-cd ~/.claude/skills/auto-plan && git add SPEC-REVIEW-CHECKLIST.md PLAN-REVIEW-CHECKLIST.md FINAL-REVIEW-CHECKLIST.md && git commit -m "feat(auto-plan): add spec, plan, and final review checklists"
-```
-
 ---
 
-## Task 6: SKILL.md — Main Skill Definition (Part 1: Frontmatter + Phases 0–1)
+## Task 6: SKILL.md — Main Skill Definition
 
 **Files:**
-- Create: `~/.claude/skills/auto-plan/SKILL.md`
+- Create: `~/workspace/skills/auto-plan/SKILL.md`
 
-The SKILL.md is the largest file (~400 lines). Split into two tasks for manageability: Part 1 covers frontmatter, overview, configuration, and Phases 0–1. Part 2 covers Phases 2–4, sub-agent dispatch, state management, and observability.
+This is the largest file (~400 lines). Contains the full orchestrator instructions: frontmatter, overview, configuration, all phases, sub-agent dispatch, state management, and observability.
 
-- [ ] **Step 1: Create SKILL.md with frontmatter, overview, config, and Phases 0–1**
+- [ ] **Step 1: Create the complete SKILL.md**
 
-Create `~/.claude/skills/auto-plan/SKILL.md`:
+Create `~/workspace/skills/auto-plan/SKILL.md`:
 
 ```markdown
 ---
@@ -477,7 +487,7 @@ Autonomous planning skill. Builds a contextual model of the user's preferences, 
 ## Overview
 
 ```dot
-digraph deep_plan {
+digraph auto_plan {
     rankdir=TB
 
     "Parse args + detect input mode" [shape=box]
@@ -599,44 +609,18 @@ digraph deep_plan {
 **Scope decomposition:** If the topic describes 4+ independent subsystems, suggest decomposition with natural seams. Plan one sub-project at a time. User re-invokes for the rest.
 
 **Output:** `[auto-plan] Phase 0.5: idea clarification — N questions answered, N asked`
-```
-
-- [ ] **Step 2: Verify the file**
-
-```bash
-head -3 ~/.claude/skills/auto-plan/SKILL.md
-```
-Expected: Shows the YAML frontmatter opening `---`.
-
-- [ ] **Step 3: Commit**
-
-```bash
-cd ~/.claude/skills/auto-plan && git add SKILL.md && git commit -m "feat(auto-plan): SKILL.md part 1 — frontmatter, config, phases 0-0.5"
-```
-
----
-
-## Task 7: SKILL.md — Part 2: Phases 1–4, Sub-Agent Dispatch, State Management
-
-**Files:**
-- Modify: `~/.claude/skills/auto-plan/SKILL.md`
-
-- [ ] **Step 1: Append Phase 1 through Phase 4 and all remaining sections**
-
-Append to `~/.claude/skills/auto-plan/SKILL.md`:
-
-```markdown
 
 ## Phase 1: Skeleton
 
 1. Produce a high-level spec outline: section headings, key decisions, scope boundaries
 2. If input is an existing spec, extract branches from its sections
-3. Identify **branches** — each design decision or section needing exploration. Target 5-15 grilling questions per branch. Split sections with 30+ decisions into sub-branches.
-4. Assign confidence:
+3. If invoked mid-conversation, distill conversation context into the topic description and user model brief
+4. Identify **branches** — each design decision or section needing exploration. Target 5-15 grilling questions per branch. Split sections with 30+ decisions into sub-branches.
+5. Assign confidence:
    - `known` — ADR/memory covers it
    - `likely` — can auto-answer from domain principles
    - `uncertain` — needs a Griller sub-agent
-5. Do a broad codebase survey (read key files, or dispatch a Researcher) to produce a **codebase context summary** (~1000 tokens)
+6. Do a broad codebase survey (read key files, or dispatch a Researcher) to produce a **codebase context summary** (~1000 tokens)
 
 **Small scope fast path:** If ≤3 branches and none `uncertain`, handle grilling inline — no sub-agents. Still follow the grill-with-docs protocol, still produce artifacts.
 
@@ -660,8 +644,8 @@ Agent({
 
 **Griller prompt assembly:**
 1. Task brief: "You are grilling the '{branch topic}' branch of this design. Follow the Griller Protocol below."
-2. Paste contents of `GRILLER-PROTOCOL.md` (read from skill directory)
-3. Paste contents of `GRILLER-RESPONSE-TEMPLATE.md`
+2. Read and paste contents of `GRILLER-PROTOCOL.md` from this skill's directory
+3. Read and paste contents of `GRILLER-RESPONSE-TEMPLATE.md` from this skill's directory
 4. User model brief (~1000 tokens)
 5. Full CONTEXT.md content
 6. Curated codebase context for this branch (relevant file excerpts only)
@@ -690,7 +674,8 @@ After Grillers return, the orchestrator:
    ```
 5. **Saves** user corrections as domain-tagged feedback memories immediately
 6. **Adds** discovered new branches to the queue
-7. **Detects conflicts** across parallel Grillers — contradictory decisions become a new branch
+7. **Fetches** requested files (from Files Needed sections) — reads directly if path is known, dispatches a Researcher if open-ended
+8. **Detects conflicts** across parallel Grillers — contradictory decisions become a new branch
 
 ### Conflict Resolution
 
@@ -714,7 +699,7 @@ Agent({
 })
 ```
 
-Researchers are general-purpose agents (not Explore type) for full tool access. The prompt constrains to read-only behavior.
+Researchers are dispatched as general-purpose agents (not Explore type) for full tool access. The prompt constrains to read-only behavior.
 
 ### depends_on Inference
 
@@ -739,7 +724,7 @@ If `--max-iterations` is hit with uncertain branches remaining:
 
 ### State File
 
-After each iteration, write full state to `docs/auto-plan/reports/YYYY-MM-DD-<topic>-state.json`. **Full rewrite each time** (not incremental — avoids JSON corruption). This is the source of truth — survives context compression and session interruption.
+After each iteration, write full state as JSON to `docs/auto-plan/reports/YYYY-MM-DD-<topic>-state.json`. **Full rewrite each time** (not incremental — avoids JSON corruption). Create `docs/auto-plan/reports/` directory if it doesn't exist. This is the source of truth — survives context compression and session interruption.
 
 State file structure:
 ```json
@@ -771,7 +756,7 @@ Produce artifacts in dependency order. Each passes its own review before the nex
 
 ### Commit Strategy
 
-At the start of Phase 3, if `--auto-commit` is not set, ask once: "I'll commit each artifact separately as it passes review. OK?" If yes, commit without asking again for each artifact.
+If `--auto-commit` is set, commit each artifact after it passes review. Otherwise, ask once at the start of Phase 3: "I'll commit each artifact separately as it passes review. OK?" If yes, commit without asking again.
 
 ### 1. CONTEXT.md Updates
 
@@ -779,7 +764,7 @@ Applied incrementally during Phase 2. No separate write step.
 
 ### 2. Spec
 
-1. Read `WRITER-SPEC-PROTOCOL.md` from skill directory
+1. Read `WRITER-SPEC-PROTOCOL.md` from this skill's directory
 2. Dispatch a Writer sub-agent:
 
 ```
@@ -828,7 +813,7 @@ For each ADR candidate that meets all three criteria (hard to reverse + surprisi
 
 **Skipped when:** `--skip-plan` is set, or spec has UNRESOLVED markers (unless user chose "plan with BLOCKED tasks").
 
-1. Read `WRITER-PLAN-PROTOCOL.md` from skill directory
+1. Read `WRITER-PLAN-PROTOCOL.md` from this skill's directory
 2. Dispatch Writer sub-agent with spec + plan protocol
 3. Dispatch Reviewer with `PLAN-REVIEW-CHECKLIST.md`
 4. Fix → re-review → loop until PASS
@@ -980,34 +965,31 @@ docs/adr/NNNN-<slug>.md
 - [ ] **Step 2: Verify the complete SKILL.md**
 
 ```bash
-wc -l ~/.claude/skills/auto-plan/SKILL.md
+wc -l ~/workspace/skills/auto-plan/SKILL.md
 ```
 Expected: ~400 lines.
 
 ```bash
-head -3 ~/.claude/skills/auto-plan/SKILL.md
+head -3 ~/workspace/skills/auto-plan/SKILL.md
 ```
-Expected: YAML frontmatter.
+Expected: YAML frontmatter `---`.
 
 ```bash
-tail -5 ~/.claude/skills/auto-plan/SKILL.md
+tail -5 ~/workspace/skills/auto-plan/SKILL.md
 ```
 Expected: Shows the output file layout closing.
 
-- [ ] **Step 3: Commit**
-
-```bash
-cd ~/.claude/skills/auto-plan && git add SKILL.md && git commit -m "feat(auto-plan): SKILL.md part 2 — phases 1-4, sub-agent dispatch, state management, observability"
-```
-
 ---
 
-## Task 8: End-to-End Verification
+## Task 7: Installation and Verification
+
+**Files:**
+- Create: symlink `~/.claude/skills/auto-plan` → `~/workspace/skills/auto-plan/`
 
 - [ ] **Step 1: Verify all 8 files exist**
 
 ```bash
-ls -la ~/.claude/skills/auto-plan/
+ls -la ~/workspace/skills/auto-plan/
 ```
 Expected: 8 files:
 ```
@@ -1024,7 +1006,7 @@ FINAL-REVIEW-CHECKLIST.md
 - [ ] **Step 2: Verify SKILL.md frontmatter**
 
 ```bash
-head -4 ~/.claude/skills/auto-plan/SKILL.md
+head -4 ~/workspace/skills/auto-plan/SKILL.md
 ```
 Expected:
 ```
@@ -1037,46 +1019,63 @@ description: Use when planning a multi-step feature or grilling an existing spec
 - [ ] **Step 3: Verify no file uses `@` references to force-load other files**
 
 ```bash
-grep -r "^@" ~/.claude/skills/auto-plan/ || echo "No @ references found"
+grep -r "^@" ~/workspace/skills/auto-plan/ || echo "No @ references found"
 ```
 Expected: "No @ references found"
 
 - [ ] **Step 4: Verify SKILL.md references all supporting files by name**
 
 ```bash
-grep -c "GRILLER-PROTOCOL.md" ~/.claude/skills/auto-plan/SKILL.md
-grep -c "GRILLER-RESPONSE-TEMPLATE.md" ~/.claude/skills/auto-plan/SKILL.md
-grep -c "WRITER-SPEC-PROTOCOL.md" ~/.claude/skills/auto-plan/SKILL.md
-grep -c "WRITER-PLAN-PROTOCOL.md" ~/.claude/skills/auto-plan/SKILL.md
-grep -c "SPEC-REVIEW-CHECKLIST.md" ~/.claude/skills/auto-plan/SKILL.md
-grep -c "PLAN-REVIEW-CHECKLIST.md" ~/.claude/skills/auto-plan/SKILL.md
-grep -c "FINAL-REVIEW-CHECKLIST.md" ~/.claude/skills/auto-plan/SKILL.md
+grep -c "GRILLER-PROTOCOL.md" ~/workspace/skills/auto-plan/SKILL.md
+grep -c "GRILLER-RESPONSE-TEMPLATE.md" ~/workspace/skills/auto-plan/SKILL.md
+grep -c "WRITER-SPEC-PROTOCOL.md" ~/workspace/skills/auto-plan/SKILL.md
+grep -c "WRITER-PLAN-PROTOCOL.md" ~/workspace/skills/auto-plan/SKILL.md
+grep -c "SPEC-REVIEW-CHECKLIST.md" ~/workspace/skills/auto-plan/SKILL.md
+grep -c "PLAN-REVIEW-CHECKLIST.md" ~/workspace/skills/auto-plan/SKILL.md
+grep -c "FINAL-REVIEW-CHECKLIST.md" ~/workspace/skills/auto-plan/SKILL.md
 ```
-Expected: Each returns at least 1 (each supporting file is referenced at least once).
+Expected: Each returns at least 1.
 
 - [ ] **Step 5: Verify no placeholders in any file**
 
 ```bash
-grep -ri "TBD\|TODO\|placeholder\|fill in\|implement later" ~/.claude/skills/auto-plan/ || echo "No placeholders found"
+grep -ri "TBD\|TODO\|placeholder\|fill in\|implement later" ~/workspace/skills/auto-plan/ | grep -v "Search for:" | grep -v "example" || echo "No placeholders found"
 ```
-Expected: "No placeholders found" (matches in example text within templates are acceptable).
+Expected: "No placeholders found" (grep excludes the checklist lines that mention these terms as things to search for).
 
-- [ ] **Step 6: Dry-run test**
+- [ ] **Step 6: Commit all files in the skills repo**
 
-Invoke the skill with `--dry-run` on a simple topic to verify it loads and shows the skeleton:
+```bash
+cd ~/workspace/skills && git add auto-plan/ && git commit -m "feat: add auto-plan skill — autonomous planning agent with iterative deepening and contextual auto-answering"
+```
+
+- [ ] **Step 7: Install the skill via symlink**
+
+```bash
+ln -sf ~/workspace/skills/auto-plan ~/.claude/skills/auto-plan
+```
+
+- [ ] **Step 8: Verify the symlink**
+
+```bash
+ls -la ~/.claude/skills/auto-plan
+```
+Expected: Shows symlink pointing to `~/workspace/skills/auto-plan`.
+
+```bash
+head -3 ~/.claude/skills/auto-plan/SKILL.md
+```
+Expected: Shows YAML frontmatter — confirms the symlink resolves.
+
+- [ ] **Step 9: Manual verification (post-install)**
+
+After completing installation, verify in a **new Claude Code session** (skill list refreshes on session start):
 
 ```
 /auto-plan add retry logic to the ingestion queue worker --dry-run
 ```
 
 Expected: The skill loads, reads preferences, detects domains, produces a skeleton with branches and confidence levels, then stops.
-
-- [ ] **Step 7: Commit verification results**
-
-```bash
-cd ~/.claude/skills/auto-plan && git add -A && git status
-```
-Expected: Nothing to commit (all files already committed in previous tasks).
 
 ---
 
@@ -1087,29 +1086,35 @@ Expected: Nothing to commit (all files already committed in previous tasks).
 | Spec Requirement | Task |
 |-----------------|------|
 | Distilled grill-with-docs protocol | Task 1 |
-| Structured response format for Grillers | Task 2 |
-| Spec document structure template | Task 3 |
+| Structured response format for Grillers (incl. Files Needed) | Task 2 |
+| Spec document structure template (incl. Resolved Questions) | Task 3 |
 | Distilled writing-plans format | Task 4 |
-| Three review checklists (spec, plan, final) | Task 5 |
-| SKILL.md with all phases, config, sub-agent dispatch | Tasks 6-7 |
-| State file management | Task 7 (Phase 2 section) |
-| --redo support | Task 7 |
-| --resume support | Task 7 |
-| Planning report with branch tree | Task 7 |
-| Preference store (read/write) | Task 7 |
-| File collision handling | Task 6 (Input Mode Detection) |
-| Small scope fast path | Task 7 (Phase 1) |
-| Researcher sub-agents | Task 7 (Phase 2) |
-| Conflict resolution | Task 7 (Phase 2) |
-| Sub-agent failure handling | Task 7 (Phase 2) |
-| Domain-tagged preferences | Task 6 (Phase 0) |
-| Idea clarification (Phase 0.5) | Task 6 |
-| User model brief structure | Task 6 (Phase 0) |
-| Confidence thresholds | Task 6 (Config) |
+| Three review checklists (spec, plan, final) with "in your prompt" language | Task 5 |
+| SKILL.md with all phases, config, sub-agent dispatch | Task 6 |
+| State file management (JSON, full rewrite, always kept) | Task 6 (Phase 2 section) |
+| --redo support with cascade detection | Task 6 |
+| --resume support | Task 6 |
 | --plan-only with UNRESOLVED check | Task 6 (Input Mode Detection) |
-| --auto-commit flag | Task 6 (Config) + Task 7 (Phase 3) |
-| End-to-end verification | Task 8 |
+| --auto-commit flag | Task 6 (Config + Phase 3) |
+| Planning report with branch tree (ASCII + .dot + PNG) | Task 6 |
+| Preference store (read/write to memory files) | Task 6 |
+| File collision handling | Task 6 (Input Mode Detection) |
+| Small scope fast path | Task 6 (Phase 1) |
+| Researcher sub-agents (general-purpose, env-adaptive tools) | Task 6 (Phase 2) |
+| Conflict resolution (prevent + detect + sequence) | Task 6 (Phase 2) |
+| Sub-agent failure handling | Task 6 (Phase 2) |
+| Domain-tagged preferences | Task 6 (Phase 0) |
+| Idea clarification (Phase 0.5) with very-high confidence | Task 6 |
+| User model brief structure (~1000 tokens, 5 sections) | Task 6 (Phase 0) |
+| Confidence thresholds | Task 6 (Config) |
+| Griller constraint handling (settled decisions as facts) | Task 1 |
+| depends_on inference | Task 6 (Phase 2) |
+| Output directories created at runtime (mkdir -p) | Task 6 (Phase 2, state file section) |
+| Conversation context (last 10 messages) | Task 6 (Phase 0 + 0.5) |
+| Scope decomposition at 4+ subsystems | Task 6 (Phase 0.5) |
+| Skills repo setup + symlink installation | Task 0 + Task 7 |
+| End-to-end verification | Task 7 |
 
-**Placeholder scan:** No TBD/TODO outside of example text in templates.
+**Placeholder scan:** No TBD/TODO outside of checklist search-for instructions and template examples.
 
-**Type consistency:** All file names referenced in SKILL.md match exact file names in Tasks 1-5. All phase numbers are sequential and consistent.
+**Type consistency:** All file names referenced in SKILL.md match exact file names in Tasks 1-5. All phase numbers are sequential and consistent. Skill name is `auto-plan` everywhere.
