@@ -18,9 +18,11 @@ class PgInteractionStore(InteractionStore):
                (id, timestamp, source_type, item_id, item_summary,
                 triage_card_full, enrichment_context, options_presented,
                 option_chosen, todo_created, enrichment_depth,
-                enrichment_calls, enrichment_time_ms, choice_index)
+                enrichment_calls, enrichment_time_ms, choice_index,
+                type, interpreted, confirmed)
                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb,
-                       $9, $10::jsonb, $11, $12, $13, $14)""",
+                       $9, $10::jsonb, $11, $12, $13, $14,
+                       $15, $16::jsonb, $17)""",
             entry.id,
             entry.timestamp,
             entry.source_type,
@@ -35,6 +37,9 @@ class PgInteractionStore(InteractionStore):
             entry.enrichment_calls,
             entry.enrichment_time_ms,
             entry.choice_index,
+            entry.type,
+            json.dumps(entry.interpreted) if entry.interpreted else None,
+            entry.confirmed,
         )
 
     async def get_since(self, cursor: int, limit: int) -> list[InteractionEntry]:
@@ -73,6 +78,10 @@ class PgInteractionStore(InteractionStore):
         if isinstance(todo, str):
             todo = json.loads(todo)
 
+        interpreted = row.get("interpreted")
+        if isinstance(interpreted, str):
+            interpreted = json.loads(interpreted)
+
         return InteractionEntry(
             id=row["id"],
             timestamp=row["timestamp"],
@@ -88,4 +97,7 @@ class PgInteractionStore(InteractionStore):
             enrichment_depth=row["enrichment_depth"],
             enrichment_calls=row["enrichment_calls"],
             enrichment_time_ms=row["enrichment_time_ms"],
+            type=row.get("type"),
+            interpreted=interpreted,
+            confirmed=row.get("confirmed"),
         )

@@ -44,8 +44,10 @@ class PgItemStore(ItemStore):
         await self.pool.execute(
             """INSERT INTO items
                (id, source_type, source_id, summary, category, origin,
-                priority, status, raw_data, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)""",
+                priority, status, raw_data, created_at, updated_at,
+                parent_item_id, action_source, action_category)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11,
+                       $12, $13, $14)""",
             item.id,
             item.source_type,
             item.source_id,
@@ -57,6 +59,9 @@ class PgItemStore(ItemStore):
             json.dumps(item.raw_data),
             item.created_at,
             item.updated_at,
+            item.parent_item_id,
+            item.action_source,
+            item.action_category,
         )
         return item
 
@@ -107,4 +112,7 @@ class PgItemStore(ItemStore):
             raw_data=raw,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            parent_item_id=row.get("parent_item_id"),
+            action_source=row.get("action_source"),
+            action_category=row.get("action_category"),
         )

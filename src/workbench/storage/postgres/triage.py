@@ -15,7 +15,7 @@ class PgTriageStore(TriageStore):
 
     async def get_pending(self) -> list[TriageCard]:
         rows = await self.pool.fetch(
-            "SELECT * FROM triage_cards WHERE status IN ('queued', 'sent') "
+            "SELECT * FROM triage_cards WHERE status IN ('queued', 'sent', 'awaiting_followup', 'awaiting_confirmation') "
             "ORDER BY relevance_score DESC"
         )
         return [self._row_to_card(r) for r in rows]
@@ -23,6 +23,7 @@ class PgTriageStore(TriageStore):
     async def get_next_unsent(self) -> TriageCard | None:
         row = await self.pool.fetchrow(
             "SELECT * FROM triage_cards WHERE status = 'queued' "
+            "AND (deferred_until IS NULL OR deferred_until <= NOW()) "
             "ORDER BY relevance_score DESC LIMIT 1"
         )
         return self._row_to_card(row) if row else None
@@ -32,9 +33,9 @@ class PgTriageStore(TriageStore):
             """INSERT INTO triage_cards
                (id, item_id, card_content, options, relevance_score,
                 confidence_score, status, bot_message_id, daily_sequence,
-                expires_at, sent_at, responded_at, response)
+                expires_at, sent_at, responded_at, response, deferred_until)
                VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9,
-                       $10, $11, $12, $13)
+                       $10, $11, $12, $13, $14)
                ON CONFLICT (id) DO UPDATE SET
                  item_id = EXCLUDED.item_id,
                  card_content = EXCLUDED.card_content,
@@ -47,7 +48,8 @@ class PgTriageStore(TriageStore):
                  expires_at = EXCLUDED.expires_at,
                  sent_at = EXCLUDED.sent_at,
                  responded_at = EXCLUDED.responded_at,
-                 response = EXCLUDED.response""",
+                 response = EXCLUDED.response,
+                 deferred_until = EXCLUDED.deferred_until""",
             card.id,
             card.item_id,
             json.dumps(card.card_content),
@@ -61,6 +63,7 @@ class PgTriageStore(TriageStore):
             card.sent_at,
             card.responded_at,
             card.response,
+            card.deferred_until,
         )
         return card
 
@@ -121,4 +124,5 @@ class PgTriageStore(TriageStore):
             sent_at=row["sent_at"],
             responded_at=row["responded_at"],
             response=row["response"],
+            deferred_until=row.get("deferred_until"),
         )
