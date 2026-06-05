@@ -79,6 +79,16 @@ workbench serve --config config.yml    # Explicit config path
 workbench triage --token TOKEN         # Interactive triage from terminal
 ```
 
+## UI Access (Remote / DevGPU)
+
+The web UI is available at `http://localhost:8421/ui/`. When running on a remote host (e.g., devgpu), forward the port via SSH:
+
+```bash
+ssh -L 8421:localhost:8421 <remote-host>
+```
+
+If using `autossh`, ensure `-L 8421:localhost:8421` is included in your forwarded ports. Autossh will silently skip a port if something else already holds it locally — check with `lsof -i :8421` on your local machine if the UI isn't reachable.
+
 ## License
 
 MIT
