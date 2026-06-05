@@ -88,7 +88,11 @@ def setup_logging(
     )
 
     def _formatter(renderer):
+        # foreign_pre_chain runs shared_processors on stdlib LogRecords (apscheduler,
+        # uvicorn, logging.getLogger(...)) so they get timestamp/level/logger/file:line
+        # too — not just structlog-native loggers.
         return structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=shared_processors,
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                 renderer,

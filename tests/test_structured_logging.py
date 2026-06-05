@@ -55,13 +55,20 @@ def test_console_output_format(capsys):
 
 
 def test_stdlib_logger_gets_structlog_processing(capsys):
-    """Existing logging.getLogger() calls go through structlog pipeline."""
+    """Existing logging.getLogger() (stdlib/foreign) records go through the FULL
+    pipeline via foreign_pre_chain — level/logger/file:line/timestamp, not just event."""
     setup_logging(log_format="json", log_dir=None)
     logger = logging.getLogger("legacy.module")
-    logger.info("legacy message %s", "arg1")
+    logger.warning("legacy message %s", "arg1")
     captured = capsys.readouterr()
     line = json.loads(captured.err.strip())
     assert "legacy message arg1" in line.get("event", "")
+    # The bug this guards: foreign records used to emit bare {"event": ...}.
+    assert line["level"] == "warning"
+    assert line["logger"] == "legacy.module"
+    assert line["filename"] == "test_structured_logging.py"
+    assert isinstance(line["lineno"], int) and line["lineno"] > 0
+    assert line["timestamp"].endswith("Z") or line["timestamp"].endswith("+00:00")
 
 
 def test_file_handler_preserved(tmp_path):

@@ -52,3 +52,22 @@ def test_memory_emits_shared_json_schema():
     assert rec["func_name"] == "test_memory_emits_shared_json_schema"
     assert rec["attempt"] == 1
     assert rec["timestamp"].endswith("Z") or rec["timestamp"].endswith("+00:00")
+
+
+def test_memory_stdlib_record_gets_full_schema():
+    """Foreign (stdlib) records — uvicorn, logging.getLogger — get the full schema
+    via foreign_pre_chain, not a bare {"event": ...}."""
+    buf = io.StringIO()
+    setup_logging()
+    root = logging.getLogger()
+    root.handlers.clear()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(_json_formatter())
+    root.addHandler(handler)
+    logging.getLogger("memory.legacy").warning("stdlib %s", "msg")
+    rec = json.loads(buf.getvalue().strip().splitlines()[-1])
+    assert REQUIRED_KEYS <= set(rec)
+    assert "stdlib msg" in rec["event"]
+    assert rec["level"] == "warning"
+    assert rec["logger"] == "memory.legacy"
+    assert rec["filename"] == "test_memory_logging.py"
