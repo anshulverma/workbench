@@ -98,6 +98,9 @@ async def lifespan(app: FastAPI):
     setup_logging(
         level=getattr(logging, log_cfg.level.upper(), logging.INFO),
         timezone=log_cfg.timezone,
+        log_dir=log_cfg.log_dir or os.environ.get("MEMORY_LOG_DIR", "/app/logs"),
+        max_bytes=log_cfg.max_bytes,
+        backup_count=log_cfg.backup_count,
     )
 
     store = PendingIngestionStore(config.storage.postgres_dsn, config.queue.max_attempts)

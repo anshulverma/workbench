@@ -46,6 +46,9 @@ class QueueConfig(BaseModel):
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     timezone: str = "America/Los_Angeles"
+    log_dir: str | None = None
+    max_bytes: int = 10 * 1024 * 1024
+    backup_count: int = 10
 
 
 class MemoryConfig(BaseModel):

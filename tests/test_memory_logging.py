@@ -54,6 +54,29 @@ def test_memory_emits_shared_json_schema():
     assert rec["timestamp"].endswith("Z") or rec["timestamp"].endswith("+00:00")
 
 
+def test_memory_log_dir_writes_rotating_json_file(tmp_path):
+    """setup_logging(log_dir=...) creates <log_dir>/memory.log and writes
+    structured JSON records there with the shared schema."""
+    setup_logging(log_dir=str(tmp_path))
+    log_file = tmp_path / "memory.log"
+    assert log_file.exists()
+
+    structlog.get_logger("memory.file").info("to-file", attempt=7)
+
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    line = log_file.read_text().strip().splitlines()[-1]
+    rec = json.loads(line)
+    assert REQUIRED_KEYS <= set(rec)
+    assert rec["event"] == "to-file"
+    assert rec["logger"] == "memory.file"
+    assert rec["level"] == "info"
+    assert rec["filename"] == "test_memory_logging.py"
+    assert isinstance(rec["lineno"], int) and rec["lineno"] > 0
+    assert rec["timestamp"].endswith("Z") or rec["timestamp"].endswith("+00:00")
+
+
 def test_memory_stdlib_record_gets_full_schema():
     """Foreign (stdlib) records — uvicorn, logging.getLogger — get the full schema
     via foreign_pre_chain, not a bare {"event": ...}."""

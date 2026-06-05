@@ -102,6 +102,7 @@ def setup_logging(
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.setLevel(level)
+    logging.captureWarnings(True)
 
     stderr_handler = logging.StreamHandler()
     stderr_handler.setFormatter(_formatter(stderr_renderer))

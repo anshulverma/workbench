@@ -38,7 +38,7 @@ services:
     network_mode: host
     init: true
     stop_grace_period: 5s
-    command: ["sh", "-c", "uvicorn memory.main:app --host 0.0.0.0 --port 8422 --no-access-log --log-level warning 2>&1 | tee -a /app/logs/memory.log"]
+    command: ["sh", "-c", "uvicorn memory.main:app --host 0.0.0.0 --port 8422 --no-access-log --log-level warning"]
     depends_on:
       - postgres
       - neo4j
