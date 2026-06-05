@@ -13,7 +13,7 @@ down:
 	$(COMPOSE) $(COMPOSE_FILES) down
 
 logs:
-	tail -f data/logs/*.log
+	python scripts/logview.py data/logs
 
 health:
 	@curl -s http://localhost:8421/health | python3 -m json.tool

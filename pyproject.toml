@@ -23,6 +23,7 @@ dependencies = [
     "google-auth-httplib2>=0.2",
     "structlog>=24.0",
     "prometheus-client>=0.20",
+    "rich>=13",
 ]
 
 [project.optional-dependencies]
