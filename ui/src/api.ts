@@ -35,6 +35,10 @@ export async function fetchActions(
   const query = params ? '?' + new URLSearchParams(params).toString() : ''
   const headers = await authHeaders()
   const res = await fetch(`/api/actions${query}`, { headers })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`${res.status}: ${body}`)
+  }
   return res.json()
 }
 
