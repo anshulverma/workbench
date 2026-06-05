@@ -25,7 +25,10 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
             return None
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in ("/health", "/health/live", "/health/ready"):
+        path = request.url.path
+        if path in ("/health", "/health/live", "/health/ready", "/metrics"):
+            return await call_next(request)
+        if path.startswith("/ui"):
             return await call_next(request)
         token = self.token
         if token and request.headers.get("Authorization", "") != f"Bearer {token}":
