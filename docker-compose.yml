@@ -4,7 +4,7 @@ services:
     image: docker.io/library/postgres:17
     network_mode: host
     entrypoint: ["sh", "-c"]
-    command: ["docker-entrypoint.sh postgres -c log_timezone=America/Los_Angeles -c timezone=America/Los_Angeles 2>&1 | tee -a /var/log/app/postgres.log"]
+    command: ["docker-entrypoint.sh postgres -c log_timezone=America/Los_Angeles -c timezone=America/Los_Angeles -c log_line_prefix='%m [%p] %q%u@%d ' 2>&1 | tee -a /var/log/app/postgres.log"]
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
