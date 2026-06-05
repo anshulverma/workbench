@@ -1,0 +1,9 @@
+# ADR 0019: Fact Curation Requires Memory-Service Tombstones, Not Just Deletion
+
+**Fact Curation** (editing or deleting a learned Preference Fact from the dashboard) is built end-to-end: UI → `PATCH/DELETE /api/memory/facts/{id}` → new `MemoryLayer.update_fact`/`delete_fact` → the owned memory service (Graphiti). This requires a service-assigned `Fact.id` (the model gains `id`; `query_preferences` stops discarding it) and, critically, the memory service must implement deletion as a **tombstone / negative-preference** (via Graphiti edge-invalidation), not a plain removal. `NoopMemoryLayer` returns `501`.
+
+We chose tombstones over plain deletion because Workbench continuously re-synthesizes Preference Facts from the **Interaction Log** (which is never pruned). A plainly deleted fact would simply be re-learned, making "delete" a silent no-op over time — misleading in exactly the way a security/correctness-conscious user would not accept. An edit is likewise an authoritative override that the service must pin so re-extraction does not overwrite it.
+
+The trade-off is a cross-repository dependency: the mutation endpoints, fact-id propagation, and tombstone support live in the memory service (workbench-meta), so the dashboard feature is only fully functional once that service ships them; until then the Workbench-side scaffolding returns the memory layer's response (e.g. `501` under Noop). We accepted building the full stack now (the user's choice) rather than deferring curation, because we own the memory service.
+
+**Consequence:** Fact Curation actions are recorded via ordinary structured app logging with the **Correlation ID**, **not** appended to the Interaction Log (which is reserved for triage-card responses feeding preference synthesis). The memory service also needs a "list all facts" contract distinct from the scoring-time `query_preferences(context)` filter so the dashboard can show every fact.
