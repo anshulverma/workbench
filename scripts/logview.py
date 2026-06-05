@@ -22,7 +22,7 @@ _LEVELS = {"debug", "info", "warning", "error", "critical"}
 _LEVEL_ALIASES = {
     "warn": "warning", "err": "error", "fatal": "critical", "panic": "critical",
     "log": "info", "detail": "info", "hint": "info", "notice": "info",
-    "trace": "debug",
+    "statement": "debug", "trace": "debug",
 }
 
 
@@ -53,6 +53,17 @@ def _parse_ts(value: str) -> datetime.datetime | None:
         return None
 
 
+_GLOG_RE = re.compile(
+    r"^(?P<level>[IWEF])(?P<date>\d{4}) "
+    r"(?P<time>\d{2}:\d{2}:\d{2}\.\d+)\s+(?P<pid>\d+) "
+    r"(?P<loc>.+?)\] (?P<msg>.*)$"
+)
+_GLOG_LEVELS = {"I": "info", "W": "warning", "E": "error", "F": "critical"}
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+_PY_WARNING_RE = re.compile(r"\w+Warning\b")
+
 _STRUCTURAL = {"timestamp", "level", "logger", "filename", "lineno",
                "func_name", "event", "exception"}
 
@@ -76,7 +87,7 @@ def parse_json(line: str, service: str) -> Record:
     return Record(
         ts=_parse_ts(obj.get("timestamp", "")),
         service=service,
-        level=_norm_level(obj.get("level", "unknown")),
+        level=_norm_level(obj.get("level", "info")),
         location=loc,
         message=str(obj.get("event", "")),
         extras=extras,
@@ -96,6 +107,9 @@ _PG_RE = re.compile(
 def parse_postgres(line: str, service: str) -> Record:
     m = _PG_RE.match(line)
     if not m:
+        if line.startswith("\t"):
+            return Record(ts=None, service=service, level="debug",
+                          location=None, message=line.strip(), raw=line)
         return parse_raw(line, service)
     ts = None
     try:
@@ -108,7 +122,7 @@ def parse_postgres(line: str, service: str) -> Record:
 
 _NEO4J_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[+\-]\d{4}) "
-    r"(?P<level>[A-Z]+)\s+\[(?P<comp>[^\]]*)\]\s*(?P<msg>.*)$"
+    r"(?P<level>[A-Z]+)\s+(?:\[(?P<comp>[^\]]*)\]\s*)?(?P<msg>.*)$"
 )
 
 
@@ -121,11 +135,35 @@ def parse_neo4j(line: str, service: str) -> Record:
 
 
 _KW_RE = re.compile(r"\b(CRITICAL|FATAL|ERROR|WARNING|WARN|INFO|DEBUG)\b")
+_KW_CI_RE = re.compile(r"\b(critical|fatal|error|warning|warn|info|debug)\b", re.IGNORECASE)
+
+
+def _parse_glog_ts(date_str: str, time_str: str) -> datetime.datetime | None:
+    try:
+        month, day = int(date_str[:2]), int(date_str[2:])
+        t = datetime.datetime.strptime(time_str[:15], "%H:%M:%S.%f")
+        return datetime.datetime(datetime.date.today().year, month, day,
+                                 t.hour, t.minute, t.second, t.microsecond)
+    except (ValueError, AttributeError):
+        return None
 
 
 def parse_raw(line: str, service: str) -> Record:
-    m = _KW_RE.search(line)
-    level = _norm_level(m.group(1)) if m else "unknown"
+    m = _GLOG_RE.match(line)
+    if m:
+        return Record(ts=_parse_glog_ts(m["date"], m["time"]),
+                      service=service, level=_GLOG_LEVELS[m["level"]],
+                      location=m["loc"], message=m["msg"], raw=line)
+    clean = _ANSI_RE.sub("", line) if "\x1b" in line else line
+    m = _KW_RE.search(clean)
+    if not m:
+        m = _KW_CI_RE.search(clean)
+    if m:
+        level = _norm_level(m.group(1))
+    elif _PY_WARNING_RE.search(clean):
+        level = "warning"
+    else:
+        level = "unknown"
     return Record(ts=None, service=service, level=level, location=None,
                   message=line, raw=line)
 

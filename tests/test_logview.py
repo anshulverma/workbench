@@ -104,6 +104,86 @@ def test_should_show_filters():
     assert logview.should_show(unk, services=set(), excludes=set(), min_level="error")
 
 
+# --- Glog format parsing ----------------------------------------------------
+
+def test_glog_info():
+    r = logview.parse_raw(
+        'I0604 11:33:26.400957 34336 base.py:203] Job executed', "workbench")
+    assert r.level == "info"
+    assert r.location == "base.py:203"
+    assert r.message == "Job executed"
+    assert r.ts is not None
+
+
+def test_glog_error():
+    r = logview.parse_raw(
+        'E0604 12:54:56.406770 2794032 FileUtil.cpp:546] Open failed', "dcat")
+    assert r.level == "error"
+    assert r.location == "FileUtil.cpp:546"
+
+
+def test_glog_warning():
+    r = logview.parse_raw("W0604 10:00:00.000000 123 x.py:1] caution", "workbench")
+    assert r.level == "warning"
+
+
+def test_glog_fatal():
+    r = logview.parse_raw("F0604 10:00:00.000000 123 x.py:1] crash", "workbench")
+    assert r.level == "critical"
+
+
+# --- JSON missing level defaults to info ------------------------------------
+
+def test_json_missing_level_defaults_info():
+    r = logview.parse_json('{"event":"startup"}', "workbench")
+    assert r.level == "info"
+    assert r.message == "startup"
+
+
+# --- Neo4j bracketless format -----------------------------------------------
+
+def test_neo4j_bracketless():
+    line = "2026-06-02 16:39:28.052+0000 INFO  Logging config in use"
+    r = logview.parse_neo4j(line, "neo4j")
+    assert r.level == "info"
+    assert "Logging config" in r.message
+    assert r.location is None
+
+
+# --- PostgreSQL STATEMENT + SQL continuations --------------------------------
+
+def test_pg_statement_level():
+    line = "2026-06-02 19:33:51.930 UTC [287] STATEMENT:  TRUNCATE entities"
+    r = logview.parse_postgres(line, "postgres")
+    assert r.level == "debug"
+
+
+def test_pg_sql_continuation():
+    r = logview.parse_postgres("\t            UPDATE pending_ingestions", "postgres")
+    assert r.level == "debug"
+    assert "UPDATE pending_ingestions" in r.message
+
+
+# --- ThriftPyDeprecatedWarning and ANSI codes --------------------------------
+
+def test_python_warning_pattern():
+    line = "monitoring.obc.py:13: ThriftPyDeprecatedWarning: Uses thrift-py-deprecated"
+    r = logview.parse_raw(line, "dcat")
+    assert r.level == "warning"
+
+
+def test_ansi_colored_line():
+    line = ("\x1b[2m2026-06-04T20:02:59\x1b[0m "
+            "[\x1b[32m\x1b[1minfo     \x1b[0m] \x1b[1mConfig loaded\x1b[0m")
+    r = logview.parse_raw(line, "workbench")
+    assert r.level == "info"
+
+
+def test_case_insensitive_level_keyword():
+    r = logview.parse_raw("INFO:     Started server process [14]", "memory")
+    assert r.level == "info"
+
+
 # --- Acceptance criterion 2: partial-line safety -----------------------------
 
 class _Args:
