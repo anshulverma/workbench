@@ -91,7 +91,7 @@ A single `QueryClient` configures: `staleTime` per query, polling via `refetchIn
 
 ### 1.6 API typing and fetch wrapper
 
-`npm run gen:api` runs `openapi-typescript http://127.0.0.1:8000/openapi.json -o src/lib/api-types.ts`; the generated file is committed. The existing thin fetch wrapper in `src/lib/api.ts` keeps `getToken()` and `authHeaders()` but the stale docstrings claiming "session cookie or query param" are replaced with the accurate contract:
+`npm run gen:api` runs `openapi-typescript http://127.0.0.1:8421/openapi.json -o src/lib/api-types.ts`; the generated file is committed. The existing thin fetch wrapper in `src/lib/api.ts` keeps `getToken()` and `authHeaders()` but the stale docstrings claiming "session cookie or query param" are replaced with the accurate contract:
 
 ```ts
 // getToken(): GET /api/auth/token (the Token-Vending Endpoint) returns
