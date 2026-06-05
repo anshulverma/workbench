@@ -1,5 +1,7 @@
 COMPOSE := docker compose
 COMPOSE_FILES ?= -f docker-compose.yml
+# Use the venv created by `make setup`; override with `make logs PYTHON=...`.
+PYTHON ?= $(HOME)/.venv/workbench/bin/python
 
 .PHONY: build up down logs health triage setup test migrate
 
@@ -13,7 +15,7 @@ down:
 	$(COMPOSE) $(COMPOSE_FILES) down
 
 logs:
-	python scripts/logview.py data/logs
+	$(PYTHON) scripts/logview.py data/logs
 
 health:
 	@curl -s http://localhost:8421/health | python3 -m json.tool
