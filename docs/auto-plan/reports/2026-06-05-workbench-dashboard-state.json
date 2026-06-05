@@ -1,0 +1,105 @@
+{
+  "topic": "workbench-dashboard",
+  "title": "Professional full-stack management dashboard for Workbench",
+  "domains": ["frontend", "api-design", "backend"],
+  "iteration": 2,
+  "phase": "artifacts",
+  "flags": {"max_iterations": 20, "max_depth": 10, "harden": true, "max_passes": 10, "confidence_threshold": "medium"},
+  "user_model_brief": "Meta engineer (IC), single-user Meta-internal tool (Podman on devgpu, SSH-tunnel access). Decisive, 'do it now, avoid future migrations'. Wants thorough/hardened/professional results. Backend: PostgreSQL + repository pattern, Alembic, async, typed pydantic, structured logging, ADRs sparingly. Frontend: React + Vite + TS + shadcn/ui + Tailwind, dark mode, sidebar nav, Recharts. Security-conscious: secrets never reach browser. Use latest library versions. Keeps docs split: foundational in workbench/, Meta overlay in workbench-meta/.",
+  "settled_decisions": {
+    "S1": "UI is a pure HTTP client; all data via REST under /api; never touches storage directly.",
+    "S2": "Stack = React + Vite + TS + Tailwind + shadcn/ui, dark-mode default, sidebar nav, Recharts.",
+    "S3": "Product name in UI = 'Workbench'.",
+    "S4": "Bearer-token auth on /api except /health,/metrics; GET /api/auth/token is auth-exempt (middleware exempts /ui* + /api/auth/token).",
+    "S5": "Static build served at /ui via FastAPI StaticFiles; vite base '/ui/'; dev vite proxy to :8421; prod via SSH tunnel; no server catch-all.",
+    "S6": "Full-stack scope incl. new backend endpoints.",
+    "S7": "FULL management UI. Writes: sources add/edit/enable-disable/delete + manual poll; dead-letter retry/purge; interactive triage respond (numbered+free-text); messenger config edit; facts curation (edit/delete).",
+    "S8": "Single-user tool; no multi-tenant scoping.",
+    "S9": "No new storage backend; PostgreSQL via repository pattern; aggregation = new store methods + Alembic.",
+    "S10": "Latest library versions: Tailwind v4 (CSS-first, @tailwindcss/vite, tw-animate-css), React 19, Vite 7, react-router 7 (HashRouter), TanStack Query v5, Recharts 3, Zod 4, react-hook-form 7, openapi-typescript 7, vitest 3, RTL 16, MSW 2, sonner 2, lucide-react. Migrate existing ui/ from Tailwind v3/React 18.",
+    "S11": "Config changes (sources AND messenger) written back to config.yml via ruamel.yaml round-trip (preserve ${oc.env} interpolations/comments, never serialize resolved secrets, atomic temp+os.replace) AND hot-reloaded via targeted provider swap. YAML is single source of truth. Sequence: validate -> instantiate -> write YAML -> copy-on-write swap, all under asyncio.Lock; never write YAML if instantiation fails.",
+    "S12": "Real per-source cron: one APScheduler CronTrigger job per enabled source (id poll_source:{source_id}, max_instances=1, coalesce=True, tz=logging.timezone). poll_interval_minutes demoted to alert_check interval. Watermarks re-keyed source_last_polled:{source_id} in stores.config with non-destructive upgrade migration. Each YAML source gets a stable id (config version bump).",
+    "S13": "Facts curation built end-to-end: UI -> /api/memory/facts/{id} (DELETE/PATCH) -> MemoryLayer.delete_fact/update_fact -> owned memory service (Graphiti). Fact gains id; memory service adds DELETE/PATCH /facts/{id} with tombstone/negative-preference (Graphiti edge-invalidation) so deletes survive re-learning. Noop returns 501. Memory-service work lives in workbench-meta repo.",
+    "S14": "Web triage respond: numbered + free-text; web-native confirmation flow (return awaiting_confirmation + POST /api/triage/confirm); close interaction-log audit gap on early-return branches; 409 optimistic-concurrency guard on shared respond path (reject responded/expired cards)."
+  },
+  "decision_log": {
+    "backend_stats": [
+      "Aggregation in new store methods (COUNT GROUP BY), no materialized views at single-user scale; add btree indexes on items(source_type), items(status), ingestion_queue(status) if missing.",
+      "GET /api/stats/overview -> {items:{by_status,by_priority,by_category,total}, queue summary, source summary}. Plus GET /api/stats/sources, /api/stats/queue, /api/stats/ingestion-timeseries?days=14&bucket=day.",
+      "Distinguish raw_enqueued (ingestion_queue rows) vs items_stored (items rows) vs in_flight (queued+processing); never bare 'ingested count'.",
+      "GET /api/jobs list with limit/offset + total; JobStore.list_jobs + count.",
+      "Promote recent-activity feed out of /api/debug/pipeline to GET /api/activity?limit (or /api/stats/activity).",
+      "New ingestion_runs table + IngestionRunStore: one row per poll (source_id, started_at, finished_at, status running/success/error, raw_enqueued, error). Backs last-run, per-source counts, run history, timeseries. RetentionConfig gains ingestion_runs_days.",
+      "Fix /health pre-existing bugs: get_depth() vs queue_depth() name mismatch; add count_dead_letters() to avoid full-scan len()."
+    ],
+    "backend_sources": [
+      "YAML authoritative (S11). source_configs DB table deprecated as config store; watermarks live in stores.config keyed by source_id; runtime status derived from app.state.sources + ingestion_runs + debug adapters health.",
+      "POST /api/sources accepts adapter_type short name -> server-side allowlist map to class path (never raw dotted path; import-gadget guard). Validate config against adapter ProviderConfig. 201 returns full source.",
+      "GET /api/sources/adapter-types -> per-type ProviderConfig JSON schema (model_json_schema()) + requires_connection bool.",
+      "GET /api/connections -> names + health only (no secrets) to gate connection-requiring adapters.",
+      "Secrets never in DB/YAML values: GitHub ambient gh auth (no token field); Google adapters reference a named connection (filesystem creds via ${oc.env}). Add-source form references a connection, never types a secret. New connection -> reject hot-add, user adds to YAML connections + restart.",
+      "create_providers_from_list carries source_id to each adapter (tuple/attr injection) so scheduler maps adapter->id.",
+      "DELETE /api/sources/{id} removes YAML entry + tears down live adapter + scheduler job + watermark; YAML-defined sources editable too (since YAML is the store).",
+      "POST /api/sources/{id}/poll -> manual poll via same _poll_one_source(trigger=MANUAL); returns job ids.",
+      "Atomicity + asyncio.Lock + copy-on-write swap; messenger swap updates app.state.messenger + scheduler.messenger + alert_manager.messenger."
+    ],
+    "backend_messenger_facts": [
+      "GET /api/messenger -> {configured, type, class, config(allowlisted: space_id,timeout_seconds), [reachable,checked_at if ?check=true]}. Never service_account_key_path. configured=false when None. 200 always.",
+      "PATCH /api/messenger -> edit messenger config via S11 YAML-write+hot-swap.",
+      "GET /api/memory/facts -> envelope {available, memory_type(noop/http/zep), facts:[{id,content,source,timestamp}]}. 200 always; three empty states (noop / configured-down / configured-empty).",
+      "Fact gains id (service-assigned). Fix http.py timestamp population bug; Fact.timestamp -> datetime|None.",
+      "DELETE/PATCH /api/memory/facts/{id} -> MemoryLayer.delete_fact/update_fact. Noop -> 501. Memory service: DELETE/PATCH /facts/{id} + tombstone/negative-preference. Fact curation NOT logged to interaction log (structured app log instead).",
+      "Memory service 'list all facts': add unfiltered list contract (query_preferences(None) or /list/preferences) distinct from scoring-time context filter."
+    ],
+    "backend_triage": [
+      "Reuse POST /api/triage/respond for numbered choices. Add 409 guard: reject when card.status in (responded, expired).",
+      "Free-text web: return followup_status=awaiting_confirmation + POST /api/triage/confirm endpoint for destructive (skip/mute/defer). Fix early-return branches to write InteractionEntry (close audit gap).",
+      "Dead-letter retry/purge endpoints sufficient (single-item); UI loops client-side for bulk; no bulk endpoint v1."
+    ],
+    "backend_scheduler": [
+      "One CronTrigger job per source via CronTrigger.from_crontab(schedule, tz). No croniter dep (APScheduler 3.10 validates). Job id poll_source:{source_id}, max_instances=1, coalesce=True.",
+      "Runtime add_job/reschedule_job/remove_job on source add/edit/disable/delete. Disabled = remove job.",
+      "_poll_one_source(source_id, trigger=POLL) shared by scheduled + manual; per-source asyncio.Lock; writes ingestion_runs rows (start/finish/error) and advances watermark.",
+      "Stable source id: assign deterministic/persisted id written back to YAML; one-time migrate source_last_polled:{adapter_type} -> {source_id} to avoid poll storm; stagger startup first-run.",
+      "Security/redaction: promote debug.py _redact_secrets to workbench/redaction.py; allowlist-on-output for new endpoints; croniter not added; validate cron with CronTrigger.from_crontab at API boundary.",
+      "Recommend loopback bind (host 127.0.0.1/::1) documented as the SSH-tunnel boundary; token-vend exempt safe only under loopback."
+    ],
+    "frontend": [
+      "HashRouter (no server changes). Tailwind v4 + React 19 migration: remove tailwind.config.js/postcss.config.js/autoprefixer; add @tailwindcss/vite; index.css @import 'tailwindcss' + @theme + dark via @custom-variant/class.",
+      "shadcn/ui init: components.json, @/* alias in tsconfig+vite, tw-animate-css, CSS variable tokens, dark by default.",
+      "TanStack Query v5 data layer; refetchInterval ~5-30s on live pages, pause when tab hidden; invalidate on mutation. sonner toasts. ErrorBoundary + Skeleton + EmptyState + StatCard/DataTable/ChartCard/HealthBadge shared components.",
+      "openapi-typescript codegen from /openapi.json -> src/lib/api-types.ts (npm run gen:api), committed. Thin fetch wrapper keeps existing authHeaders()/getToken(); fix stale auth docstrings.",
+      "5-state taxonomy: loading/error/empty/unauthorized/degraded; surface X-Request-ID on errors; ban dangerouslySetInnerHTML.",
+      "Structure: src/pages, src/components/ui (shadcn), src/components (app), src/lib (api, query client, types), src/hooks.",
+      "Sidebar nav order: Overview, Triage, Action Items, Ingestion, Sources, Knowledge, Messenger, Settings.",
+      "Pages: Overview (6 stat cards + Recharts ingestion-timeseries/by-priority/by-source + recent jobs + conditional dead-letter banner); Ingestion (per-source panels last-run/counts/recent items + activity feed + job history + queue/dead-letter w/ retry+purge); Sources (DataTable + two-step add form w/ per-adapter zod schemas, connection picker, cron presets+advanced+next-run preview, restart-free hot-add, delete, poll-now); Messenger (read+edit config); Knowledge (facts list/search/group, edit/delete, three empty states); Triage (numbered+free-text respond+confirm); Action Items (existing).",
+      "Add-source per-adapter form: hardcoded zod discriminated union mirroring ProviderConfig for v1 (4 in-repo adapters); backend GET /api/sources/adapter-types available as escape hatch. chat user_id required iff track in (participating,mentioned). adapter_type immutable on edit."
+    ],
+    "hardening_testing": [
+      "Backend pytest per new endpoint: auth (401/200, token reachable), redaction (no token/key/secret/password/dsn/service_account_key_path leaks, parametrized over seeded fake secrets, regression), validation (bad cron/enum -> 422), aggregation correctness, 409 concurrency guard, YAML write-back preserves interpolations.",
+      "Frontend Vitest + RTL + MSW: five states per page, token bootstrap, mutation happy+failure (optimistic toggle rollback).",
+      "a11y: keyboard nav, modal focus trap/return, aria-labels on icon buttons, dark-mode contrast for P0-P3 badges, visible focus rings.",
+      "Audit: mutations (source edit, messenger edit) structured-logged with correlation id; web triage responses create InteractionEntry; fact curation app-logged not interaction-logged.",
+      "No CORS (same-origin /ui); explicit LIMIT/pagination on list endpoints."
+    ]
+  },
+  "adr_candidates_final": [
+    "Dashboard sources: YAML write-back via ruamel round-trip + targeted hot-reload, reversing 'sources YAML-only / restart required'.",
+    "Per-source cron jobs replace global poll interval; per-source_id watermarks with non-destructive migration.",
+    "ingestion_runs table for per-source run history + stats + timeseries.",
+    "Dedicated /api/stats/* aggregation endpoints (vs client-side counting).",
+    "Read API empty-state contract: 200 + envelope, never 5xx for not-configured.",
+    "Allowlist-on-output secret redaction (shared workbench/redaction.py); messenger/source config exposure.",
+    "UI auth & secret-exposure model: auth-exempt token-vend safe only under loopback/SSH isolation; recommend loopback bind.",
+    "HashRouter for the /ui SPA.",
+    "TanStack Query as the data layer.",
+    "Facts curation end-to-end with memory-service mutation + tombstone (Graphiti edge-invalidation); Fact.id contract.",
+    "Multi-surface triage response: 409 optimistic-concurrency guard + web-native confirmation flow.",
+    "Frontend stack upgrade to Tailwind v4 / React 19 / latest deps."
+  ],
+  "blocked_or_cross_repo": [
+    "Memory-service DELETE/PATCH /facts/{id} + tombstone + fact-id + list-all contract -> implemented in workbench-meta memory service (Graphiti). Workbench side ships MemoryLayer methods + API + UI.",
+    "Connections creation/OAuth remains config.yml + restart (out of UI scope); UI only reads connection names to gate Google adapters."
+  ],
+  "artifacts": {"context_md": "pending updates", "spec": null, "adrs": [], "plan": null}
+}

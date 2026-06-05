@@ -123,6 +123,47 @@ _Avoid_: "context" alone (too generic), "lookup"
 **Morning Briefing**: Daily automated notification summarizing six sections: (1) P0 -- Today, (2) P1 -- This Week, (3) new items since yesterday by source type, (4) pending triage count + oldest card age, (5) queue health -- ingestion queue depth and failed/stuck items (only if non-zero), (6) auto-decisions overnight -- cards that expired and were auto-included at P3 (only if non-zero). Sent by the scheduler at a configurable time.
 _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 
+### Management Dashboard (Web UI)
+
+**Management Dashboard**: The multi-page React web app served at `/ui` for visibility into and management of Workbench (Overview, Triage, Action Items, Ingestion, Sources, Knowledge, Messenger, Settings). A pure HTTP client -- all reads/writes go through `/api`, never direct storage. Distinct from the messenger-based daily surface (Morning Briefing).
+_Avoid_: "dashboard" unqualified (collides with the morning-briefing/messenger surface), "admin panel", "console".
+
+**Stats Endpoint**: A server-side aggregation endpoint under `GET /api/stats/*` (`overview`, `sources`, `queue`, `ingestion-timeseries`) returning pre-computed aggregates (COUNT ... GROUP BY in repository methods) for dashboard cards and charts. Distinct from row-returning list endpoints (`/api/items`, `/api/jobs`).
+_Avoid_: "metrics" (reserved for the Prometheus `/metrics` endpoint), "analytics".
+
+**Ingested Count**: Deliberately ambiguous -- always qualify. `raw_enqueued` (ingestion_queue rows for a source), `items_stored` (items rows for a source), `in_flight` (queued+processing depth).
+_Avoid_: bare "ingested count" / "items ingested" in API field names.
+
+**Ingestion Run**: One row in the `ingestion_runs` table per source poll (scheduled or manual): `source_id`, `started_at`, `finished_at`, `status` (running/success/error), `raw_enqueued`, `error`. Written by `_poll_one_source`. Distinct from a Pipeline Job (per-raw-item processing unit, downstream of a run).
+_Avoid_: "poll job" (the APScheduler job is the schedule, not the execution record), conflating with Pipeline Job.
+
+**Source Job**: An APScheduler `CronTrigger` job, one per enabled source, id `poll_source:{source_id}`, whose cron comes from `SourceConfig.schedule` (`max_instances=1`, `coalesce=True`, tz from `logging.timezone`). Replaces the former single global `poll_sources` interval job.
+_Avoid_: "poll_sources job" (the old global job).
+
+**Watermark**: The per-source poll cursor `source_last_polled:{source_id}` stored in the config store (`stores.config`), passed as `since=` to `SourceAdapter.poll()`. Keyed by `source_id` (not `adapter_type`).
+_Avoid_: "checkpoint", "cursor" alone, "adapter state" (the Adapter State Store is a distinct facility for adapter-internal state).
+
+**Config Write-Back**: Persisting a UI-initiated source/messenger change to the base `config.yml` via a ruamel.yaml round-trip that edits only the `sources:`/`messenger:` nodes, preserving `${oc.env:...}` interpolation strings, comments, and formatting; written atomically (temp file + `os.replace`). Never re-serializes the resolved OmegaConf container (which would bake plaintext secrets into the file).
+_Avoid_: "config save", "config sync".
+
+**Targeted Hot-Reload**: Re-instantiating only the changed provider(s) and swapping them into `app.state` (sources list copy-on-write; messenger rebind + `scheduler.messenger`/`alert_manager.messenger` update) without a process restart, after a successful Config Write-Back. Sequence: validate -> instantiate -> write YAML -> swap, under an `asyncio.Lock`. Distinct from a full config reload.
+_Avoid_: "reload" alone, "restart".
+
+**Redaction Rule**: The shared `redact_secrets()` contract (promoted from `api/debug.py` to `workbench/redaction.py`) that every read endpoint serializing config-derived data must apply: denylist on key-name regex (`token|key|secret|password|dsn|credential|service_account|...`) plus an explicit field denylist; new endpoints prefer allowlist-on-output (return only named safe fields). A separate layer from the Sanitizing Processor (which redacts log output).
+_Avoid_: "scrubber", "log sanitizer" (that is the Sanitizing Processor).
+
+**Token-Vending Endpoint**: `GET /api/auth/token` -- an auth-exempt endpoint returning the bearer token to the same-origin `/ui` SPA. Safe only under loopback/SSH-tunnel network isolation (server should bind loopback).
+_Avoid_: "login endpoint" (no credentials exchanged), "auth endpoint" (it grants, doesn't verify).
+
+**UI State Taxonomy**: The five canonical states every data-bearing dashboard view implements -- `loading`, `error`, `empty`, `unauthorized`, `degraded`. "Memory not configured" and "no messenger" are `degraded`, not `error`. Error states surface the `X-Request-ID` (Correlation ID) for traceability.
+_Avoid_: "loading spinner state" (taxonomy is broader), "error page".
+
+**Fact Curation**: User-initiated edit/delete of a learned Preference Fact via the Management Dashboard, executed end-to-end (UI -> `PATCH/DELETE /api/memory/facts/{id}` -> `MemoryLayer.update_fact`/`delete_fact` -> memory service). Requires a service-assigned `Fact.id` and a tombstone / negative-preference in the memory service so a deleted fact is not re-synthesized from the Interaction Log. Returns 501 under `NoopMemoryLayer`. Deliberately NOT recorded in the Interaction Log (uses ordinary structured app logging).
+_Avoid_: "edit preference" / "delete preference" (ambiguous with messenger config edits).
+
+**Source Health Status**: A source's derived dashboard state -- `never_run`, `healthy`, `erroring`, or `disabled` -- computed from the latest Ingestion Run plus the referenced `Connection.is_healthy()`, not stored on `SourceConfig`.
+_Avoid_: "source status" alone (ambiguous with the `enabled` flag).
+
 ## Relationships
 
 - **Source Adapters** produce **Raw Items** with **Urgency Signals**
@@ -170,8 +211,8 @@ _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 - **Preference Summary** (hand-rolled) -- replaced by the memory layer's knowledge graph and automatic fact extraction.
 - **pydantic-settings** -- replaced by YAML config with OmegaConf for env var interpolation. All config models are plain `pydantic.BaseModel`, not `BaseSettings`.
 - **Heuristic queue scoring** -- replaced by LLM-based queue scoring. Static source-type priority is too blunt; an LLM can weigh contextual urgency signals.
-- **POST/DELETE /api/sources** -- source creation/deletion is YAML-config-only. API manages runtime state (enable/disable, schedule) via GET and PATCH.
-- **POST /api/reload** -- deferred. Config changes require server restart for Phase 1a.
+- ~~**POST/DELETE /api/sources** -- source creation/deletion is YAML-config-only.~~ **REINSTATED** by the Management Dashboard: `POST/PATCH/DELETE /api/sources` write source definitions back to `config.yml` (surgical ruamel round-trip) and hot-reload the live adapter. See the Management Dashboard section and ADR on YAML write-back. Connection definitions remain YAML-only + restart.
+- ~~**POST /api/reload** -- deferred. Config changes require server restart.~~ Superseded for **sources and messenger** only by **Targeted Hot-Reload** (see Management Dashboard section). `llm`, `storage`, and `connections` changes still require restart.
 - **`subprocess.run` for external calls** -- replaced by `asyncio.create_subprocess_exec` in all providers to avoid blocking the event loop.
 - **Thread pool executor for pipeline** -- unnecessary since all pipeline code is fully async (AsyncAnthropic, asyncpg, async subprocess). Concurrency controlled by asyncio.Semaphore.
 - **`server/` package layout** -- replaced by `src/workbench/` for proper Python packaging. Class paths in YAML config use `workbench.providers...` not `server.providers...`.
