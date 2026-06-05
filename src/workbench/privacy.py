@@ -5,7 +5,9 @@ from typing import Any
 
 from workbench.config import PrivacyConfig
 
-EXCLUDED_KEYS = frozenset({"event", "level", "timestamp", "logger", "request_id"})
+EXCLUDED_KEYS = frozenset(
+    {"event", "level", "timestamp", "logger", "request_id", "filename", "lineno", "func_name"}
+)
 
 
 class SanitizingProcessor:

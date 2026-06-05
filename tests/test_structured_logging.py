@@ -1,5 +1,6 @@
 # tests/test_structured_logging.py
 
+import io
 import json
 import logging
 import uuid
@@ -9,6 +10,26 @@ import structlog
 
 from workbench.logging import setup_logging
 from workbench.middleware import CorrelationIdMiddleware
+
+
+def _attach_capture():
+    """Attach a StringIO StreamHandler over the root logger's JSON formatter and
+    return (lines_callable, detach_callable). Must be called AFTER setup_logging,
+    since setup_logging clears the root logger's handlers."""
+    buf = io.StringIO()
+    root = logging.getLogger()
+    handler = logging.StreamHandler(buf)
+    # Reuse the formatter setup_logging installed so we capture JSON lines.
+    handler.setFormatter(root.handlers[0].formatter)
+    root.addHandler(handler)
+
+    def _lines():
+        return [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+
+    def _detach():
+        root.removeHandler(handler)
+
+    return _lines, _detach
 
 
 def test_json_output_format(tmp_path, capsys):
@@ -75,3 +96,62 @@ async def test_correlation_id_middleware():
     assert request_id is not None
     uuid.UUID(request_id)  # valid UUID
     assert resp.json()["request_id"] == request_id
+
+
+def test_callsite_fields_present_in_json():
+    """JSON lines include real filename/lineno, never 'unknown'."""
+    setup_logging(log_format="json")
+    lines, detach = _attach_capture()
+    try:
+        log = structlog.get_logger("workbench.test")
+        log.info("hello world", count=3)
+    finally:
+        detach()
+    rec = json.loads(lines()[-1])
+    assert rec["filename"] == "test_structured_logging.py"
+    assert isinstance(rec["lineno"], int) and rec["lineno"] > 0
+    assert rec["func_name"] == "test_callsite_fields_present_in_json"
+    assert rec["event"] == "hello world"
+    assert rec["count"] == 3
+    assert rec["level"] == "info"
+    # UTC 'Z' on disk (utc=True)
+    assert rec["timestamp"].endswith("Z") or rec["timestamp"].endswith("+00:00")
+
+
+def test_unknown_format_falls_back_to_json():
+    """An unknown log_format (e.g. legacy 'glog') renders JSON, not an error."""
+    setup_logging(log_format="glog")
+    lines, detach = _attach_capture()
+    try:
+        structlog.get_logger("workbench.test").info("fallback", n=1)
+    finally:
+        detach()
+    rec = json.loads(lines()[-1])
+    assert rec["event"] == "fallback"
+    assert rec["n"] == 1
+
+
+def test_json_is_default_format():
+    from workbench.config import LoggingConfig
+    assert LoggingConfig().format == "json"
+
+
+def test_sanitizer_excludes_callsite_fields():
+    from workbench.config import PrivacyConfig
+    from workbench.privacy import SanitizingProcessor
+
+    config = PrivacyConfig(max_content_in_logs=5, redact_emails=True, redact_phones=True)
+    p = SanitizingProcessor(config)
+    out = p(
+        None,
+        "info",
+        {
+            "event": "e",
+            "filename": "a_very_long_filename.py",
+            "lineno": 4242,
+            "func_name": "some_long_function_name",
+        },
+    )
+    assert out["filename"] == "a_very_long_filename.py"  # not truncated
+    assert out["lineno"] == 4242
+    assert out["func_name"] == "some_long_function_name"
