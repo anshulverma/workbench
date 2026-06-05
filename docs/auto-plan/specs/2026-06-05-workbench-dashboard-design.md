@@ -209,7 +209,7 @@ Sidebar navigation order is fixed: **Overview, Triage, Action Items, Ingestion, 
 | Configured, no facts | `available:true, facts:[]` | `empty` "No preference facts learned yet" |
 
 - **Fact Curation** controls: per-fact edit and delete, each behind a confirm dialog, calling `PATCH /api/memory/facts/{id}` and `DELETE /api/memory/facts/{id}`.
-- An entities-count `StatCard` (scalar only) reads the `total` field from `GET /api/memory/entities` (best-effort; shows `—` when memory is unavailable) and links to a future entities view; v1 shows flat facts only and renders no entity/relationship graph.
+- v1 shows flat facts only and renders no entity/relationship graph or entities count. (A future entities view may read the existing `GET /api/memory/entities` — explicitly out of scope here; see Out of Scope.)
 
 ### 2.8 Settings — route `/#/settings`
 
@@ -541,7 +541,7 @@ Every config mutation (source CRUD, messenger edit) emits a structured app-log a
 | `src/workbench/api/connections.py` | `GET /api/connections`. |
 | `src/workbench/redaction.py` | Shared `redact_secrets()` Redaction Rule. |
 | `src/workbench/storage/ingestion_runs.py` | `IngestionRunStore` interface + PG impl. |
-| `src/workbench/config_writeback.py` | ruamel round-trip Config Write-Back. |
+| `src/workbench/config_writer.py` | ruamel round-trip Config Write-Back. |
 | `src/workbench/migrations/versions/*_ingestion_runs.py` | `ingestion_runs` table. |
 | `src/workbench/migrations/versions/*_stats_indexes.py` | items/ingestion_queue indexes. |
 

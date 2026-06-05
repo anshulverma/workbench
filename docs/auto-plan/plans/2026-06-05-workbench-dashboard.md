@@ -2900,6 +2900,7 @@ Replace `ui/package.json`:
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
+    "cron-parser": "^4.9.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.53.0",
@@ -2927,6 +2928,8 @@ Replace `ui/package.json`:
   }
 }
 ```
+
+> `cron-parser` (pinned `^4.9.0`) is added for the client-side next-run preview in the Sources schedule controls (Task E3c). It parses a cron expression and yields the next fire time without a backend round-trip.
 
 Replace `ui/vite.config.ts`:
 
@@ -3248,7 +3251,7 @@ Initialize shadcn/ui and add base components:
 
 ```bash
 cd ui && npx shadcn@latest init -d
-cd ui && npx shadcn@latest add button card table dialog form switch select skeleton sonner
+cd ui && npx shadcn@latest add button card table dialog dropdown-menu form switch select skeleton sonner
 ```
 
 This generates `ui/components.json` and `ui/src/components/ui/*`. Confirm `components.json` uses CSS variables and the `@/*` alias.
@@ -3276,6 +3279,8 @@ const COLORS: Record<string, string> = {
   never_run: 'bg-gray-500',
   erroring: 'bg-red-600',
   disabled: 'bg-gray-400',
+  configured: 'bg-green-600',
+  'not-configured': 'bg-amber-600',
 }
 
 export function HealthBadge({ status }: { status: string }) {
@@ -3289,9 +3294,10 @@ export function HealthBadge({ status }: { status: string }) {
 
 ```tsx
 // ui/src/components/StatCard.tsx
+import type { ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
-export function StatCard({ label, value, danger }: { label: string; value: string | number; danger?: boolean }) {
+export function StatCard({ label, value, danger }: { label: string; value: ReactNode; danger?: boolean }) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -3575,6 +3581,7 @@ it('happy path renders the six stat cards', async () => {
     http.get('/api/stats/overview', () => HttpResponse.json(overview())),
     http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json([])),
     http.get('/api/jobs', () => HttpResponse.json({ jobs: [], total: 0 })),
+    http.get('/api/messenger', () => HttpResponse.json({ configured: true, type: 'gchat', class: 'GChatMessenger', config: {} })),
     http.get('/health', () => HttpResponse.json({ status: 'healthy' })),
   )
   renderPage(<Overview />)
@@ -3582,11 +3589,40 @@ it('happy path renders the six stat cards', async () => {
   expect(screen.getByText('Dead letters')).toBeInTheDocument()
 })
 
+it('renders all four spec charts', async () => {
+  server.use(
+    http.get('/api/stats/overview', () => HttpResponse.json(overview())),
+    http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json([{ bucket_ts: '2026-06-01', raw_enqueued: 4 }])),
+    http.get('/api/jobs', () => HttpResponse.json({ jobs: [], total: 0 })),
+    http.get('/api/messenger', () => HttpResponse.json({ configured: true, type: 'gchat', class: 'GChatMessenger', config: {} })),
+    http.get('/health', () => HttpResponse.json({ status: 'healthy' })),
+  )
+  renderPage(<Overview />)
+  expect(await screen.findByText('Ingestion (14d)')).toBeInTheDocument()
+  expect(screen.getByText('Items by priority')).toBeInTheDocument()
+  expect(screen.getByText('Items by source')).toBeInTheDocument()
+  expect(screen.getByText('Items by category')).toBeInTheDocument()
+})
+
+it('renders the messenger HealthBadge from /api/messenger', async () => {
+  server.use(
+    http.get('/api/stats/overview', () => HttpResponse.json(overview())),
+    http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json([])),
+    http.get('/api/jobs', () => HttpResponse.json({ jobs: [], total: 0 })),
+    http.get('/api/messenger', () => HttpResponse.json({ configured: false, type: null, class: null, config: {} })),
+    http.get('/health', () => HttpResponse.json({ status: 'healthy' })),
+  )
+  renderPage(<Overview />)
+  expect(await screen.findByText('Messenger')).toBeInTheDocument()
+  expect(await screen.findByText('not-configured')).toBeInTheDocument()
+})
+
 it('shows the dead-letter banner when dead_letters > 0', async () => {
   server.use(
     http.get('/api/stats/overview', () => HttpResponse.json(overview({ dead_letters: 3 }))),
     http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json([])),
     http.get('/api/jobs', () => HttpResponse.json({ jobs: [], total: 0 })),
+    http.get('/api/messenger', () => HttpResponse.json({ configured: true, type: 'gchat', class: 'GChatMessenger', config: {} })),
     http.get('/health', () => HttpResponse.json({ status: 'healthy' })),
   )
   renderPage(<Overview />)
@@ -3601,6 +3637,7 @@ it('empty state when all counts are zero', async () => {
     }))),
     http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json([])),
     http.get('/api/jobs', () => HttpResponse.json({ jobs: [], total: 0 })),
+    http.get('/api/messenger', () => HttpResponse.json({ configured: false, type: null, class: null, config: {} })),
     http.get('/health', () => HttpResponse.json({ status: 'healthy' })),
   )
   renderPage(<Overview />)
@@ -3613,6 +3650,7 @@ it('error state surfaces the request id', async () => {
       HttpResponse.json({ detail: 'x' }, { status: 500, headers: { 'X-Request-ID': 'req-1' } })),
     http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json([])),
     http.get('/api/jobs', () => HttpResponse.json({ jobs: [], total: 0 })),
+    http.get('/api/messenger', () => HttpResponse.json({ configured: true, type: 'gchat', class: 'GChatMessenger', config: {} })),
     http.get('/health', () => HttpResponse.json({ status: 'healthy' })),
   )
   renderPage(<Overview />)
@@ -3625,6 +3663,7 @@ it('unauthorized state when token endpoint 401s', async () => {
     http.get('/api/stats/overview', () => HttpResponse.json(overview())),
     http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json([])),
     http.get('/api/jobs', () => HttpResponse.json({ jobs: [], total: 0 })),
+    http.get('/api/messenger', () => HttpResponse.json({ configured: true, type: 'gchat', class: 'GChatMessenger', config: {} })),
     http.get('/health', () => HttpResponse.json({ status: 'healthy' })),
   )
   renderPage(<Overview />)
@@ -3682,22 +3721,46 @@ export function useRecentJobs(limit = 10) {
     queryFn: () => apiGet<{ jobs: unknown[]; total: number }>(`/api/jobs?limit=${limit}`),
   })
 }
+
+export interface MessengerStatus {
+  configured: boolean
+  type: string | null
+  class: string | null
+  config: Record<string, unknown>
+  reachable?: boolean
+  checked_at?: string
+}
+
+export function useMessengerStatus() {
+  return useQuery({
+    queryKey: ['messenger'],
+    queryFn: () => apiGet<MessengerStatus>('/api/messenger'),
+  })
+}
 ```
 
 ```tsx
 // ui/src/pages/Overview.tsx
 import { Link } from 'react-router-dom'
-import { Area, AreaChart, Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
-import { useStatsOverview, useIngestionTimeseries } from '@/hooks/useStats'
+import {
+  Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart,
+  ResponsiveContainer, Tooltip, XAxis,
+} from 'recharts'
+import { useStatsOverview, useIngestionTimeseries, useMessengerStatus } from '@/hooks/useStats'
 import { StatCard } from '@/components/StatCard'
 import { ChartCard } from '@/components/ChartCard'
+import { HealthBadge } from '@/components/HealthBadge'
 import { EmptyState } from '@/components/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api'
 
+const DONUT_COLORS = ['#16a34a', '#2563eb', '#d97706', '#dc2626', '#7c3aed', '#0891b2']
+const CATEGORY_ORDER = ['action_item', 'meeting', 'plan_seed', 'informational']
+
 export function Overview() {
   const stats = useStatsOverview()
   const ts = useIngestionTimeseries(14)
+  const messenger = useMessengerStatus()
 
   if (stats.isPending) {
     return (
@@ -3735,6 +3798,11 @@ export function Overview() {
   }
 
   const priorityData = Object.entries(o.items.by_priority).map(([k, v]) => ({ name: k, value: v }))
+  const sourceData = Object.entries(o.items.by_source).map(([k, v]) => ({ name: k, value: v }))
+  const categoryData = CATEGORY_ORDER.map((name) => ({ name, value: o.items.by_category[name] ?? 0 }))
+  const messengerStatus = messenger.data
+    ? (messenger.data.configured ? 'configured' : 'not-configured')
+    : 'never_run'
 
   return (
     <div className="space-y-6">
@@ -3750,7 +3818,7 @@ export function Overview() {
         <StatCard label="Dead letters" value={o.dead_letters} danger={o.dead_letters > 0} />
         <StatCard label="Active items" value={o.active_items} />
         <StatCard label="Sources" value={`${o.sources_enabled}/${o.sources_total}`} />
-        <StatCard label="Messenger" value="—" />
+        <StatCard label="Messenger" value={<HealthBadge status={messengerStatus} />} />
       </div>
       <div className="grid grid-cols-2 gap-4">
         <ChartCard title="Ingestion (14d)" empty={!ts.data || ts.data.length === 0}>
@@ -3765,6 +3833,25 @@ export function Overview() {
         <ChartCard title="Items by priority" empty={priorityData.length === 0}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={priorityData}>
+              <XAxis dataKey="name" />
+              <Tooltip />
+              <Bar dataKey="value" />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+        <ChartCard title="Items by source" empty={sourceData.length === 0}>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Tooltip />
+              <Pie data={sourceData} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="80%">
+                {sourceData.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        </ChartCard>
+        <ChartCard title="Items by category" empty={categoryData.every((d) => d.value === 0)}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={categoryData}>
               <XAxis dataKey="name" />
               <Tooltip />
               <Bar dataKey="value" />
@@ -3904,6 +3991,9 @@ export interface SourceStat {
   id: string; adapter_type: string; enabled: boolean; schedule: string
   last_run: string | null; items_stored: number; raw_enqueued: number; in_flight: number
   health_status: string
+  // present on /api/stats/sources rows so the edit form can prefill type-specific fields;
+  // optional so the kebab Edit action degrades to an empty form when absent.
+  config?: Record<string, unknown>
 }
 
 export const useSourceStats = () =>
@@ -4360,6 +4450,603 @@ Expected: PASS
 
 - [ ] Step 5: Commit
 `git commit -am "feat(ui): Sources page + two-step add-source form (zod union, optimistic toggle, 422 mapping)"`
+
+> Tasks E3b and E3c extend this page. E3c replaces `SourceForm.tsx` in full with edit-mode support and schedule controls (removing the hardcoded `schedule: '*/15 * * * *'`); E3b replaces `Sources.tsx` in full with the per-row kebab actions. Each sub-task below carries the complete final file contents — apply them as written, overwriting the E3 versions.
+
+---
+
+### Task E3b: Sources per-row kebab actions (edit / poll-now / enable-disable / delete)
+**Files:**
+- Modify `ui/src/hooks/useSources.ts` (add `usePollSource`; `useDeleteSource` gains optimistic removal + rollback)
+- Modify `ui/src/pages/Sources.tsx` (replace in full — add the kebab `DropdownMenu` and the delete confirm `Dialog`)
+- Test `ui/src/pages/Sources.kebab.test.tsx`
+
+- [ ] Step 1: Write the failing test
+
+```tsx
+// ui/src/pages/Sources.kebab.test.tsx
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
+import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { setupServer } from 'msw/node'
+import { http, HttpResponse } from 'msw'
+import { renderPage } from '@/test/render'
+import { _resetToken } from '@/lib/api'
+import { Sources } from './Sources'
+
+const server = setupServer(http.get('/api/auth/token', () => HttpResponse.json({ token: 't' })))
+beforeAll(() => server.listen())
+afterEach(() => { server.resetHandlers(); _resetToken() })
+afterAll(() => server.close())
+
+const adapterTypes = [
+  { adapter_type: 'github', requires_connection: false, model_json_schema: { type: 'object', properties: { repos: { type: 'array', items: { type: 'string' } } } } },
+]
+
+function handlers(rows: unknown[]) {
+  server.use(
+    http.get('/api/stats/sources', () => HttpResponse.json(rows)),
+    http.get('/api/sources/adapter-types', () => HttpResponse.json(adapterTypes)),
+    http.get('/api/connections', () => HttpResponse.json([])),
+  )
+}
+
+const row = {
+  id: 's1', adapter_type: 'github', enabled: true, schedule: '*/15 * * * *',
+  last_run: null, items_stored: 0, raw_enqueued: 0, in_flight: 0, health_status: 'healthy',
+  config: { repos: ['meta/workbench'] },
+}
+
+it('poll-now calls POST /poll, toasts, and invalidates', async () => {
+  let polled = false
+  handlers([row])
+  server.use(http.post('/api/sources/s1/poll', () => { polled = true; return HttpResponse.json({ status: 'started' }) }))
+  renderPage(<Sources />)
+  await userEvent.click(await screen.findByRole('button', { name: /actions for s1/i }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /poll.?now/i }))
+  await waitFor(() => expect(polled).toBe(true))
+  expect(await screen.findByText(/poll started/i)).toBeInTheDocument()
+})
+
+it('enable/disable from the kebab toggles via PATCH', async () => {
+  let patched: Record<string, unknown> | null = null
+  handlers([row])
+  server.use(http.patch('/api/sources/s1', async ({ request }) => { patched = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ id: 's1' }) }))
+  renderPage(<Sources />)
+  await userEvent.click(await screen.findByRole('button', { name: /actions for s1/i }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /disable/i }))
+  await waitFor(() => expect(patched).toMatchObject({ enabled: false }))
+})
+
+it('delete behind confirm dialog optimistically removes the row', async () => {
+  let deleted = false
+  handlers([row])
+  server.use(http.delete('/api/sources/s1', () => { deleted = true; return new HttpResponse(null, { status: 204 }) }))
+  renderPage(<Sources />)
+  await userEvent.click(await screen.findByRole('button', { name: /actions for s1/i }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /delete/i }))
+  await userEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
+  await waitFor(() => expect(deleted).toBe(true))
+  await waitFor(() => expect(screen.queryByRole('button', { name: /actions for s1/i })).not.toBeInTheDocument())
+})
+
+it('delete rolls back the row when the server fails', async () => {
+  handlers([row])
+  server.use(http.delete('/api/sources/s1', () => HttpResponse.json({ detail: 'nope' }, { status: 500 })))
+  renderPage(<Sources />)
+  await userEvent.click(await screen.findByRole('button', { name: /actions for s1/i }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /delete/i }))
+  await userEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
+  await waitFor(() => expect(screen.getByRole('button', { name: /actions for s1/i })).toBeInTheDocument())
+})
+
+it('edit opens the form in edit mode with adapter_type read-only', async () => {
+  handlers([row])
+  renderPage(<Sources />)
+  await userEvent.click(await screen.findByRole('button', { name: /actions for s1/i }))
+  await userEvent.click(await screen.findByRole('menuitem', { name: /edit/i }))
+  expect(await screen.findByText(/adapter_type: github \(immutable\)/i)).toBeInTheDocument()
+  // edit mode skips the adapter picker — no "Pick an adapter type" prompt
+  expect(screen.queryByText(/pick an adapter type/i)).not.toBeInTheDocument()
+})
+```
+
+- [ ] Step 2: Run test to verify it fails
+Run: `cd ui && npx vitest run src/pages/Sources.kebab.test.tsx`
+Expected: fails — `Sources` has no kebab menu; the `actions for s1` button is absent.
+
+- [ ] Step 3: Write minimal implementation
+
+```ts
+// ui/src/hooks/useSources.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
+import type { SourceStat } from './useIngestion'
+
+export interface AdapterType {
+  adapter_type: string
+  requires_connection: boolean
+  model_json_schema: { type: string; properties: Record<string, unknown> }
+}
+
+export const useSourceStats = () =>
+  useQuery({ queryKey: ['stats', 'sources'], queryFn: () => apiGet<SourceStat[]>('/api/stats/sources') })
+
+export const useAdapterTypes = () =>
+  useQuery({ queryKey: ['adapter-types'], queryFn: () => apiGet<AdapterType[]>('/api/sources/adapter-types') })
+
+export const useConnections = () =>
+  useQuery({ queryKey: ['connections'], queryFn: () => apiGet<{ name: string; healthy: boolean }[]>('/api/connections') })
+
+export function useCreateSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { adapter_type: string; config: Record<string, unknown>; schedule: string; enabled: boolean; connection?: string }) =>
+      apiPost<{ id: string }>('/api/sources', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stats', 'sources'] })
+      qc.invalidateQueries({ queryKey: ['stats', 'overview'] })
+    },
+  })
+}
+
+export function useEditSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: { config: Record<string, unknown>; schedule: string } }) =>
+      apiPatch(`/api/sources/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stats', 'sources'] })
+      qc.invalidateQueries({ queryKey: ['stats', 'overview'] })
+    },
+  })
+}
+
+export function useToggleSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      apiPatch(`/api/sources/${id}`, { enabled }),
+    onMutate: async ({ id, enabled }) => {
+      await qc.cancelQueries({ queryKey: ['stats', 'sources'] })
+      const prev = qc.getQueryData<SourceStat[]>(['stats', 'sources'])
+      qc.setQueryData<SourceStat[]>(['stats', 'sources'], (old) =>
+        (old ?? []).map((s) => (s.id === id ? { ...s, enabled } : s)))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['stats', 'sources'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['stats', 'sources'] }),
+  })
+}
+
+export function usePollSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiPost(`/api/sources/${id}/poll`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['stats', 'sources'] }),
+  })
+}
+
+export function useDeleteSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/api/sources/${id}`),
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ['stats', 'sources'] })
+      const prev = qc.getQueryData<SourceStat[]>(['stats', 'sources'])
+      qc.setQueryData<SourceStat[]>(['stats', 'sources'], (old) =>
+        (old ?? []).filter((s) => s.id !== id))
+      return { prev }
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['stats', 'sources'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['stats', 'sources'] }),
+  })
+}
+```
+
+```tsx
+// ui/src/pages/Sources.tsx
+import { useState } from 'react'
+import { useSourceStats, useToggleSource, usePollSource, useDeleteSource } from '@/hooks/useSources'
+import { SourceForm } from '@/components/SourceForm'
+import { DataTable, type Column } from '@/components/DataTable'
+import { HealthBadge } from '@/components/HealthBadge'
+import { EmptyState } from '@/components/EmptyState'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import { relativeTime } from '@/lib/format'
+import { ApiError } from '@/lib/api'
+import { toast } from 'sonner'
+import type { SourceStat } from '@/hooks/useIngestion'
+
+export function Sources() {
+  const stats = useSourceStats()
+  const toggle = useToggleSource()
+  const poll = usePollSource()
+  const del = useDeleteSource()
+  const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<SourceStat | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<SourceStat | null>(null)
+
+  if (stats.isPending) return <div data-testid="sources-loading"><Skeleton className="h-40" /></div>
+  if (stats.isError) {
+    const err = stats.error as ApiError
+    if (err.status === 401) return <div role="alert" className="p-6">token unavailable; check tunnel/binding</div>
+    return (
+      <div role="alert" className="p-6 text-destructive">
+        Failed to load sources: {err.message}
+        {err.requestId && <div className="text-xs">Request ID: {err.requestId}</div>}
+      </div>
+    )
+  }
+
+  if (adding) return <SourceForm onDone={() => setAdding(false)} />
+  if (editing) return <SourceForm source={editing} onDone={() => setEditing(null)} />
+
+  if (stats.data.length === 0) {
+    return <EmptyState message="No sources configured" cta={<Button onClick={() => setAdding(true)}>Add your first source</Button>} />
+  }
+
+  const columns: Column<SourceStat>[] = [
+    { key: 'type', header: 'Adapter', render: (r) => r.adapter_type },
+    { key: 'enabled', header: 'Enabled', render: (r) => (
+      <Switch
+        aria-label={`Toggle ${r.id}`}
+        checked={r.enabled}
+        onCheckedChange={(v) => toggle.mutate({ id: r.id, enabled: v })}
+      />
+    ) },
+    { key: 'schedule', header: 'Schedule', render: (r) => r.schedule },
+    { key: 'last_run', header: 'Last run', render: (r) => relativeTime(r.last_run) },
+    { key: 'items_stored', header: 'items_stored', render: (r) => r.items_stored },
+    { key: 'health', header: 'Health', render: (r) => <HealthBadge status={r.health_status} /> },
+    { key: 'actions', header: '', render: (r) => (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" aria-label={`Actions for ${r.id}`}>⋯</Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => setEditing(r)}>Edit</DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => poll.mutate(r.id, { onSuccess: () => toast.success('Poll started') })}
+          >
+            Poll now
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}>
+            {r.enabled ? 'Disable' : 'Enable'}
+          </DropdownMenuItem>
+          <DropdownMenuItem className="text-destructive" onSelect={() => setPendingDelete(r)}>
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end"><Button onClick={() => setAdding(true)}>Add source</Button></div>
+      <DataTable columns={columns} rows={stats.data} rowKey={(r) => r.id} />
+      <Dialog open={pendingDelete !== null} onOpenChange={(o) => { if (!o) setPendingDelete(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete source?</DialogTitle>
+            <DialogDescription>
+              {pendingDelete && `This removes ${pendingDelete.adapter_type} (${pendingDelete.id}) from config.yml and stops its poll job. This cannot be undone.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingDelete(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const target = pendingDelete
+                setPendingDelete(null)
+                if (target) {
+                  del.mutate(target.id, {
+                    onSuccess: () => toast.success('Source deleted'),
+                    onError: (e) => toast.error((e as ApiError).message),
+                  })
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+```
+
+- [ ] Step 4: Run test to verify it passes
+Run: `cd ui && npx vitest run src/pages/Sources.kebab.test.tsx`
+Expected: PASS
+
+- [ ] Step 5: Commit
+`git commit -am "feat(ui): Sources per-row kebab (edit, poll-now, enable/disable, delete) with confirm dialog + optimistic delete rollback"`
+
+---
+
+### Task E3c: SourceForm edit mode + schedule controls (cron presets, advanced cron, next-run preview)
+**Files:**
+- Modify `ui/src/components/SourceForm.tsx` (replace in full — add `source?` edit prop, immutable `adapter_type` on edit, `PATCH` submit, and the schedule controls)
+- Test `ui/src/components/SourceForm.test.tsx`
+
+- [ ] Step 1: Write the failing test
+
+```tsx
+// ui/src/components/SourceForm.test.tsx
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
+import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { setupServer } from 'msw/node'
+import { http, HttpResponse } from 'msw'
+import { renderPage } from '@/test/render'
+import { _resetToken } from '@/lib/api'
+import { SourceForm } from './SourceForm'
+
+const server = setupServer(http.get('/api/auth/token', () => HttpResponse.json({ token: 't' })))
+beforeAll(() => server.listen())
+afterEach(() => { server.resetHandlers(); _resetToken() })
+afterAll(() => server.close())
+
+const adapterTypes = [
+  { adapter_type: 'github', requires_connection: false, model_json_schema: { type: 'object', properties: { repos: { type: 'array', items: { type: 'string' } } } } },
+]
+
+function handlers() {
+  server.use(
+    http.get('/api/sources/adapter-types', () => HttpResponse.json(adapterTypes)),
+    http.get('/api/connections', () => HttpResponse.json([])),
+  )
+}
+
+const source = {
+  id: 's1', adapter_type: 'github', enabled: true, schedule: '0 * * * *',
+  last_run: null, items_stored: 0, raw_enqueued: 0, in_flight: 0, health_status: 'healthy',
+  config: { repos: ['meta/workbench'] },
+}
+
+it('create: schedule preset Select drives the submitted cron', async () => {
+  let posted: Record<string, unknown> | null = null
+  handlers()
+  server.use(http.post('/api/sources', async ({ request }) => { posted = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ id: 'new' }) }))
+  renderPage(<SourceForm onDone={() => {}} />)
+  await userEvent.click(await screen.findByRole('button', { name: /^github$/i }))
+  await userEvent.type(screen.getByLabelText(/repos/i), 'meta/workbench')
+  // default preset is every 15 min; pick hourly instead
+  await userEvent.selectOptions(screen.getByLabelText(/schedule preset/i), '0 * * * *')
+  await userEvent.click(screen.getByRole('button', { name: /create source/i }))
+  await waitFor(() => expect(posted).toMatchObject({ schedule: '0 * * * *' }))
+})
+
+it('create: advanced custom cron overrides the preset', async () => {
+  let posted: Record<string, unknown> | null = null
+  handlers()
+  server.use(http.post('/api/sources', async ({ request }) => { posted = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ id: 'new' }) }))
+  renderPage(<SourceForm onDone={() => {}} />)
+  await userEvent.click(await screen.findByRole('button', { name: /^github$/i }))
+  await userEvent.type(screen.getByLabelText(/repos/i), 'meta/workbench')
+  await userEvent.click(screen.getByRole('button', { name: /advanced/i }))
+  const custom = screen.getByLabelText(/custom cron/i)
+  await userEvent.clear(custom)
+  await userEvent.type(custom, '30 2 * * 1')
+  await userEvent.click(screen.getByRole('button', { name: /create source/i }))
+  await waitFor(() => expect(posted).toMatchObject({ schedule: '30 2 * * 1' }))
+})
+
+it('create: next-run preview renders for a valid cron and warns on invalid', async () => {
+  handlers()
+  renderPage(<SourceForm onDone={() => {}} />)
+  await userEvent.click(await screen.findByRole('button', { name: /^github$/i }))
+  expect(await screen.findByText(/next run:/i)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: /advanced/i }))
+  const custom = screen.getByLabelText(/custom cron/i)
+  await userEvent.clear(custom)
+  await userEvent.type(custom, 'not a cron')
+  expect(await screen.findByText(/invalid cron/i)).toBeInTheDocument()
+})
+
+it('edit mode: adapter_type read-only, prefilled config, submits PATCH', async () => {
+  let patched: Record<string, unknown> | null = null
+  handlers()
+  server.use(http.patch('/api/sources/s1', async ({ request }) => { patched = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ id: 's1' }) }))
+  renderPage(<SourceForm source={source} onDone={() => {}} />)
+  // no adapter picker in edit mode
+  expect(screen.queryByText(/pick an adapter type/i)).not.toBeInTheDocument()
+  expect(await screen.findByText(/adapter_type: github \(immutable\)/i)).toBeInTheDocument()
+  expect((screen.getByLabelText(/repos/i) as HTMLInputElement).value).toBe('meta/workbench')
+  await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+  await waitFor(() => expect(patched).toMatchObject({ schedule: '0 * * * *', config: { repos: ['meta/workbench'] } }))
+})
+```
+
+- [ ] Step 2: Run test to verify it fails
+Run: `cd ui && npx vitest run src/components/SourceForm.test.tsx`
+Expected: fails — current `SourceForm` has no schedule preset Select, no advanced cron field, no next-run preview, and no `source`/edit-mode prop.
+
+- [ ] Step 3: Write minimal implementation
+
+```tsx
+// ui/src/components/SourceForm.tsx
+import { useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { z } from 'zod'
+import parser from 'cron-parser'
+import { useAdapterTypes, useConnections, useCreateSource, useEditSource } from '@/hooks/useSources'
+import { Button } from '@/components/ui/button'
+import { ApiError } from '@/lib/api'
+import { toast } from 'sonner'
+import type { SourceStat } from '@/hooks/useIngestion'
+
+// zod discriminated union mirroring each provider's ProviderConfig.
+const githubSchema = z.object({
+  adapter_type: z.literal('github'),
+  repos: z.string().min(1, 'enter at least one repo'),
+})
+const emailSchema = z.object({
+  adapter_type: z.literal('email'),
+  connection: z.string().min(1, 'select a connection'),
+})
+const formSchema = z.discriminatedUnion('adapter_type', [githubSchema, emailSchema])
+type FormValues = z.infer<typeof formSchema>
+
+const CRON_PRESETS: { label: string; cron: string }[] = [
+  { label: 'Every 15 minutes', cron: '*/15 * * * *' },
+  { label: 'Hourly', cron: '0 * * * *' },
+  { label: 'Every 6 hours', cron: '0 */6 * * *' },
+  { label: 'Daily at 9am', cron: '0 9 * * *' },
+]
+
+function nextRunPreview(cron: string): string {
+  try {
+    const next = parser.parseExpression(cron).next().toDate()
+    return `Next run: ${next.toLocaleString()}`
+  } catch {
+    return 'Invalid cron expression'
+  }
+}
+
+interface SourceFormProps {
+  onDone: () => void
+  source?: SourceStat
+}
+
+export function SourceForm({ onDone, source }: SourceFormProps) {
+  const editing = source !== undefined
+  const adapterTypes = useAdapterTypes()
+  const connections = useConnections()
+  const create = useCreateSource()
+  const edit = useEditSource()
+  const [picked, setPicked] = useState<string | null>(editing ? source!.adapter_type : null)
+  const [schedule, setSchedule] = useState<string>(editing ? source!.schedule : CRON_PRESETS[0].cron)
+  const [advanced, setAdvanced] = useState(false)
+
+  const repos0 = (source?.config as { repos?: unknown[] } | undefined)?.repos
+  const initialRepos = Array.isArray(repos0) ? (repos0 as string[]).join(', ') : ''
+  const { register, handleSubmit, setError, formState } = useForm<FormValues>({
+    defaultValues: { repos: initialRepos } as Partial<FormValues>,
+  })
+
+  if (!picked) {
+    return (
+      <div className="space-y-2">
+        <p className="font-medium">Pick an adapter type</p>
+        {(adapterTypes.data ?? []).map((t) => {
+          const noConn = t.requires_connection && (connections.data ?? []).length === 0
+          return (
+            <Button key={t.adapter_type} disabled={noConn} onClick={() => setPicked(t.adapter_type)}>
+              {t.adapter_type}
+            </Button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const onSubmit = handleSubmit(async (values) => {
+    const config: Record<string, unknown> = {}
+    let connection: string | undefined
+    if (picked === 'github') config.repos = String((values as { repos: string }).repos).split(',').map((s) => s.trim()).filter(Boolean)
+    if (picked === 'email') connection = (values as { connection: string }).connection
+    try {
+      if (editing) {
+        await edit.mutateAsync({ id: source!.id, body: { config, schedule } })
+        toast.success('Source updated')
+      } else {
+        await create.mutateAsync({ adapter_type: picked, config, schedule, enabled: true, connection })
+        toast.success('Source added and polling live')
+      }
+      onDone()
+    } catch (e) {
+      const err = e as ApiError
+      // map field-level 422 errors to the offending fields
+      try {
+        const parsed = JSON.parse(err.message) as { config_errors?: { loc: string[]; msg: string }[] }
+        for (const fe of parsed.config_errors ?? []) {
+          setError(fe.loc[fe.loc.length - 1] as keyof FormValues, { message: fe.msg })
+        }
+      } catch { /* non-field error */ }
+    }
+  })
+
+  const pending = editing ? edit.isPending : create.isPending
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <p className="text-sm text-muted-foreground">adapter_type: {picked} (immutable)</p>
+      {picked === 'github' && (
+        <label className="block text-sm">
+          repos (comma-separated)
+          <input aria-label="repos" {...register('repos')} className="mt-1 block w-full rounded border border-border bg-background p-2" />
+          {formState.errors.repos && <span className="text-destructive text-xs">{formState.errors.repos.message}</span>}
+          <span className="block text-xs text-muted-foreground">Uses ambient gh auth — no secret needed.</span>
+        </label>
+      )}
+      {picked === 'email' && (
+        <label className="block text-sm">
+          connection
+          <select aria-label="connection" {...register('connection')} className="mt-1 block w-full rounded border border-border bg-background p-2">
+            {(connections.data ?? []).map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+          </select>
+          {formState.errors.connection && <span className="text-destructive text-xs">{formState.errors.connection.message}</span>}
+        </label>
+      )}
+      <div className="space-y-2">
+        <label className="block text-sm">
+          Schedule preset
+          <select
+            aria-label="Schedule preset"
+            value={CRON_PRESETS.some((p) => p.cron === schedule) ? schedule : ''}
+            disabled={advanced}
+            onChange={(e) => setSchedule(e.target.value)}
+            className="mt-1 block w-full rounded border border-border bg-background p-2"
+          >
+            {CRON_PRESETS.map((p) => <option key={p.cron} value={p.cron}>{p.label}</option>)}
+            {advanced && <option value="">Custom</option>}
+          </select>
+        </label>
+        <Button type="button" variant="ghost" size="sm" onClick={() => setAdvanced((a) => !a)}>
+          {advanced ? 'Use presets' : 'Advanced'}
+        </Button>
+        {advanced && (
+          <label className="block text-sm">
+            Custom cron
+            <input
+              aria-label="Custom cron"
+              value={schedule}
+              onChange={(e) => setSchedule(e.target.value)}
+              className="mt-1 block w-full rounded border border-border bg-background p-2 font-mono"
+            />
+          </label>
+        )}
+        <p className="text-xs text-muted-foreground">{nextRunPreview(schedule)}</p>
+      </div>
+      <Button type="submit" disabled={pending}>{editing ? 'Save changes' : 'Create source'}</Button>
+    </form>
+  )
+}
+```
+
+- [ ] Step 4: Run test to verify it passes
+Run: `cd ui && npx vitest run src/components/SourceForm.test.tsx`
+Expected: PASS
+
+- [ ] Step 5: Commit
+`git commit -am "feat(ui): SourceForm edit mode (immutable adapter_type, PATCH) + cron preset/advanced controls with next-run preview"`
 
 ---
 
