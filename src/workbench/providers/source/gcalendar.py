@@ -103,7 +103,7 @@ class GCalendarAdapter(SourceAdapter):
                     diff = (start_dt - now).total_seconds() / 3600.0
                     starts_within_hours = max(0, round(diff, 1))
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Could not parse event start time %r", start_str)
 
                 raw_text = json.dumps({
                     "summary": summary,

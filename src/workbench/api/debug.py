@@ -60,6 +60,7 @@ async def debug_pipeline(request: Request):
         )
         jobs = [dict(r) for r in rows]
     except Exception:
+        logger.warning("debug_pipeline query failed")
         jobs = []
     return {"recent_items": jobs}
 
@@ -73,6 +74,7 @@ async def debug_identity(request: Request):
         stats = await memory.get_identity_stats()
         return stats
     except Exception as e:
+        logger.warning("debug_identity stats failed")
         return {"error": str(e)}
 
 

@@ -9,6 +9,10 @@ EXCLUDED_KEYS = frozenset(
     {"event", "level", "timestamp", "logger", "request_id", "filename", "lineno", "func_name"}
 )
 
+# Traceback fields are PII-redacted but NEVER length-truncated: a clipped
+# traceback hides the exception, defeating the point of logging it.
+NO_TRUNCATE_KEYS = frozenset({"exception", "stack"})
+
 
 class SanitizingProcessor:
     """structlog processor that redacts PII patterns from log events."""
@@ -41,7 +45,10 @@ class SanitizingProcessor:
                 continue
             if not isinstance(value, str):
                 continue
-            if len(value) > self._config.max_content_in_logs:
+            if (
+                key not in NO_TRUNCATE_KEYS
+                and len(value) > self._config.max_content_in_logs
+            ):
                 value = value[: self._config.max_content_in_logs] + "... [truncated]"
             for pattern, replacement in self._patterns:
                 value = pattern.sub(replacement, value)

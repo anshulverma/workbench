@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from logging.handlers import RotatingFileHandler
 from typing import Any
@@ -30,6 +31,21 @@ class AgeRotatingFileHandler(RotatingFileHandler):
                 path = os.path.join(log_dir, f)
                 if os.path.getmtime(path) < cutoff:
                     os.remove(path)
+
+
+def add_active_exc_info(logger: Any, method_name: str, event_dict: dict) -> dict:
+    """Auto-attach the currently-handled exception so any log emitted inside an
+    `except` block renders a full traceback — even when the call site forgot
+    `exc_info=True`. This is the safety net that guarantees exceptions are never
+    silently dropped from the logs.
+
+    Runs BEFORE ``format_exc_info`` in the processor chain. Honors an explicit
+    ``exc_info`` if the caller already set one, and adds nothing when no exception
+    is being handled (so ordinary logs don't grow spurious tracebacks).
+    """
+    if not event_dict.get("exc_info") and sys.exc_info()[0] is not None:
+        event_dict["exc_info"] = True
+    return event_dict
 
 
 def setup_logging(
@@ -65,6 +81,7 @@ def setup_logging(
             [CallsiteParameter.FILENAME, CallsiteParameter.LINENO, CallsiteParameter.FUNC_NAME]
         ),
         structlog.processors.StackInfoRenderer(),
+        add_active_exc_info,
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
     ]

@@ -144,7 +144,7 @@ class GitHubEnricher(ContextEnricher):
             if len(parts) >= 4 and parts[2] in ("pull", "issues"):
                 return f"{parts[0]}/{parts[1]}", parts[3]
         except Exception:
-            pass
+            logger.debug("Failed to parse GitHub URL %r", url)
         return None, None
 
     def _parse_source_id(self, source_id: str) -> tuple[str | None, str | None]:

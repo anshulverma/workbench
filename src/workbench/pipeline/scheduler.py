@@ -121,6 +121,7 @@ class WorkbenchScheduler:
                 try:
                     connections[name] = conn.is_healthy() if hasattr(conn, 'is_healthy') else True
                 except Exception:
+                    logger.warning("Connection health check failed for %s", name)
                     connections[name] = False
             health["connections"] = connections
 

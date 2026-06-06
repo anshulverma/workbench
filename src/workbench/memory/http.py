@@ -122,6 +122,7 @@ class HttpMemoryLayer(MemoryLayer):
             resp.raise_for_status()
             return resp.json().get("status") == "ok"
         except Exception:
+            logger.debug("Memory service availability check failed")
             return False
 
     async def close(self) -> None:

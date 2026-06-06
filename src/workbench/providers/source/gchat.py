@@ -176,5 +176,5 @@ class GChatAdapter(SourceAdapter):
                     if dt > latest or latest == datetime.now(timezone.utc):
                         latest = dt
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Could not parse message createTime %r", create_time)
         return latest
