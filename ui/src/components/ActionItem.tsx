@@ -1,5 +1,5 @@
 // ui/src/components/ActionItem.tsx
-import { markDone, changePriority, snooze, type Action } from '../api'
+import { markDone, changePriority, snooze, type Action } from '@/lib/api'
 
 interface Props {
   item: Action

@@ -1,6 +1,6 @@
 // ui/src/components/ActionList.tsx
 import { useState, useEffect, useCallback } from 'react'
-import { fetchActions, type Action } from '../api'
+import { fetchActions, type Action } from '@/lib/api'
 import { ActionItem } from './ActionItem'
 
 interface ActionsData {
