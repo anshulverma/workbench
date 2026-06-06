@@ -14,9 +14,9 @@ def _make_app(stores_healthy=True, connections=None):
     stores = MagicMock()
     if stores_healthy:
         stores.items.pool.fetchval = AsyncMock(return_value=1)
-        stores.ingestion_queue.get_depth = AsyncMock(return_value=3)
+        stores.ingestion_queue.queue_depth = AsyncMock(return_value=3)
         stores.triage.get_pending = AsyncMock(return_value=[])
-        stores.ingestion_queue.get_dead_letters = AsyncMock(return_value=[])
+        stores.ingestion_queue.count_dead_letters = AsyncMock(return_value=0)
     else:
         stores.items.pool.fetchval = AsyncMock(side_effect=Exception("PG down"))
 

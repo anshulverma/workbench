@@ -25,7 +25,9 @@ async def _check_connections(connections: dict) -> dict:
             healthy = conn.is_healthy()
             result[name] = {"status": "healthy" if healthy else "unhealthy"}
         except Exception as e:
-            logger.warning("connection_health_check_failed", connection=name, error=str(e))
+            logger.warning(
+                "connection_health_check_failed", connection=name, error=str(e)
+            )
             result[name] = {"status": "unhealthy", "error": str(e)}
     return result
 
@@ -42,13 +44,13 @@ async def _build_health(request: Request) -> tuple[dict, bool]:
     queue_stats = {}
     if critical_healthy:
         try:
-            depth = await stores.ingestion_queue.get_depth()
+            depth = await stores.ingestion_queue.queue_depth()
             pending = await stores.triage.get_pending()
-            dead = await stores.ingestion_queue.get_dead_letters()
+            dead = await stores.ingestion_queue.count_dead_letters()
             queue_stats = {
                 "ingestion_depth": depth,
                 "triage_pending": len(pending),
-                "dead_letters": len(dead),
+                "dead_letters": dead,
             }
         except Exception:
             logger.warning("health_queue_stats_failed")

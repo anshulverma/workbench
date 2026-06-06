@@ -117,7 +117,9 @@ class SourceConfigStore(ABC):
     @abstractmethod
     async def upsert_source(self, source: SourceConfig) -> SourceConfig: ...
     @abstractmethod
-    async def update_source(self, source_id: str, updates: SourceConfigUpdate) -> SourceConfig: ...
+    async def update_source(
+        self, source_id: str, updates: SourceConfigUpdate
+    ) -> SourceConfig: ...
 
 
 class ProcessedStore(ABC):
@@ -164,6 +166,11 @@ class IngestionQueueStore(ABC):
     async def recover_stuck(self) -> int: ...
     @abstractmethod
     async def queue_depth(self) -> int: ...
+    @abstractmethod
+    async def count_dead_letters(self) -> int:
+        """COUNT of dead_letter rows (never a full-row scan)."""
+        ...
+
     @abstractmethod
     async def delete_dead_letters_older_than(self, days: int) -> int:
         """Delete dead letter entries older than days. Returns count deleted."""

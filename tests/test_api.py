@@ -5,13 +5,18 @@ These tests bypass the normal lifespan (which requires a real PostgreSQL and
 external providers) and instead wire up app.state manually with the PG stores
 from conftest and mock/stub providers.
 """
+
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from httpx import AsyncClient, ASGITransport
 
 from workbench.models import (
-    ExtractedItem, ItemCategory, RawItem, TriageCard, TriageOption,
+    ExtractedItem,
+    ItemCategory,
+    RawItem,
+    TriageCard,
+    TriageOption,
 )
 from workbench.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
@@ -40,14 +45,20 @@ async def app_with_state(stores, mock_llm):
     from workbench.config import AppConfig, ServerConfig, StorageConfig
 
     test_config = AppConfig(
-        storage=StorageConfig(postgres_dsn="postgres://workbench:workbench@localhost:5432/workbench"),
-        llm={"class": "workbench.providers.llm.anthropic.AnthropicLLM", "api_key": "test"},
+        storage=StorageConfig(
+            postgres_dsn="postgres://workbench:workbench@localhost:5432/workbench"
+        ),
+        llm={
+            "class": "workbench.providers.llm.anthropic.AnthropicLLM",
+            "api_key": "test",
+        },
         server=ServerConfig(api_token="dev-token-change-me"),
     )
 
     with patch("workbench.main.get_config", return_value=test_config):
         # Import create_app inside the patch so the module-level app is not affected
         from workbench.main import create_app
+
         test_app = create_app()
 
     # Wire up state manually (skip lifespan which needs real providers)
@@ -82,6 +93,33 @@ async def test_health(client):
     r = await client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_health_uses_queue_depth_and_count(client, app_with_state):
+    from workbench.models import IngestionQueueEntry, QueueEntryStatus
+
+    stores = app_with_state.state.stores
+
+    async def _enqueue(status, n):
+        for i in range(n):
+            await stores.ingestion_queue.enqueue(
+                IngestionQueueEntry(
+                    raw_content=f"c{i}",
+                    source_type="github",
+                    job_id=f"j-{status}-{i}",
+                    status=QueueEntryStatus(status),
+                )
+            )
+
+    await _enqueue("dead_letter", 2)
+    await _enqueue("queued", 1)
+
+    r = await client.get("/health")
+    assert r.status_code == 200
+    q = r.json()["queue"]
+    assert q["ingestion_depth"] == 1  # queued+processing only
+    assert q["dead_letters"] == 2
 
 
 @pytest.mark.asyncio
@@ -131,9 +169,7 @@ async def test_config_get_patch(client):
     assert r.status_code == 200
     assert isinstance(r.json(), dict)
 
-    r = await client.patch(
-        "/api/config", json={"updates": {"theme": "dark"}}
-    )
+    r = await client.patch("/api/config", json={"updates": {"theme": "dark"}})
     assert r.status_code == 200
     assert r.json().get("theme") == "dark"
 
@@ -188,7 +224,9 @@ async def test_triage_respond_stores_full_card_and_choice_index(client, app_with
     card = TriageCard(
         card_content={"summary": "Fix auth flow", "source_type": "github"},
         options=[
-            TriageOption(label="Add todo (P1)", action="add_todo", details={"priority": "P1"}),
+            TriageOption(
+                label="Add todo (P1)", action="add_todo", details={"priority": "P1"}
+            ),
             TriageOption(label="Skip", action="skip"),
         ],
         relevance_score=45,

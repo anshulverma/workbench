@@ -130,6 +130,12 @@ class PgIngestionQueueStore(IngestionQueueStore):
         )
         return row["cnt"]  # type: ignore[index]
 
+    async def count_dead_letters(self) -> int:
+        row = await self.pool.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM ingestion_queue WHERE status = 'dead_letter'"
+        )
+        return row["cnt"]  # type: ignore[index]
+
     async def delete_dead_letters_older_than(self, days: int) -> int:
         result = await self.pool.execute(
             "DELETE FROM ingestion_queue WHERE status = 'dead_letter' "
