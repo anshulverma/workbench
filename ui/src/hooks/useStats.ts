@@ -126,6 +126,7 @@ export interface SourceRollup {
   raw_enqueued: number
   in_flight: number
   health_status: string
+  config?: Record<string, unknown>
 }
 
 export interface ActivityItem {
