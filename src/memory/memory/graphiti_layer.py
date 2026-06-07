@@ -44,6 +44,7 @@ class GraphitiMemoryLayer:
         narrative = format_triage_narrative(card, response)
         try:
             from graphiti_core.nodes import EpisodeType
+
             await self.graphiti.add_episode(
                 name=f"triage-{card_id}",
                 episode_body=narrative,
@@ -98,21 +99,79 @@ class GraphitiMemoryLayer:
         except Exception as e:
             logger.warning("Failed to create structured preference edge: %s", e)
 
+    @staticmethod
+    def _is_tombstoned(edge) -> bool:
+        # Defensive: Graphiti search normally already excludes invalidated
+        # edges. Only treat real datetime values as a tombstone marker so
+        # edges that simply lack the attribute (or set it None) still surface.
+        for attr in ("invalid_at", "expired_at"):
+            value = getattr(edge, attr, None)
+            if isinstance(value, datetime):
+                return True
+        return False
+
     async def query_preferences(self, context: str) -> list[Fact]:
         try:
             edges = await self.graphiti.search(query=context, num_results=10)
             return [
                 Fact(
+                    id=getattr(edge, "uuid", None),
                     content=edge.fact,
                     source="graphiti",
                     timestamp=edge.valid_at or datetime.now(timezone.utc),
                 )
                 for edge in edges
-                if edge.fact
+                if edge.fact and not self._is_tombstoned(edge)
             ]
         except Exception as e:
             logger.error("Failed to query preferences: %s", e, exc_info=True)
             return []
+
+    async def delete_fact(self, fact_id: str) -> None:
+        """Tombstone (invalidate) a fact edge by uuid.
+
+        Per ADR 0019 this is a bi-temporal invalidation, NOT a hard delete:
+        we set the edge's invalid_at/expired_at so it stops surfacing in
+        search/queries but remains in the graph for audit and is not
+        re-synthesized.
+        """
+        from graphiti_core.edges import EntityEdge
+
+        edge = await EntityEdge.get_by_uuid(self.graphiti.driver, fact_id)
+        if edge is None:
+            raise KeyError(f"Fact edge not found: {fact_id}")
+
+        now = datetime.now(timezone.utc)
+        edge.invalid_at = now
+        edge.expired_at = now
+        try:
+            await edge.save(self.graphiti.driver)
+        except Exception as e:
+            logger.error("Failed to tombstone fact %s: %s", fact_id, e, exc_info=True)
+            raise
+
+    async def update_fact(self, fact_id: str, content: str) -> None:
+        """Edit a fact edge's text by uuid.
+
+        Per ADR 0019 this is an authoritative user override. We set the edge's
+        fact text and mark it user-asserted (when the attribute is available)
+        so re-extraction does not overwrite it.
+        """
+        from graphiti_core.edges import EntityEdge
+
+        edge = await EntityEdge.get_by_uuid(self.graphiti.driver, fact_id)
+        if edge is None:
+            raise KeyError(f"Fact edge not found: {fact_id}")
+
+        edge.fact = content
+        # Pin as user-asserted so re-extraction won't overwrite, if supported.
+        if hasattr(edge, "attributes") and isinstance(edge.attributes, dict):
+            edge.attributes["user_asserted"] = True
+        try:
+            await edge.save(self.graphiti.driver)
+        except Exception as e:
+            logger.error("Failed to update fact %s: %s", fact_id, e, exc_info=True)
+            raise
 
     async def record_entity(
         self, entity_type: str, entity_id: str, facts: dict, store
@@ -227,9 +286,7 @@ class GraphitiMemoryLayer:
                 custom_extraction_instructions=DECISION_EXTRACTION_PROMPT,
             )
         except Exception as e:
-            logger.error(
-                "Failed to ingest decision episode: %s", e, exc_info=True
-            )
+            logger.error("Failed to ingest decision episode: %s", e, exc_info=True)
             raise
 
     async def query_relationships(

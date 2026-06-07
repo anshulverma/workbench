@@ -18,6 +18,7 @@ from memory.models import (
     EntityRecordRequest,
     EntityResponse,
     FactsListResponse,
+    FactUpdateRequest,
     HealthResponse,
     PreferenceQueryResponse,
     QueueDepthResponse,
@@ -103,7 +104,9 @@ async def lifespan(app: FastAPI):
         backup_count=log_cfg.backup_count,
     )
 
-    store = PendingIngestionStore(config.storage.postgres_dsn, config.queue.max_attempts)
+    store = PendingIngestionStore(
+        config.storage.postgres_dsn, config.queue.max_attempts
+    )
     await store.initialize()
     app.state.store = store
 
@@ -112,6 +115,7 @@ async def lifespan(app: FastAPI):
     cross_encoder = create_cross_encoder(config.embedder)
 
     from graphiti_core import Graphiti
+
     graphiti = Graphiti(
         uri=config.neo4j.uri,
         user=config.neo4j.user,
@@ -181,9 +185,16 @@ def create_app() -> FastAPI:
 
         graphiti_status = "initialized" if app.state.graphiti else "not initialized"
 
-        status = "ok" if neo4j_status == "connected" and pg_status == "connected" else "degraded"
+        status = (
+            "ok"
+            if neo4j_status == "connected" and pg_status == "connected"
+            else "degraded"
+        )
         return HealthResponse(
-            status=status, neo4j=neo4j_status, postgres=pg_status, graphiti=graphiti_status
+            status=status,
+            neo4j=neo4j_status,
+            postgres=pg_status,
+            graphiti=graphiti_status,
         )
 
     @app.get("/facts", response_model=FactsListResponse)
@@ -191,6 +202,27 @@ def create_app() -> FastAPI:
         layer: GraphitiMemoryLayer = app.state.layer
         facts = await layer.query_preferences("")
         return FactsListResponse(facts=facts, total=len(facts))
+
+    @app.delete("/facts/{fact_id}", status_code=204)
+    async def delete_fact(fact_id: str):
+        layer: GraphitiMemoryLayer = app.state.layer
+        try:
+            await layer.delete_fact(fact_id)
+        except KeyError:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Fact not found")
+
+    @app.patch("/facts/{fact_id}", status_code=200)
+    async def update_fact(fact_id: str, request: FactUpdateRequest):
+        layer: GraphitiMemoryLayer = app.state.layer
+        try:
+            await layer.update_fact(fact_id, request.content)
+        except KeyError:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Fact not found")
+        return {"status": "updated", "id": fact_id, "content": request.content}
 
     @app.post("/record/entity", status_code=200)
     async def record_entity(request: EntityRecordRequest):
@@ -213,9 +245,7 @@ def create_app() -> FastAPI:
         return {"status": "queued", "entry_id": entry_id}
 
     @app.get("/query/entity", response_model=EntityResponse)
-    async def query_entity(
-        entity_type: str = Query(...), entity_id: str = Query(...)
-    ):
+    async def query_entity(entity_type: str = Query(...), entity_id: str = Query(...)):
         layer: GraphitiMemoryLayer = app.state.layer
         store: PendingIngestionStore = app.state.store
         entity = await layer.query_entity(entity_type, entity_id, store)
@@ -238,9 +268,7 @@ def create_app() -> FastAPI:
     ):
         layer: GraphitiMemoryLayer = app.state.layer
         store: PendingIngestionStore = app.state.store
-        relationships = await layer.query_relationships(
-            entity_type, entity_id, store
-        )
+        relationships = await layer.query_relationships(entity_type, entity_id, store)
         return RelationshipsResponse(relationships=relationships)
 
     @app.post("/admin/reset-graph")
@@ -279,6 +307,7 @@ def create_app() -> FastAPI:
     ):
         if os.environ.get("MEMORY_ADMIN_ENABLED", "false") != "true":
             from fastapi.responses import JSONResponse
+
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Admin endpoints are disabled"},
@@ -286,7 +315,10 @@ def create_app() -> FastAPI:
         store: PendingIngestionStore = app.state.store
         merged = await store.late_discovery_merge(entity_type, winner_id, loser_id)
         if not merged:
-            return {"status": "noop", "reason": "already same canonical or winner not found"}
+            return {
+                "status": "noop",
+                "reason": "already same canonical or winner not found",
+            }
         return {"status": "merged", "canonical": winner_id}
 
     @app.post("/admin/identity/split")
@@ -296,6 +328,7 @@ def create_app() -> FastAPI:
     ):
         if os.environ.get("MEMORY_ADMIN_ENABLED", "false") != "true":
             from fastapi.responses import JSONResponse
+
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Admin endpoints are disabled"},
@@ -311,6 +344,7 @@ def create_app() -> FastAPI:
     ):
         if os.environ.get("MEMORY_ADMIN_ENABLED", "false") != "true":
             from fastapi.responses import JSONResponse
+
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Admin endpoints are disabled"},

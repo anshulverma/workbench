@@ -89,6 +89,22 @@ ssh -L 8421:localhost:8421 <remote-host>
 
 If using `autossh`, ensure `-L 8421:localhost:8421` is included in your forwarded ports. Autossh will silently skip a port if something else already holds it locally — check with `lsof -i :8421` on your local machine if the UI isn't reachable.
 
+### Security boundary (loopback bind)
+
+The server binds **loopback only** by default (`127.0.0.1`), so the API/UI is reachable solely through the SSH tunnel above — never from the host's network. This is the trust boundary for the auth model: `GET /api/auth/token` is intentionally unauthenticated so the SPA can bootstrap its bearer token, which is safe *only* because the port isn't exposed off-host (see ADR 0017). Override with `server.host` in `config.yml` (or `WORKBENCH_HOST` for the container) — e.g. `0.0.0.0`/`::` — only if you intend LAN exposure and understand the implication.
+
+### Building the dashboard UI
+
+The dashboard is a React 19 + Vite 7 + Tailwind v4 SPA in `ui/`, built to `ui/dist` and served by FastAPI at `/ui` (client-side routing uses `HashRouter`, so no server catch-all is needed). Build it before packaging the server image:
+
+```bash
+cd ui && npm install && npm run build      # outputs ui/dist (mounted at /ui)
+npm run test                               # vitest component tests
+npm run gen:api                            # regenerate src/lib/api-types.ts from http://127.0.0.1:8421/openapi.json (server must be running)
+```
+
+> Note: on hosts where `npm`/`pip` are wrapped to block direct installs, use the real binaries (e.g. a registry-installed Node) and run registry fetches through the outbound proxy (`with-proxy npm install`); `npm run build`/`npm run test` need no network.
+
 ## License
 
 MIT

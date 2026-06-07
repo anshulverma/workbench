@@ -33,14 +33,25 @@ from memory.graphiti_layer import GraphitiMemoryLayer
 @pytest.fixture
 def mock_graphiti():
     g = AsyncMock()
-    g.add_episode = AsyncMock(return_value=MagicMock(
-        nodes=[],
-        edges=[MagicMock(fact="User prefers auth diffs", name="prefers")],
-    ))
+    g.add_episode = AsyncMock(
+        return_value=MagicMock(
+            nodes=[],
+            edges=[MagicMock(fact="User prefers auth diffs", name="prefers")],
+        )
+    )
     g.add_triplet = AsyncMock(return_value=MagicMock(nodes=[], edges=[]))
-    g.search = AsyncMock(return_value=[
-        MagicMock(fact="User always prioritizes auth diffs", name="prefers", valid_at=None),
-    ])
+    g.search = AsyncMock(
+        return_value=[
+            MagicMock(
+                fact="User always prioritizes auth diffs",
+                name="prefers",
+                valid_at=None,
+                uuid="edge-uuid-1",
+                invalid_at=None,
+                expired_at=None,
+            ),
+        ]
+    )
     return g
 
 
@@ -54,7 +65,13 @@ async def test_record_triage_creates_structured_preference_edge(layer, mock_grap
     card = {
         "id": "c1",
         "card_content": {"summary": "Fix auth flow", "source_type": "github"},
-        "options": [{"label": "Add todo (P1)", "action": "add_todo", "details": {"priority": "P1"}}],
+        "options": [
+            {
+                "label": "Add todo (P1)",
+                "action": "add_todo",
+                "details": {"priority": "P1"},
+            }
+        ],
         "relevance_score": 45,
     }
     response = {"card_id": "c1", "choice": 1}
@@ -63,9 +80,15 @@ async def test_record_triage_creates_structured_preference_edge(layer, mock_grap
 
     mock_graphiti.add_triplet.assert_called_once()
     call_args = mock_graphiti.add_triplet.call_args
-    source_node = call_args.args[0] if call_args.args else call_args.kwargs["source_node"]
+    source_node = (
+        call_args.args[0] if call_args.args else call_args.kwargs["source_node"]
+    )
     edge = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["edge"]
-    target_node = call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs["target_node"]
+    target_node = (
+        call_args.args[2]
+        if len(call_args.args) > 2
+        else call_args.kwargs["target_node"]
+    )
     assert source_node.name == "user"
     assert "prefers" in edge.name
     assert "Fix auth flow" in target_node.name
@@ -77,7 +100,11 @@ async def test_record_triage_creates_avoids_edge_on_skip(layer, mock_graphiti):
         "id": "c2",
         "card_content": {"summary": "CI bot notification", "source_type": "github"},
         "options": [
-            {"label": "Add todo (P1)", "action": "add_todo", "details": {"priority": "P1"}},
+            {
+                "label": "Add todo (P1)",
+                "action": "add_todo",
+                "details": {"priority": "P1"},
+            },
             {"label": "Skip", "action": "skip"},
         ],
         "relevance_score": 20,
@@ -117,7 +144,13 @@ async def test_record_triage_calls_add_episode(layer, mock_graphiti):
     card = {
         "id": "c1",
         "card_content": {"summary": "Fix auth", "source_type": "github"},
-        "options": [{"label": "Add todo (P1)", "action": "add_todo", "details": {"priority": "P1"}}],
+        "options": [
+            {
+                "label": "Add todo (P1)",
+                "action": "add_todo",
+                "details": {"priority": "P1"},
+            }
+        ],
         "relevance_score": 45,
     }
     response = {"card_id": "c1", "choice": 1}
@@ -164,11 +197,97 @@ async def test_query_preferences_empty_when_no_results(layer, mock_graphiti):
 
 
 @pytest.mark.asyncio
+async def test_query_preferences_populates_id_from_edge_uuid(layer, mock_graphiti):
+    mock_graphiti.search.return_value = [
+        MagicMock(
+            fact="User prefers auth diffs",
+            name="prefers",
+            valid_at=None,
+            uuid="edge-uuid-42",
+        ),
+    ]
+
+    facts = await layer.query_preferences("auth")
+    assert len(facts) == 1
+    assert facts[0].id == "edge-uuid-42"
+
+
+# --- Fact curation: delete (tombstone) + update ---
+
+
+@pytest.mark.asyncio
+async def test_delete_fact_invalidates_and_persists(layer, mock_graphiti, monkeypatch):
+    edge = FakeEntityEdge(
+        uuid="e1", fact="User prefers auth", invalid_at=None, expired_at=None
+    )
+    edge.save = AsyncMock()
+
+    get_by_uuid = AsyncMock(return_value=edge)
+    monkeypatch.setattr(
+        mock_edges.EntityEdge, "get_by_uuid", get_by_uuid, raising=False
+    )
+
+    await layer.delete_fact("e1")
+
+    get_by_uuid.assert_called_once()
+    # invalidation fields set
+    assert edge.invalid_at is not None
+    assert edge.expired_at is not None
+    edge.save.assert_called_once_with(mock_graphiti.driver)
+
+
+@pytest.mark.asyncio
+async def test_delete_fact_not_found_raises(layer, mock_graphiti, monkeypatch):
+    get_by_uuid = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        mock_edges.EntityEdge, "get_by_uuid", get_by_uuid, raising=False
+    )
+
+    with pytest.raises(KeyError):
+        await layer.delete_fact("missing")
+
+
+@pytest.mark.asyncio
+async def test_update_fact_sets_fact_text_and_persists(
+    layer, mock_graphiti, monkeypatch
+):
+    edge = FakeEntityEdge(uuid="e1", fact="old text")
+    edge.save = AsyncMock()
+
+    get_by_uuid = AsyncMock(return_value=edge)
+    monkeypatch.setattr(
+        mock_edges.EntityEdge, "get_by_uuid", get_by_uuid, raising=False
+    )
+
+    await layer.update_fact("e1", "new asserted text")
+
+    assert edge.fact == "new asserted text"
+    edge.save.assert_called_once_with(mock_graphiti.driver)
+
+
+@pytest.mark.asyncio
+async def test_update_fact_not_found_raises(layer, mock_graphiti, monkeypatch):
+    get_by_uuid = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        mock_edges.EntityEdge, "get_by_uuid", get_by_uuid, raising=False
+    )
+
+    with pytest.raises(KeyError):
+        await layer.update_fact("missing", "x")
+
+
+@pytest.mark.asyncio
 async def test_record_triage_prefers_edge_has_priority(layer, mock_graphiti):
     card = {
         "id": "c4",
         "card_content": {"summary": "Urgent fix", "source_type": "github"},
-        "options": [{"label": "Add todo (P1)", "action": "add_todo", "details": {"priority": "P1"}}],
+        "options": [
+            {
+                "label": "Add todo (P1)",
+                "action": "add_todo",
+                "details": {"priority": "P1"},
+            }
+        ],
         "relevance_score": 90,
     }
     response = {"card_id": "c4", "choice": 1}
@@ -181,6 +300,7 @@ async def test_record_triage_prefers_edge_has_priority(layer, mock_graphiti):
 
 
 # --- Entity tests ---
+
 
 @pytest.fixture
 def mock_store():
@@ -195,7 +315,9 @@ def mock_store():
 
 
 @pytest.mark.asyncio
-async def test_record_entity_calls_add_triplet_per_fact(layer, mock_graphiti, mock_store):
+async def test_record_entity_calls_add_triplet_per_fact(
+    layer, mock_graphiti, mock_store
+):
     facts = {"name": "Alice", "role": "engineer"}
     await layer.record_entity("person", "p1", facts, mock_store)
 
@@ -224,7 +346,9 @@ async def test_record_entity_updates_graph_uuid(layer, mock_graphiti, mock_store
 
 
 @pytest.mark.asyncio
-async def test_record_entity_does_not_write_pg_on_graph_failure(layer, mock_graphiti, mock_store):
+async def test_record_entity_does_not_write_pg_on_graph_failure(
+    layer, mock_graphiti, mock_store
+):
     mock_graphiti.add_triplet.side_effect = Exception("Neo4j down")
 
     with pytest.raises(Exception, match="Neo4j down"):
@@ -258,7 +382,9 @@ async def test_query_entity_returns_none_when_not_found(layer, mock_store):
 
 
 @pytest.mark.asyncio
-async def test_record_decision_creates_structured_edge(layer, mock_graphiti, mock_store):
+async def test_record_decision_creates_structured_edge(
+    layer, mock_graphiti, mock_store
+):
     await layer.record_decision(
         "CI notifications from bot", "auto_drop", "low relevance", "github", mock_store
     )
@@ -286,16 +412,25 @@ async def test_record_decision_calls_add_episode(layer, mock_graphiti, mock_stor
 
 
 @pytest.mark.asyncio
-async def test_query_relationships_returns_from_cypher(layer, mock_graphiti, mock_store):
+async def test_query_relationships_returns_from_cypher(
+    layer, mock_graphiti, mock_store
+):
     mock_store.get_entity.return_value = {
         "entity_type": "person",
         "entity_id": "p1",
         "facts": {"name": "Alice"},
         "graph_uuid": "uuid-123",
     }
-    mock_graphiti.driver.execute_query = AsyncMock(return_value=[
-        {"from_entity": "person:p1", "to_entity": "team:eng", "relation": "member_of", "fact": "p1 is member of eng"},
-    ])
+    mock_graphiti.driver.execute_query = AsyncMock(
+        return_value=[
+            {
+                "from_entity": "person:p1",
+                "to_entity": "team:eng",
+                "relation": "member_of",
+                "fact": "p1 is member of eng",
+            },
+        ]
+    )
 
     result = await layer.query_relationships("person", "p1", mock_store)
     assert len(result) == 1
