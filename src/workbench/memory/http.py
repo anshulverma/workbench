@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 import httpx
 from pydantic import BaseModel
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class HttpMemoryLayer(MemoryLayer):
+    memory_type = "http"
+
     class ProviderConfig(BaseModel):
         base_url: str = "http://localhost:8422"
         timeout_seconds: int = 5
@@ -41,16 +44,24 @@ class HttpMemoryLayer(MemoryLayer):
         except Exception as e:
             logger.warning("Memory service record_triage failed: %s", e)
 
-    async def record_entity(self, entity_type: str, entity_id: str, facts: dict) -> None:
+    async def record_entity(
+        self, entity_type: str, entity_id: str, facts: dict
+    ) -> None:
         try:
             await self._client.post(
                 f"{self._base_url}/record/entity",
-                json={"entity_type": entity_type, "entity_id": entity_id, "facts": facts},
+                json={
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "facts": facts,
+                },
             )
         except Exception as e:
             logger.warning("Memory service record_entity failed: %s", e)
 
-    async def record_pipeline_decision(self, item: Item, decision: str, reason: str) -> None:
+    async def record_pipeline_decision(
+        self, item: Item, decision: str, reason: str
+    ) -> None:
         try:
             await self._client.post(
                 f"{self._base_url}/record/decision",
@@ -72,12 +83,44 @@ class HttpMemoryLayer(MemoryLayer):
             )
             resp.raise_for_status()
             data = resp.json()
-            return [Fact(content=f["content"], source=f.get("source", "graphiti")) for f in data.get("facts", [])]
+            return [self._parse_fact(f) for f in data.get("facts", [])]
         except Exception as e:
             logger.warning("Memory service query_preferences failed: %s", e)
             return []
 
-    async def query_entity(self, entity_type: str, entity_id: str) -> EntityKnowledge | None:
+    @staticmethod
+    def _parse_fact(f: dict) -> Fact:
+        ts = f.get("timestamp")
+        return Fact(
+            id=f.get("id"),
+            content=f["content"],
+            source=f.get("source", "graphiti"),
+            timestamp=datetime.fromisoformat(ts) if ts else None,
+        )
+
+    async def list_facts(self) -> list[Fact]:
+        try:
+            resp = await self._client.get(f"{self._base_url}/facts")
+            resp.raise_for_status()
+            data = resp.json()
+            return [self._parse_fact(f) for f in data.get("facts", [])]
+        except Exception as e:
+            logger.warning("Memory service list_facts failed: %s", e)
+            return []
+
+    async def delete_fact(self, fact_id: str) -> None:
+        resp = await self._client.delete(f"{self._base_url}/facts/{fact_id}")
+        resp.raise_for_status()
+
+    async def update_fact(self, fact_id: str, content: str) -> None:
+        resp = await self._client.patch(
+            f"{self._base_url}/facts/{fact_id}", json={"content": content}
+        )
+        resp.raise_for_status()
+
+    async def query_entity(
+        self, entity_type: str, entity_id: str
+    ) -> EntityKnowledge | None:
         try:
             resp = await self._client.get(
                 f"{self._base_url}/query/entity",
@@ -96,7 +139,9 @@ class HttpMemoryLayer(MemoryLayer):
             logger.warning("Memory service query_entity failed: %s", e)
             return None
 
-    async def query_relationships(self, entity_type: str, entity_id: str) -> list[Relationship]:
+    async def query_relationships(
+        self, entity_type: str, entity_id: str
+    ) -> list[Relationship]:
         try:
             resp = await self._client.get(
                 f"{self._base_url}/query/relationships",

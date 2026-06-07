@@ -200,7 +200,7 @@ async def test_config_get_patch(client):
 async def test_memory_facts_empty(client):
     r = await client.get("/api/memory/facts")
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json() == {"available": False, "memory_type": "noop", "facts": []}
 
 
 @pytest.mark.asyncio

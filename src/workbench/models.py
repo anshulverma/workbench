@@ -251,9 +251,10 @@ class EnrichmentBudget(BaseModel):
 
 
 class Fact(BaseModel):
+    id: str | None = None
     content: str
     source: str = ""
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime | None = None
 
 
 class IngestionRun(BaseModel):

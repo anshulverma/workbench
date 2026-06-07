@@ -67,7 +67,11 @@ async def test_query_preferences_returns_facts(layer, mock_http_client):
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "facts": [
-            {"content": "User prefers auth diffs", "source": "graphiti", "timestamp": "2026-06-01T00:00:00Z"}
+            {
+                "content": "User prefers auth diffs",
+                "source": "graphiti",
+                "timestamp": "2026-06-01T00:00:00Z",
+            }
         ]
     }
     mock_response.raise_for_status = MagicMock()
@@ -85,6 +89,82 @@ async def test_query_preferences_returns_empty_on_failure(layer, mock_http_clien
 
     facts = await layer.query_preferences("anything")
     assert facts == []
+
+
+@pytest.mark.asyncio
+async def test_query_preferences_populates_id_and_timestamp(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "facts": [
+            {
+                "id": "f1",
+                "content": "User prefers auth diffs",
+                "source": "graphiti",
+                "timestamp": "2026-06-01T00:00:00+00:00",
+            },
+            {"content": "No id or timestamp"},
+        ]
+    }
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.get.return_value = mock_response
+
+    facts = await layer.query_preferences("auth diffs")
+
+    assert facts[0].id == "f1"
+    assert facts[0].timestamp is not None
+    assert facts[0].timestamp.year == 2026 and facts[0].timestamp.month == 6
+    # Missing id/timestamp degrade to None, not now()
+    assert facts[1].id is None
+    assert facts[1].timestamp is None
+
+
+@pytest.mark.asyncio
+async def test_list_facts_returns_facts(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "facts": [
+            {
+                "id": "f1",
+                "content": "a",
+                "source": "graphiti",
+                "timestamp": "2026-06-01T00:00:00+00:00",
+            },
+        ]
+    }
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.get.return_value = mock_response
+
+    facts = await layer.list_facts()
+    assert len(facts) == 1
+    assert facts[0].id == "f1"
+
+
+@pytest.mark.asyncio
+async def test_delete_fact_calls_delete_endpoint(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.delete.return_value = mock_response
+
+    await layer.delete_fact("f1")
+
+    mock_http_client.delete.assert_awaited_once()
+    assert "/facts/f1" in mock_http_client.delete.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_update_fact_calls_patch_endpoint(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.patch.return_value = mock_response
+
+    await layer.update_fact("f1", "edited")
+
+    mock_http_client.patch.assert_awaited_once()
+    call = mock_http_client.patch.call_args
+    assert "/facts/f1" in call[0][0]
+    assert call[1]["json"] == {"content": "edited"}
 
 
 @pytest.mark.asyncio
@@ -128,10 +208,13 @@ def test_http_memory_layer_default_config():
 
 def test_registry_can_create_http_memory_layer():
     from workbench.registry import create_provider
-    layer = create_provider({
-        "class": "workbench.memory.http.HttpMemoryLayer",
-        "base_url": "http://localhost:8422",
-    })
+
+    layer = create_provider(
+        {
+            "class": "workbench.memory.http.HttpMemoryLayer",
+            "base_url": "http://localhost:8422",
+        }
+    )
     assert isinstance(layer, HttpMemoryLayer)
 
 
@@ -170,7 +253,9 @@ async def test_record_entity_does_not_raise_on_failure(layer, mock_http_client):
 
 
 @pytest.mark.asyncio
-async def test_record_pipeline_decision_posts_to_memory_service(layer, mock_http_client):
+async def test_record_pipeline_decision_posts_to_memory_service(
+    layer, mock_http_client
+):
     mock_response = MagicMock()
     mock_response.status_code = 202
     mock_response.raise_for_status = MagicMock()
@@ -200,7 +285,9 @@ async def test_record_pipeline_decision_posts_to_memory_service(layer, mock_http
 
 
 @pytest.mark.asyncio
-async def test_record_pipeline_decision_does_not_raise_on_failure(layer, mock_http_client):
+async def test_record_pipeline_decision_does_not_raise_on_failure(
+    layer, mock_http_client
+):
     mock_http_client.post.side_effect = Exception("Connection refused")
 
     item = Item(
@@ -275,8 +362,16 @@ async def test_query_relationships_returns_relationships(layer, mock_http_client
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "relationships": [
-            {"from_entity": "person:alice", "to_entity": "team:infra", "relation": "member_of"},
-            {"from_entity": "person:alice", "to_entity": "person:bob", "relation": "reports_to"},
+            {
+                "from_entity": "person:alice",
+                "to_entity": "team:infra",
+                "relation": "member_of",
+            },
+            {
+                "from_entity": "person:alice",
+                "to_entity": "person:bob",
+                "relation": "reports_to",
+            },
         ]
     }
     mock_response.raise_for_status = MagicMock()
