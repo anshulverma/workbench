@@ -42,6 +42,31 @@ class ItemStore(ABC):
         """Delete items with given status older than days. Returns count deleted."""
         ...
 
+    @abstractmethod
+    async def count_by_status(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY status."""
+        ...
+
+    @abstractmethod
+    async def count_by_priority(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY priority."""
+        ...
+
+    @abstractmethod
+    async def count_by_category(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY category."""
+        ...
+
+    @abstractmethod
+    async def count_by_source(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY source_type (items_stored per source)."""
+        ...
+
+    @abstractmethod
+    async def items_recent(self, limit: int) -> list[Item]:
+        """Most recently created items, ORDER BY created_at DESC."""
+        ...
+
 
 class TriageStore(ABC):
     @abstractmethod
@@ -146,6 +171,17 @@ class JobStore(ABC):
     async def get_job(self, job_id: str) -> PipelineJob | None: ...
     @abstractmethod
     async def update_job(self, job: PipelineJob) -> None: ...
+    @abstractmethod
+    async def list_jobs(
+        self, limit: int, offset: int, status: str | None = None
+    ) -> list[PipelineJob]:
+        """Jobs page, ORDER BY created_at DESC, optionally filtered by status."""
+        ...
+
+    @abstractmethod
+    async def count_jobs(self, status: str | None = None) -> int:
+        """COUNT of jobs, optionally filtered by status."""
+        ...
 
 
 class IngestionQueueStore(ABC):
@@ -170,6 +206,16 @@ class IngestionQueueStore(ABC):
     @abstractmethod
     async def count_dead_letters(self) -> int:
         """COUNT of dead_letter rows (never a full-row scan)."""
+        ...
+
+    @abstractmethod
+    async def count_by_status(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY status."""
+        ...
+
+    @abstractmethod
+    async def count_by_source(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY source_type for in-flight (queued/processing) rows."""
         ...
 
     @abstractmethod

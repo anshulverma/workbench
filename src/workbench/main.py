@@ -204,6 +204,7 @@ def create_app() -> FastAPI:
 
     from workbench.api import (
         actions,
+        activity,
         auth_token,
         config as config_api,
         debug,
@@ -216,6 +217,7 @@ def create_app() -> FastAPI:
         process,
         queue,
         sources,
+        stats,
         triage,
     )
 
@@ -234,6 +236,8 @@ def create_app() -> FastAPI:
         actions.router,
         auth_token.router,
         debug.router,
+        stats.router,
+        activity.router,
     ]:
         app.include_router(r)
 
