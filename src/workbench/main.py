@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -100,6 +101,39 @@ async def lifespan(app: FastAPI):
     app.state.sources = create_providers_from_list(
         config.sources, connections=connections, metrics=app.state.metrics
     )
+
+    # Targeted Hot-Reload plumbing: a single lock serializes source/messenger
+    # config write-back + swap; config_path is the base YAML we edit.
+    app.state.reload_lock = asyncio.Lock()
+    app.state.config_path = os.environ.get("WORKBENCH_CONFIG", "config.yml")
+
+    # Sync YAML sources (config.yml is the source of truth) into source_configs
+    # so get_sources() reflects the live set. Stable ids are written back to YAML.
+    from workbench.config_writer import write_source as _yaml_write_source
+    from workbench.models import SourceConfig as _SourceConfig
+    from workbench.registry import source_id_for as _source_id_for
+
+    for raw in config.sources:
+        sid = raw.get("id")
+        if not sid:
+            sid = _source_id_for(raw)
+            node = dict(raw)
+            node["id"] = sid
+            try:
+                _yaml_write_source(app.state.config_path, node)
+            except Exception:
+                logger.warning("Could not write back source id to YAML", source_id=sid)
+        adapter_type = raw.get("adapter_type")
+        if not adapter_type:
+            adapter_type = raw.get("class", "unknown").rsplit(".", 1)[-1]
+        sc = _SourceConfig(
+            id=sid,
+            adapter_type=adapter_type,
+            config=raw.get("config", {}),
+            schedule=raw.get("schedule", "*/15 * * * *"),
+            enabled=raw.get("enabled", True),
+        )
+        await app.state.stores.sources.upsert_source(sc)
 
     from workbench.pipeline.engine import PipelineEngine
 
@@ -207,6 +241,7 @@ def create_app() -> FastAPI:
         activity,
         auth_token,
         config as config_api,
+        connections,
         debug,
         filter_rules,
         health,
@@ -238,6 +273,7 @@ def create_app() -> FastAPI:
         debug.router,
         stats.router,
         activity.router,
+        connections.router,
     ]:
         app.include_router(r)
 

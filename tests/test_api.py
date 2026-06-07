@@ -74,7 +74,29 @@ async def app_with_state(stores, mock_llm):
         stores, NoopMemoryLayer(), mock_llm, StubEnricher()
     )
 
+    import asyncio as _asyncio
+
+    test_app.state.reload_lock = _asyncio.Lock()
+    test_app.state.connections = {}
+    test_app.state.config_path = None
+
+    from workbench.pipeline.scheduler import WorkbenchScheduler
+
+    test_scheduler = WorkbenchScheduler(
+        stores,
+        NoopMemoryLayer(),
+        test_app.state.pipeline,
+        None,
+        test_config,
+        sources=[],
+        llm=mock_llm,
+    )
+    test_scheduler.scheduler.start()
+    test_app.state.scheduler = test_scheduler
+
     yield test_app
+
+    test_scheduler.scheduler.shutdown(wait=False)
 
 
 @pytest_asyncio.fixture
@@ -182,10 +204,23 @@ async def test_memory_facts_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_sources_crud(client):
+async def test_sources_crud(client, app_with_state, tmp_path):
+    # New POST/PATCH/DELETE contract: adapter_type is allowlisted (github/email/
+    # calendar/chat); a raw dotted class path or unknown type is rejected. Writes
+    # go back to config.yml via Config Write-Back, so point at a temp file.
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(
+        "version: 0.4.0\n"
+        "server:\n  api_token: dev-token-change-me\n"
+        "storage:\n  postgres_dsn: postgres://x\n"
+        "llm:\n  class: workbench.providers.llm.anthropic.AnthropicLLM\n  api_key: t\n"
+        "sources: []\n"
+    )
+    app_with_state.state.config_path = str(cfg)
+
     r = await client.post(
         "/api/sources",
-        json={"adapter_type": "diff", "config": {"user_phid": "PHID-USER-123"}},
+        json={"adapter_type": "github", "config": {"repos": ["meta/workbench"]}},
     )
     assert r.status_code == 200
     source_id = r.json()["id"]

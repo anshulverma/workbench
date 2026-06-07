@@ -201,6 +201,8 @@ class SourceConfigUpdate(BaseModel):
     config: dict | None = None
     schedule: str | None = None
     enabled: bool | None = None
+    adapter_type: str | None = None
+    connection: str | None = None
 
 
 class PipelineJob(BaseModel):
