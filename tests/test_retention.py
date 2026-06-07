@@ -16,6 +16,7 @@ async def test_retention_deletes_old_archived_items():
     stores.triage.delete_older_than = AsyncMock(return_value=3)
     stores.enrichment.delete_older_than = AsyncMock(return_value=2)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=1)
+    stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
 
     config = RetentionConfig(archived_items_days=90)
     result = await run_retention_cleanup(stores, config)
@@ -33,12 +34,15 @@ async def test_retention_skips_interaction_log():
     stores.triage.delete_older_than = AsyncMock(return_value=0)
     stores.enrichment.delete_older_than = AsyncMock(return_value=0)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=0)
+    stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
 
     config = RetentionConfig()
     await run_retention_cleanup(stores, config)
 
-    assert not hasattr(stores.interactions, "delete_older_than") or \
-           not stores.interactions.delete_older_than.called
+    assert (
+        not hasattr(stores.interactions, "delete_older_than")
+        or not stores.interactions.delete_older_than.called
+    )
 
 
 @pytest.mark.asyncio
@@ -50,6 +54,7 @@ async def test_retention_returns_all_counts():
     stores.triage.delete_older_than = AsyncMock(side_effect=[4, 6])
     stores.enrichment.delete_older_than = AsyncMock(return_value=3)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=2)
+    stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
 
     config = RetentionConfig()
     result = await run_retention_cleanup(stores, config)
@@ -60,6 +65,7 @@ async def test_retention_returns_all_counts():
     assert result["responded_cards"] == 6
     assert result["enrichment_traces"] == 3
     assert result["dead_letters"] == 2
+    assert result["ingestion_runs"] == 0
 
 
 @pytest.mark.asyncio
@@ -71,6 +77,7 @@ async def test_retention_config_defaults():
     assert config.responded_cards_days == 90
     assert config.enrichment_traces_days == 30
     assert config.dead_letters_days == 30
+    assert config.ingestion_runs_days == 30
 
 
 @pytest.mark.asyncio
@@ -94,6 +101,7 @@ async def test_retention_passes_correct_days_to_stores():
     stores.triage.delete_older_than = AsyncMock(return_value=0)
     stores.enrichment.delete_older_than = AsyncMock(return_value=0)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=0)
+    stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
 
     config = RetentionConfig(
         archived_items_days=120,
@@ -111,3 +119,4 @@ async def test_retention_passes_correct_days_to_stores():
     stores.triage.delete_older_than.assert_any_call("responded", 45)
     stores.enrichment.delete_older_than.assert_called_once_with(10)
     stores.ingestion_queue.delete_dead_letters_older_than.assert_called_once_with(7)
+    stores.ingestion_runs.delete_older_than.assert_called_once_with(30)

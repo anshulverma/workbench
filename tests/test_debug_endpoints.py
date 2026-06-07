@@ -13,14 +13,18 @@ def _make_app():
 
     stores = MagicMock()
     stores.items.pool.fetch = AsyncMock(return_value=[])
-    stores.ingestion_queue.get_depth = AsyncMock(return_value=0)
+    stores.ingestion_queue.queue_depth = AsyncMock(return_value=0)
+    stores.ingestion_queue.count_dead_letters = AsyncMock(return_value=0)
     stores.triage.get_pending = AsyncMock(return_value=[])
 
     app.state.stores = stores
     app.state.connections = {}
     app.state.sources = []
     app.state.config = MagicMock()
-    app.state.config.model_dump.return_value = {"version": "0.3.0", "server": {"api_token": "SECRET"}}
+    app.state.config.model_dump.return_value = {
+        "version": "0.3.0",
+        "server": {"api_token": "SECRET"},
+    }
     app.state.metrics = None
     return app
 

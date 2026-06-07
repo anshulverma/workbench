@@ -1,11 +1,14 @@
 import asyncio
 import json
+import logging
 from datetime import datetime
 
 from pydantic import BaseModel
 
 from workbench.models import RawItem
 from workbench.providers.source.base import SourceAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class GitHubSourceAdapter(SourceAdapter):
@@ -57,9 +60,14 @@ class GitHubSourceAdapter(SourceAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode != 0:
+                logger.warning(
+                    "gh %s failed (exit %s): %s",
+                    " ".join(args), proc.returncode, stderr.decode(errors="replace").strip(),
+                )
                 return []
             return json.loads(stdout.decode())
         except Exception:
+            logger.warning("gh %s invocation failed", " ".join(args))
             return []

@@ -66,3 +66,25 @@ def test_skips_excluded_keys():
     proc = SanitizingProcessor(PrivacyConfig())
     result = _process(proc, {"event": "alice@meta.com", "level": "info", "timestamp": "2026-06-03"})
     assert result["event"] == "alice@meta.com"  # event key is excluded from sanitization
+
+
+def test_does_not_truncate_exception_traceback():
+    """Tracebacks (the `exception`/`stack` fields) must never be truncated — a
+    cut-off traceback hides the exception, which is exactly what we must not do."""
+    proc = SanitizingProcessor(PrivacyConfig(max_content_in_logs=50))
+    long_tb = "Traceback (most recent call last):\n" + ("  frame\n" * 100)
+    result = _process(proc, {"event": "e", "exception": long_tb, "stack": long_tb})
+    assert result["exception"] == long_tb  # full traceback preserved
+    assert result["stack"] == long_tb
+    assert "[truncated]" not in result["exception"]
+
+
+def test_still_redacts_pii_inside_traceback():
+    """Not truncating tracebacks must not disable PII redaction within them."""
+    proc = SanitizingProcessor(PrivacyConfig(max_content_in_logs=50))
+    tb = "ValueError: failed for alice@meta.com calling 555-123-4567\n" + ("x" * 200)
+    result = _process(proc, {"event": "e", "exception": tb})
+    assert "alice@meta.com" not in result["exception"]
+    assert "[REDACTED:email]" in result["exception"]
+    assert "[REDACTED:phone]" in result["exception"]
+    assert result["exception"].endswith("x" * 200)  # body kept, not truncated

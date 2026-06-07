@@ -2,6 +2,7 @@ from workbench.storage.base import Stores
 from workbench.storage.postgres.config import PgConfigStore
 from workbench.storage.postgres.enrichment import PgEnrichmentTraceStore
 from workbench.storage.postgres.filter_rules import PgFilterRuleStore
+from workbench.storage.ingestion_runs import PgIngestionRunStore
 from workbench.storage.postgres.ingestion_queue import PgIngestionQueueStore
 from workbench.storage.postgres.interactions import PgInteractionStore
 from workbench.storage.postgres.items import PgItemStore
@@ -31,5 +32,6 @@ async def create_postgres_stores(dsn: str) -> Stores:
         config=PgConfigStore(pool),
         jobs=PgJobStore(pool),
         ingestion_queue=PgIngestionQueueStore(pool),
+        ingestion_runs=PgIngestionRunStore(pool),
         close_fn=close,
     )

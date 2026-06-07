@@ -1,0 +1,9 @@
+# ADR 0016: Read-API Empty-State Contract — 200 + Envelope, Never 5xx for "Not Configured"
+
+Management Dashboard read endpoints that expose optional providers return `200` with a typed envelope carrying a static type label plus a dynamic availability signal, rather than an error status, when the provider is absent or unreachable. `GET /api/messenger` returns `{configured, type, class, config}` (and `{reachable, checked_at}` only when called with `?check=true`); `configured:false` when no messenger is set. `GET /api/memory/facts` returns `{available, memory_type, facts:[...]}`; the three empty states — `memory_type:"noop"` (not enabled), `memory_type:"zep"`+`available:false` (service unreachable), `available:true`+`facts:[]` (configured, nothing learned) — are distinguishable by the client. `5xx` is reserved for genuine server faults.
+
+We chose this over `404`/`503` for unconfigured providers and over bare list responses. Returning an error for an expected steady state (no messenger configured = triage cards queued but not sent; `NoopMemoryLayer` is the default) forces the UI to parse error bodies and conflates "expected absence" with "failure". A bare list cannot distinguish "not configured" from "configured but empty".
+
+The trade-off is a small amount of envelope boilerplate on every such endpoint and a discipline that reviewers must enforce (it is tempting to `raise HTTPException(503)`). We accept this because it maps cleanly onto the frontend **UI State Taxonomy**, where missing-memory and missing-messenger are `degraded`, not `error`.
+
+**Consequence:** The frontend renders distinct empty/degraded panels from the envelope fields, not from HTTP status or list length. `MemoryLayer.is_available()` (a live probe for the HTTP layer) supplies the `available` flag; the static `memory_type`/`type` label comes from the provider class name.

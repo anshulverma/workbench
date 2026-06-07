@@ -7,8 +7,15 @@ from workbench.pipeline.triage import format_card_for_chat
 from workbench.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.models import (
-    ExtractedItem, ItemCategory, RawItem, TriageCard, TriageOption,
-    JobTrigger, JobStatus, ItemFilters, ItemStatus,
+    ExtractedItem,
+    ItemCategory,
+    RawItem,
+    TriageCard,
+    TriageOption,
+    JobTrigger,
+    JobStatus,
+    ItemFilters,
+    ItemStatus,
 )
 
 
@@ -20,7 +27,9 @@ def mock_llm():
             summary="Review auth PR",
             category=ItemCategory.ACTION_ITEM,
             source_context="ctx",
-            raw_item=RawItem(id="D123_100", source_type="diff", source_label="D123", raw_text="test"),
+            raw_item=RawItem(
+                id="D123_100", source_type="diff", source_label="D123", raw_text="test"
+            ),
         )
     ]
     llm.score_relevance.return_value = (85, 90)
@@ -37,26 +46,41 @@ async def test_score_and_decide_with_entity_and_relationships(stores, mock_llm):
     from workbench.models import EntityKnowledge, Relationship, Fact
 
     mock_memory = AsyncMock()
-    mock_memory.query_preferences = AsyncMock(return_value=[
-        Fact(content="User prefers auth diffs"),
-    ])
-    mock_memory.query_entity = AsyncMock(return_value=EntityKnowledge(
-        entity_type="github", entity_id="D123_100", facts={"team": "infra", "lang": "python"},
-    ))
-    mock_memory.query_relationships = AsyncMock(return_value=[
-        Relationship(from_entity="alice", to_entity="infra-core", relation="reviews"),
-    ])
+    mock_memory.query_preferences = AsyncMock(
+        return_value=[
+            Fact(content="User prefers auth diffs"),
+        ]
+    )
+    mock_memory.query_entity = AsyncMock(
+        return_value=EntityKnowledge(
+            entity_type="github",
+            entity_id="D123_100",
+            facts={"team": "infra", "lang": "python"},
+        )
+    )
+    mock_memory.query_relationships = AsyncMock(
+        return_value=[
+            Relationship(
+                from_entity="alice", to_entity="infra-core", relation="reviews"
+            ),
+        ]
+    )
 
     item = ExtractedItem(
         summary="Review auth PR",
         category=ItemCategory.ACTION_ITEM,
         source_context="ctx",
-        raw_item=RawItem(id="D123_100", source_type="github", source_label="D123", raw_text="test"),
+        raw_item=RawItem(
+            id="D123_100", source_type="github", source_label="D123", raw_text="test"
+        ),
     )
 
     mock_llm.score_relevance.return_value = (85, 90)
     action, relevance, confidence = await score_and_decide(
-        mock_llm, mock_memory, stores.filter_rules, item,
+        mock_llm,
+        mock_memory,
+        stores.filter_rules,
+        item,
     )
 
     assert action == "auto_include"
@@ -67,7 +91,11 @@ async def test_score_and_decide_with_entity_and_relationships(stores, mock_llm):
 
     # Verify facts passed to LLM include entity and relationship context
     call_args = mock_llm.score_relevance.call_args
-    facts_passed = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("preference_facts", [])
+    facts_passed = (
+        call_args.args[1]
+        if len(call_args.args) > 1
+        else call_args.kwargs.get("preference_facts", [])
+    )
     sources = [f.source for f in facts_passed]
     assert "entity" in sources
     assert "relationship" in sources
@@ -88,12 +116,17 @@ async def test_score_and_decide_handles_none_entity(stores, mock_llm):
         summary="Some item",
         category=ItemCategory.ACTION_ITEM,
         source_context="ctx",
-        raw_item=RawItem(id="E1", source_type="email", source_label="email", raw_text="test"),
+        raw_item=RawItem(
+            id="E1", source_type="email", source_label="email", raw_text="test"
+        ),
     )
 
     mock_llm.score_relevance.return_value = (50, 50)
     action, _, _ = await score_and_decide(
-        mock_llm, mock_memory, stores.filter_rules, item,
+        mock_llm,
+        mock_memory,
+        stores.filter_rules,
+        item,
     )
     assert action == "triage"
 
@@ -115,7 +148,9 @@ async def test_process_raw_item_auto_include(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
     job = await engine.enqueue("diff content", "diff")
-    raw = RawItem(id="D123_100", source_type="diff", source_label="D123", raw_text="diff content")
+    raw = RawItem(
+        id="D123_100", source_type="diff", source_label="D123", raw_text="diff content"
+    )
     await engine.process_raw_item(raw, job.id)
 
     items = await stores.items.get_items(ItemFilters())
@@ -129,7 +164,9 @@ async def test_process_raw_item_auto_drop(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
     job = await engine.enqueue("spam content", "email")
-    raw = RawItem(id="E1", source_type="email", source_label="email", raw_text="spam content")
+    raw = RawItem(
+        id="E1", source_type="email", source_label="email", raw_text="spam content"
+    )
     await engine.process_raw_item(raw, job.id)
 
     items = await stores.items.get_items(ItemFilters())
@@ -142,7 +179,9 @@ async def test_process_raw_item_triage(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
     job = await engine.enqueue("ambiguous content", "email")
-    raw = RawItem(id="E2", source_type="email", source_label="email", raw_text="ambiguous content")
+    raw = RawItem(
+        id="E2", source_type="email", source_label="email", raw_text="ambiguous content"
+    )
     await engine.process_raw_item(raw, job.id)
 
     items = await stores.items.get_items(ItemFilters(status=ItemStatus.PENDING_TRIAGE))
@@ -173,7 +212,9 @@ async def test_auto_include_populates_raw_data(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
     raw = RawItem(
-        id="D123", source_type="diff", source_label="D123",
+        id="D123",
+        source_type="diff",
+        source_label="D123",
         raw_text='{"number": 123, "title": "fix auth"}',
         urgency_signals={"type": "pull_request"},
     )
@@ -192,7 +233,9 @@ async def test_triage_item_populates_raw_data(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
     raw = RawItem(
-        id="D456", source_type="diff", source_label="D456",
+        id="D456",
+        source_type="diff",
+        source_label="D456",
         raw_text='{"number": 456, "title": "add tests"}',
     )
     job = await engine.enqueue(raw.raw_text, "diff")
@@ -259,14 +302,27 @@ async def test_scheduler_poll_sources_enqueues_items(stores, mock_llm):
     mock_source = AsyncMock()
     mock_source.adapter_type = MagicMock(return_value="github")
     mock_source.poll.return_value = [
-        RawItem(id="gh-pr-1", source_type="github", source_label="PR #1", raw_text='{"number":1}'),
-        RawItem(id="gh-pr-2", source_type="github", source_label="PR #2", raw_text='{"number":2}'),
+        RawItem(
+            id="gh-pr-1",
+            source_type="github",
+            source_label="PR #1",
+            raw_text='{"number":1}',
+        ),
+        RawItem(
+            id="gh-pr-2",
+            source_type="github",
+            source_label="PR #2",
+            raw_text='{"number":2}',
+        ),
     ]
 
     messenger = AsyncMock()
-    scheduler = WorkbenchScheduler(stores, memory, pipeline, messenger, config, sources=[mock_source])
+    scheduler = WorkbenchScheduler(
+        stores, memory, pipeline, messenger, config, sources=[mock_source]
+    )
+    scheduler._source_by_id = {"src-gh": mock_source}
 
-    await scheduler._poll_sources()
+    await scheduler._poll_one_source("src-gh")
 
     mock_source.poll.assert_called_once()
     assert await stores.ingestion_queue.queue_depth() == 2
@@ -292,23 +348,31 @@ async def test_scheduler_poll_sources_tracks_last_polled(stores, mock_llm):
     mock_source = AsyncMock()
     mock_source.adapter_type = MagicMock(return_value="github")
     mock_source.poll.return_value = [
-        RawItem(id="gh-pr-1", source_type="github", source_label="PR #1", raw_text='{"number":1}'),
+        RawItem(
+            id="gh-pr-1",
+            source_type="github",
+            source_label="PR #1",
+            raw_text='{"number":1}',
+        ),
     ]
 
-    scheduler = WorkbenchScheduler(stores, memory, pipeline, None, config, sources=[mock_source])
+    scheduler = WorkbenchScheduler(
+        stores, memory, pipeline, None, config, sources=[mock_source]
+    )
+    scheduler._source_by_id = {"src-gh": mock_source}
 
     # First poll: since=None (no stored timestamp yet)
-    await scheduler._poll_sources()
+    await scheduler._poll_one_source("src-gh")
     assert mock_source.poll.call_args.kwargs["since"] is None
 
-    # Verify last_polled_at was stored in ConfigStore
-    stored = await stores.config.get("source_last_polled:github")
+    # Verify last_polled_at was stored in ConfigStore (keyed by source_id)
+    stored = await stores.config.get("source_last_polled:src-gh")
     assert stored is not None
 
     # Second poll: since should be the stored timestamp
     mock_source.poll.reset_mock()
     mock_source.poll.return_value = []
-    await scheduler._poll_sources()
+    await scheduler._poll_one_source("src-gh")
     assert mock_source.poll.call_args.kwargs["since"] is not None
 
 
@@ -332,13 +396,21 @@ async def test_scheduler_poll_sources_skips_duplicates(stores, mock_llm):
     mock_source = AsyncMock()
     mock_source.adapter_type = MagicMock(return_value="github")
     mock_source.poll.return_value = [
-        RawItem(id="gh-pr-1", source_type="github", source_label="PR #1", raw_text='{"number":1}'),
+        RawItem(
+            id="gh-pr-1",
+            source_type="github",
+            source_label="PR #1",
+            raw_text='{"number":1}',
+        ),
     ]
 
-    scheduler = WorkbenchScheduler(stores, memory, pipeline, None, config, sources=[mock_source])
+    scheduler = WorkbenchScheduler(
+        stores, memory, pipeline, None, config, sources=[mock_source]
+    )
+    scheduler._source_by_id = {"src-gh": mock_source}
 
-    await scheduler._poll_sources()
-    await scheduler._poll_sources()
+    await scheduler._poll_one_source("src-gh")
+    await scheduler._poll_one_source("src-gh")
 
     # Second poll returns the same item — dedup should skip it
     assert await stores.ingestion_queue.queue_depth() == 1
@@ -364,15 +436,22 @@ async def test_scheduler_poll_sources_handles_adapter_failure(stores, mock_llm):
     failing_source.adapter_type = MagicMock(return_value="github")
     failing_source.poll.side_effect = Exception("API timeout")
 
-    scheduler = WorkbenchScheduler(stores, memory, pipeline, None, config, sources=[failing_source])
+    scheduler = WorkbenchScheduler(
+        stores, memory, pipeline, None, config, sources=[failing_source]
+    )
+    scheduler._source_by_id = {"src-gh": failing_source}
 
-    # Should not raise — adapter failures are caught and logged
-    await scheduler._poll_sources()
+    # Should not raise — adapter failures are caught and recorded as an error run
+    await scheduler._poll_one_source("src-gh")
     assert await stores.ingestion_queue.queue_depth() == 0
 
     # last_polled_at should NOT be updated on failure
-    stored = await stores.config.get("source_last_polled:github")
+    stored = await stores.config.get("source_last_polled:src-gh")
     assert stored is None
+
+    # the failed run is recorded in ingestion_runs
+    latest = await stores.ingestion_runs.latest_for_source("src-gh")
+    assert latest.status == "error"
 
 
 @pytest.mark.asyncio
@@ -482,9 +561,14 @@ async def test_scheduler_skips_unhealthy_connection(stores, mock_llm):
     adapter.poll.return_value = []
 
     scheduler = WorkbenchScheduler(
-        stores, memory, pipeline, None, config,
+        stores,
+        memory,
+        pipeline,
+        None,
+        config,
         sources=[adapter],
     )
-    await scheduler._poll_sources()
+    scheduler._source_by_id = {"src-email": adapter}
+    await scheduler._poll_one_source("src-email")
 
     adapter.poll.assert_not_called()

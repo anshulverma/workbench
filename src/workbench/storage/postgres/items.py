@@ -105,9 +105,35 @@ class PgItemStore(ItemStore):
     async def delete_older_than(self, status: str, days: int) -> int:
         result = await self.pool.execute(
             "DELETE FROM items WHERE status = $1 AND updated_at < NOW() - INTERVAL '1 day' * $2",
-            status, days,
+            status,
+            days,
         )
         return int(result.split()[-1])
+
+    async def _count_group(self, column: str) -> dict[str, int]:
+        rows = await self.pool.fetch(
+            f"SELECT {column} AS k, COUNT(*) AS cnt FROM items GROUP BY {column}"
+        )
+        return {r["k"]: r["cnt"] for r in rows}
+
+    async def count_by_status(self) -> dict[str, int]:
+        return await self._count_group("status")
+
+    async def count_by_priority(self) -> dict[str, int]:
+        return await self._count_group("priority")
+
+    async def count_by_category(self) -> dict[str, int]:
+        return await self._count_group("category")
+
+    async def count_by_source(self) -> dict[str, int]:
+        return await self._count_group("source_type")
+
+    async def items_recent(self, limit: int) -> list[Item]:
+        rows = await self.pool.fetch(
+            "SELECT * FROM items ORDER BY created_at DESC LIMIT $1",
+            limit,
+        )
+        return [self._row_to_item(r) for r in rows]
 
     @staticmethod
     def _row_to_item(row: asyncpg.Record) -> Item:

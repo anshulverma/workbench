@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 
+from workbench.storage.ingestion_runs import IngestionRunStore
 from workbench.models import (
     EnrichmentTrace,
     FilterRule,
@@ -39,6 +40,31 @@ class ItemStore(ABC):
     @abstractmethod
     async def delete_older_than(self, status: str, days: int) -> int:
         """Delete items with given status older than days. Returns count deleted."""
+        ...
+
+    @abstractmethod
+    async def count_by_status(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY status."""
+        ...
+
+    @abstractmethod
+    async def count_by_priority(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY priority."""
+        ...
+
+    @abstractmethod
+    async def count_by_category(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY category."""
+        ...
+
+    @abstractmethod
+    async def count_by_source(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY source_type (items_stored per source)."""
+        ...
+
+    @abstractmethod
+    async def items_recent(self, limit: int) -> list[Item]:
+        """Most recently created items, ORDER BY created_at DESC."""
         ...
 
 
@@ -117,7 +143,9 @@ class SourceConfigStore(ABC):
     @abstractmethod
     async def upsert_source(self, source: SourceConfig) -> SourceConfig: ...
     @abstractmethod
-    async def update_source(self, source_id: str, updates: SourceConfigUpdate) -> SourceConfig: ...
+    async def update_source(
+        self, source_id: str, updates: SourceConfigUpdate
+    ) -> SourceConfig: ...
 
 
 class ProcessedStore(ABC):
@@ -143,6 +171,17 @@ class JobStore(ABC):
     async def get_job(self, job_id: str) -> PipelineJob | None: ...
     @abstractmethod
     async def update_job(self, job: PipelineJob) -> None: ...
+    @abstractmethod
+    async def list_jobs(
+        self, limit: int, offset: int, status: str | None = None
+    ) -> list[PipelineJob]:
+        """Jobs page, ORDER BY created_at DESC, optionally filtered by status."""
+        ...
+
+    @abstractmethod
+    async def count_jobs(self, status: str | None = None) -> int:
+        """COUNT of jobs, optionally filtered by status."""
+        ...
 
 
 class IngestionQueueStore(ABC):
@@ -165,6 +204,21 @@ class IngestionQueueStore(ABC):
     @abstractmethod
     async def queue_depth(self) -> int: ...
     @abstractmethod
+    async def count_dead_letters(self) -> int:
+        """COUNT of dead_letter rows (never a full-row scan)."""
+        ...
+
+    @abstractmethod
+    async def count_by_status(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY status."""
+        ...
+
+    @abstractmethod
+    async def count_by_source(self) -> dict[str, int]:
+        """COUNT(*) GROUP BY source_type for in-flight (queued/processing) rows."""
+        ...
+
+    @abstractmethod
     async def delete_dead_letters_older_than(self, days: int) -> int:
         """Delete dead letter entries older than days. Returns count deleted."""
         ...
@@ -184,6 +238,7 @@ class Stores:
         config: ConfigStore,
         jobs: JobStore,
         ingestion_queue: IngestionQueueStore,
+        ingestion_runs: IngestionRunStore,
         close_fn=None,
     ):
         self.items = items
@@ -197,6 +252,7 @@ class Stores:
         self.config = config
         self.jobs = jobs
         self.ingestion_queue = ingestion_queue
+        self.ingestion_runs = ingestion_runs
         self._close_fn = close_fn
 
     async def close(self):

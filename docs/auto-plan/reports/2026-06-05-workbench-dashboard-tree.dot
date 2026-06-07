@@ -1,0 +1,49 @@
+digraph workbench_dashboard {
+  rankdir=LR;
+  node [shape=box, style=filled, fontname="Helvetica"];
+
+  root [label="Workbench Management Dashboard", fillcolor=white];
+
+  // color legend: palegreen=auto-answered(griller), lightskyblue=user input,
+  // lightgray=ADR/memory, lightyellow=discovered, lightcoral=blocked-external
+
+  // Backend
+  B1 [label="B1 Stats & aggregation API", fillcolor=palegreen];
+  B1a [label="/health bug-fixes", fillcolor=lightyellow];
+  B2 [label="B2 Source-creation API + secrets", fillcolor=lightskyblue];
+  B2a [label="Config write-back (ruamel)", fillcolor=lightyellow];
+  B2b [label="Stable source id in YAML", fillcolor=lightyellow];
+  B2c [label="sources mutation safety", fillcolor=lightyellow];
+  B3 [label="B3 Messenger-info + facts read", fillcolor=palegreen];
+  B3a [label="Memory list-all-facts contract", fillcolor=lightyellow];
+  B4 [label="B4 Job/activity history API", fillcolor=palegreen];
+  SCH [label="Per-source cron scheduler", fillcolor=lightskyblue];
+  SCHa [label="Watermark redesign (source_id)", fillcolor=lightyellow];
+  SCHb [label="Manual vs scheduled concurrency", fillcolor=lightyellow];
+  FC [label="Facts curation write path", fillcolor=lightskyblue];
+  FCa [label="Memory-service mutation+tombstone\n(workbench-meta)", fillcolor=lightcoral];
+  TR [label="Triage web-respond (409+confirm)", fillcolor=lightskyblue];
+
+  // Frontend
+  F1 [label="F1 App shell / routing / shadcn", fillcolor=palegreen];
+  F2 [label="F2 Data layer (TanStack Query)", fillcolor=palegreen];
+  F3 [label="F3 Overview page", fillcolor=palegreen];
+  F4 [label="F4 Sources page + add form", fillcolor=palegreen];
+  F5 [label="F5 Ingestion-activity page", fillcolor=palegreen];
+  F6 [label="F6 Messenger page (view+edit)", fillcolor=palegreen];
+  F7 [label="F7 Knowledge/facts (view+curate)", fillcolor=palegreen];
+  FE [label="Tailwind v4 / React 19 migration", fillcolor=lightskyblue];
+
+  // Cross-cutting
+  X1 [label="X1 Security / secrets / auth / deploy", fillcolor=palegreen];
+  X1a [label="Server bind / Podman topology", fillcolor=lightyellow];
+  X2 [label="X2 Hardening (states, a11y, testing)", fillcolor=palegreen];
+
+  root -> {B1 B2 B3 B4 SCH FC TR F1 F2 F3 F4 F5 F6 F7 FE X1 X2};
+  B1 -> B1a;
+  B2 -> {B2a B2b B2c};
+  B3 -> B3a;
+  SCH -> {SCHa SCHb};
+  FC -> FCa;
+  X1 -> X1a;
+}

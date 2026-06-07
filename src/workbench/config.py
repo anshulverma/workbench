@@ -29,7 +29,7 @@ class TriageConfig(BaseModel):
     daily_cap: int = 20
     expiry_days: int = 7
     timeout_minutes: int = 30
-    triage_poll_interval_seconds: int = 10
+    triage_poll_interval_seconds: float = 0.5
 
 
 class PipelineConfig(BaseModel):
@@ -83,6 +83,7 @@ class RetentionConfig(BaseModel):
     responded_cards_days: int = 90
     enrichment_traces_days: int = 30
     dead_letters_days: int = 30
+    ingestion_runs_days: int = 30
 
 
 class AlertConditions(BaseModel):
@@ -106,7 +107,11 @@ class SchedulerConfig(BaseModel):
 
 class EnrichmentConfig(BaseModel):
     providers: list[dict] = Field(default_factory=list)
-    default: dict = Field(default_factory=lambda: {"class": "workbench.providers.enrichment.stub.StubEnricher"})
+    default: dict = Field(
+        default_factory=lambda: {
+            "class": "workbench.providers.enrichment.stub.StubEnricher"
+        }
+    )
 
 
 class AppConfig(BaseModel):
@@ -160,7 +165,10 @@ def load_config(config_path: str, override_path: str | None = None) -> AppConfig
     major = int(config.version.split(".")[0])
     expected_major = 0
     if major != expected_major:
-        print(f"Error: Config version {config.version} is incompatible (expected major {expected_major})", file=sys.stderr)
+        print(
+            f"Error: Config version {config.version} is incompatible (expected major {expected_major})",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     return config

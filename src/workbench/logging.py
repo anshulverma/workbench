@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from logging.handlers import RotatingFileHandler
 from typing import Any
@@ -30,6 +31,39 @@ class AgeRotatingFileHandler(RotatingFileHandler):
                 path = os.path.join(log_dir, f)
                 if os.path.getmtime(path) < cutoff:
                     os.remove(path)
+
+
+# Levels for which the safety net auto-attaches the in-flight traceback.
+# Warnings are deliberately excluded: code logging a warning inside an `except`
+# block (e.g. apscheduler's benign "maximum number of running instances reached"
+# MaxInstancesReachedError) is reporting a handled, expected condition and does
+# not want a stack trace. A warning that genuinely needs one can still pass
+# `exc_info=True` explicitly.
+_AUTO_EXC_INFO_LEVELS = frozenset({"error", "critical", "exception"})
+
+
+def add_active_exc_info(logger: Any, method_name: str, event_dict: dict) -> dict:
+    """Auto-attach the currently-handled exception so error logs emitted inside an
+    `except` block render a full traceback — even when the call site forgot
+    `exc_info=True`. This is the safety net that guarantees exceptions are never
+    silently dropped from the logs.
+
+    Only applies to error/critical level. Warnings logged inside `except` blocks
+    are treated as intentional ("handled, moving on") and do NOT get a spurious
+    traceback unless the caller set ``exc_info`` explicitly.
+
+    Runs BEFORE ``format_exc_info`` in the processor chain. Honors an explicit
+    ``exc_info`` if the caller already set one, and adds nothing when no exception
+    is being handled (so ordinary logs don't grow spurious tracebacks).
+    """
+    level = event_dict.get("level") or method_name
+    if (
+        level in _AUTO_EXC_INFO_LEVELS
+        and not event_dict.get("exc_info")
+        and sys.exc_info()[0] is not None
+    ):
+        event_dict["exc_info"] = True
+    return event_dict
 
 
 def setup_logging(
@@ -62,9 +96,14 @@ def setup_logging(
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         CallsiteParameterAdder(
-            [CallsiteParameter.FILENAME, CallsiteParameter.LINENO, CallsiteParameter.FUNC_NAME]
+            [
+                CallsiteParameter.FILENAME,
+                CallsiteParameter.LINENO,
+                CallsiteParameter.FUNC_NAME,
+            ]
         ),
         structlog.processors.StackInfoRenderer(),
+        add_active_exc_info,
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
     ]

@@ -1,8 +1,11 @@
+import logging
 import os
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 class BearerTokenMiddleware(BaseHTTPMiddleware):
@@ -22,6 +25,7 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
             self._token = config.server.api_token
             return self._token
         except (SystemExit, Exception):
+            logger.error("Failed to load API token from config", exc_info=True)
             return None
 
     async def dispatch(self, request: Request, call_next):

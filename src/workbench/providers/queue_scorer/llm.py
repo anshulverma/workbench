@@ -1,10 +1,13 @@
 import json
+import logging
 from typing import Any
 
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
 from workbench.providers.queue_scorer.base import QueueScorer
+
+logger = logging.getLogger(__name__)
 
 URGENCY_PROMPT = """Rate the urgency of processing this content on a scale of 0-100.
 Higher = more urgent (needs immediate attention).
@@ -51,6 +54,7 @@ class LLMQueueScorer(QueueScorer):
             data = json.loads(text.strip())
             return max(0, min(100, int(data["urgency"])))
         except Exception:
+            logger.warning("Urgency scoring failed, defaulting to 50")
             return 50
 
     async def close(self) -> None:

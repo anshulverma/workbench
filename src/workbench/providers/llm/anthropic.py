@@ -75,6 +75,7 @@ class AnthropicLLM(LLMProvider):
                 for d in items_data
             ]
         except (json.JSONDecodeError, KeyError):
+            logger.warning("Failed to parse extraction response, returning no items")
             return []
 
     async def score_relevance(self, item: ExtractedItem, preference_facts: list[Fact], rules: list[FilterRule]) -> tuple[int, int]:
@@ -92,6 +93,7 @@ class AnthropicLLM(LLMProvider):
             scores = json.loads(self._extract_json(response))
             return int(scores["relevance"]), int(scores["confidence"])
         except (json.JSONDecodeError, KeyError):
+            logger.warning("Failed to parse score response, using default (50, 30)")
             return 50, 30
 
     async def generate_triage_card(self, item: ExtractedItem, enrichment_context: dict, source_type: str, *, memory_context: dict | None = None) -> TriageCard:
@@ -148,6 +150,7 @@ Return ONLY the card body text, no JSON wrapping."""
         try:
             return await self._call_with_retry(prompt)
         except Exception:
+            logger.warning("Card body generation failed, falling back to summary")
             return summary
 
     def _template_options(self, source_type: str) -> list[TriageOption]:
@@ -307,6 +310,9 @@ Return ONLY the card body text, no JSON wrapping."""
             except Exception:
                 if attempt == max_retries - 1:
                     raise
+                logger.warning(
+                    "LLM call failed (attempt %d/%d), retrying", attempt + 1, max_retries,
+                )
                 await asyncio.sleep(2 ** attempt)
 
     def _extract_json(self, text: str) -> str:

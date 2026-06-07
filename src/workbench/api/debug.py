@@ -1,28 +1,12 @@
 from __future__ import annotations
 
-import re
-from typing import Any
-
 import structlog
 from fastapi import APIRouter, Request
 
+from workbench.redaction import redact_secrets as _redact_secrets
+
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/debug", tags=["debug"])
-
-SECRET_PATTERN = re.compile(r'(token|key|secret|password|dsn|credentials)', re.IGNORECASE)
-
-
-def _redact_secrets(obj: Any, depth: int = 0) -> Any:
-    if depth > 10:
-        return "..."
-    if isinstance(obj, dict):
-        return {
-            k: "[REDACTED]" if SECRET_PATTERN.search(k) else _redact_secrets(v, depth + 1)
-            for k, v in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_redact_secrets(i, depth + 1) for i in obj]
-    return obj
 
 
 @router.get("/adapters")
@@ -31,11 +15,15 @@ async def debug_adapters(request: Request):
     adapters = []
     for s in sources:
         inner = getattr(s, "_inner", s)
-        adapters.append({
-            "name": getattr(s, "_name", type(inner).__name__),
-            "class": type(inner).__qualname__,
-            "healthy": getattr(getattr(inner, "_connection", None), "is_healthy", lambda: True)(),
-        })
+        adapters.append(
+            {
+                "name": getattr(s, "_name", type(inner).__name__),
+                "class": type(inner).__qualname__,
+                "healthy": getattr(
+                    getattr(inner, "_connection", None), "is_healthy", lambda: True
+                )(),
+            }
+        )
     return {"adapters": adapters}
 
 
@@ -60,6 +48,7 @@ async def debug_pipeline(request: Request):
         )
         jobs = [dict(r) for r in rows]
     except Exception:
+        logger.warning("debug_pipeline query failed")
         jobs = []
     return {"recent_items": jobs}
 
@@ -73,6 +62,7 @@ async def debug_identity(request: Request):
         stats = await memory.get_identity_stats()
         return stats
     except Exception as e:
+        logger.warning("debug_identity stats failed")
         return {"error": str(e)}
 
 

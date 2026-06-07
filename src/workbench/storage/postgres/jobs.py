@@ -57,6 +57,34 @@ class PgJobStore(JobStore):
             job.id,
         )
 
+    async def list_jobs(
+        self, limit: int, offset: int, status: str | None = None
+    ) -> list[PipelineJob]:
+        if status:
+            rows = await self.pool.fetch(
+                "SELECT * FROM jobs WHERE status = $1 ORDER BY created_at DESC "
+                "LIMIT $2 OFFSET $3",
+                status,
+                limit,
+                offset,
+            )
+        else:
+            rows = await self.pool.fetch(
+                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                limit,
+                offset,
+            )
+        return [self._row_to_job(r) for r in rows]
+
+    async def count_jobs(self, status: str | None = None) -> int:
+        if status:
+            row = await self.pool.fetchrow(
+                "SELECT COUNT(*) AS cnt FROM jobs WHERE status = $1", status
+            )
+        else:
+            row = await self.pool.fetchrow("SELECT COUNT(*) AS cnt FROM jobs")
+        return row["cnt"]  # type: ignore[index]
+
     @staticmethod
     def _row_to_job(row: asyncpg.Record) -> PipelineJob:
         return PipelineJob(
