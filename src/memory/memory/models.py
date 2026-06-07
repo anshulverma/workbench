@@ -3,9 +3,14 @@ from pydantic import BaseModel, Field
 
 
 class Fact(BaseModel):
+    id: str | None = None
     content: str
     source: str = "graphiti"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FactUpdateRequest(BaseModel):
+    content: str
 
 
 class TriageRecordRequest(BaseModel):
