@@ -1,9 +1,18 @@
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel
 from workbench.models import (
-    FilterRule, InteractionEntry, InterpretedResponse,
-    Item, ItemCategory, ItemOrigin, ItemStatus, ItemUpdate,
-    Priority, TriageResponse, TriageResponseResult,
+    FilterRule,
+    InteractionEntry,
+    InterpretedResponse,
+    Item,
+    ItemCategory,
+    ItemOrigin,
+    ItemStatus,
+    ItemUpdate,
+    Priority,
+    TriageResponse,
+    TriageResponseResult,
 )
 
 router = APIRouter(prefix="/api", tags=["triage"])
@@ -23,20 +32,40 @@ async def respond_to_triage(response: TriageResponse, request: Request):
     if not card:
         raise HTTPException(404, "Triage card not found")
 
+    # Optimistic-concurrency guard: reject double-execution when a card has
+    # already reached a terminal state (e.g. answered on the messenger AND the
+    # web, or answered twice on the web).
+    if card.status in ("responded", "expired"):
+        raise HTTPException(409, f"Card already {card.status}")
+
     # Free-text response (choice is None) -- interpret via LLM
     if response.choice is None and response.raw_text:
         llm = getattr(request.app.state, "llm", None)
         if not llm:
-            raise HTTPException(503, "LLM provider not configured for free-text interpretation")
+            raise HTTPException(
+                503, "LLM provider not configured for free-text interpretation"
+            )
 
         interpreted = await llm.interpret_triage_response(card, response.raw_text)
 
         # Use the scheduler's execute logic
         scheduler = getattr(request.app.state, "scheduler", None)
-        if scheduler:
-            await scheduler._execute_interpreted_response(interpreted, card)
-        else:
+        if scheduler is None:
             raise HTTPException(503, "Scheduler not available")
+
+        await scheduler._execute_interpreted_response(interpreted, card)
+
+        # Destructive (skip/mute_pattern) actions defer to a confirmation
+        # round-trip. The messenger handles that over chat; the web client
+        # drives it via POST /api/triage/confirm. Surface the followup state so
+        # the web UI knows to prompt and then call /confirm.
+        refreshed = await stores.triage.get_card(card.id)
+        if refreshed and refreshed.status == "awaiting_confirmation":
+            return {
+                "status": "awaiting_confirmation",
+                "explanation": interpreted.explanation,
+                "card_id": card.id,
+            }
 
         return TriageResponseResult(
             status="interpreted",
@@ -50,7 +79,9 @@ async def respond_to_triage(response: TriageResponse, request: Request):
         raise HTTPException(400, "Must provide either choice or raw_text")
 
     if response.choice < 1 or response.choice > len(card.options):
-        raise HTTPException(400, f"Invalid choice {response.choice}, must be 1-{len(card.options)}")
+        raise HTTPException(
+            400, f"Invalid choice {response.choice}, must be 1-{len(card.options)}"
+        )
 
     option = card.options[response.choice - 1]
     await stores.triage.record_response(response.card_id, response)
@@ -68,7 +99,8 @@ async def respond_to_triage(response: TriageResponse, request: Request):
                 source_id=card.id,
                 summary=card.card_content.get("summary", ""),
                 category=ItemCategory.ACTION_ITEM,
-                origin=ItemOrigin.TRIAGED, priority=priority,
+                origin=ItemOrigin.TRIAGED,
+                priority=priority,
             )
             await stores.items.save_item(item)
 
@@ -112,3 +144,32 @@ async def respond_to_triage(response: TriageResponse, request: Request):
     await memory.record_triage(card, response)
 
     return {"status": "recorded", "action": option.action}
+
+
+class ConfirmBody(BaseModel):
+    card_id: str
+    confirm: bool
+
+
+@router.post("/triage/confirm")
+async def confirm_triage(body: ConfirmBody, request: Request):
+    """Complete or cancel a pending confirmation for a web-submitted free-text
+    response. Destructive free-text actions enter ``awaiting_confirmation`` via
+    /triage/respond; the web client then calls this endpoint instead of the
+    messenger 'yes'/'no' round-trip.
+    """
+    stores = request.app.state.stores
+    card = await stores.triage.get_card(body.card_id)
+    if not card:
+        raise HTTPException(404, "Triage card not found")
+    if card.status != "awaiting_confirmation":
+        raise HTTPException(
+            409, f"Card is not awaiting confirmation (status={card.status})"
+        )
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None:
+        raise HTTPException(503, "Scheduler not available")
+    text = "yes" if body.confirm else "no"
+    await scheduler._handle_confirmation(card, text)
+    refreshed = await stores.triage.get_card(card.id)
+    return {"status": refreshed.status}

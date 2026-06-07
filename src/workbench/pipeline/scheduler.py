@@ -477,6 +477,20 @@ class WorkbenchScheduler:
                         f"I understood: {interpreted.explanation}\n"
                         f"Reply 'yes' to confirm or 'no' to cancel."
                     )
+                # Close the audit gap: the Interaction Log must record every
+                # response, including the destructive-pending branch that
+                # returns early awaiting confirmation.
+                entry = InteractionEntry(
+                    source_type=card.card_content.get("source_type", "unknown"),
+                    item_id=card.item_id,
+                    item_summary=card.card_content.get("summary", ""),
+                    triage_card_full=card.card_content,
+                    options_presented=[o.model_dump() for o in card.options],
+                    option_chosen="free_text_pending_confirmation",
+                    type="free_text",
+                    interpreted=interpreted.model_dump(),
+                )
+                await self.stores.interactions.append(entry)
                 # FIX 34: Return early -- do not process further actions
                 return
 
@@ -507,6 +521,18 @@ class WorkbenchScheduler:
                 )
                 card.status = "queued"
                 await self.stores.triage.update_card(card)
+                # Close the audit gap: log the deferral before returning early.
+                entry = InteractionEntry(
+                    source_type=card.card_content.get("source_type", "unknown"),
+                    item_id=card.item_id,
+                    item_summary=card.card_content.get("summary", ""),
+                    triage_card_full=card.card_content,
+                    options_presented=[o.model_dump() for o in card.options],
+                    option_chosen="free_text_deferred",
+                    type="free_text",
+                    interpreted=interpreted.model_dump(),
+                )
+                await self.stores.interactions.append(entry)
                 # FIX 34: Defer returns early
                 return
 
