@@ -305,7 +305,7 @@ def cli_main():
     config = get_config()
     uvicorn.run(
         "workbench.main:app",
-        host="::",
+        host=config.server.host,
         port=config.server.port,
         reload=config.server.debug,
     )

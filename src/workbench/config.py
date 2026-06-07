@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class ServerConfig(BaseModel):
+    host: str = (
+        "127.0.0.1"  # loopback by default; reached via SSH tunnel. Set "::"/"0.0.0.0" for LAN.
+    )
     port: int = 8421
     debug: bool = False
     api_token: str = "dev-token-change-me"

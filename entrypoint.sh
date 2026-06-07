@@ -10,5 +10,6 @@ if [ -f alembic.ini ]; then
     alembic upgrade head
 fi
 
+# Bind loopback by default (reached via SSH tunnel); override WORKBENCH_HOST for LAN access.
 echo "Starting Workbench server (logs: $WORKBENCH_LOG_DIR)..."
-exec uvicorn workbench.main:app --host :: --port 8421
+exec uvicorn workbench.main:app --host "${WORKBENCH_HOST:-127.0.0.1}" --port "${WORKBENCH_PORT:-8421}"
