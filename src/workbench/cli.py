@@ -76,7 +76,7 @@ def serve(config_path: str = None, override_path: str = None) -> None:
     config = load_config(config_path, override_path)
     uvicorn.run(
         "workbench.main:app",
-        host="0.0.0.0",
+        host=config.server.host,
         port=config.server.port,
         reload=config.server.debug,
     )
@@ -91,15 +91,27 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     serve_parser = subparsers.add_parser("serve", help="Start the server")
-    serve_parser.add_argument("--config", default=None, help="Config file path (or set WORKBENCH_CONFIG)")
-    serve_parser.add_argument("--override", default=None, help="Override config file (or set WORKBENCH_CONFIG_OVERRIDE)")
+    serve_parser.add_argument(
+        "--config", default=None, help="Config file path (or set WORKBENCH_CONFIG)"
+    )
+    serve_parser.add_argument(
+        "--override",
+        default=None,
+        help="Override config file (or set WORKBENCH_CONFIG_OVERRIDE)",
+    )
 
-    triage_parser = subparsers.add_parser("triage", help="Interactive triage from stdin")
-    triage_parser.add_argument(
-        "--server", default="http://localhost:8421", help="Server URL",
+    triage_parser = subparsers.add_parser(
+        "triage", help="Interactive triage from stdin"
     )
     triage_parser.add_argument(
-        "--token", default=None, help="API token (or set WORKBENCH_API_TOKEN)",
+        "--server",
+        default="http://localhost:8421",
+        help="Server URL",
+    )
+    triage_parser.add_argument(
+        "--token",
+        default=None,
+        help="API token (or set WORKBENCH_API_TOKEN)",
     )
 
     args = parser.parse_args()
