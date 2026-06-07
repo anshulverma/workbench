@@ -83,6 +83,7 @@ class RetentionConfig(BaseModel):
     responded_cards_days: int = 90
     enrichment_traces_days: int = 30
     dead_letters_days: int = 30
+    ingestion_runs_days: int = 30
 
 
 class AlertConditions(BaseModel):

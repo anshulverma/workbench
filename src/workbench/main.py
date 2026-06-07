@@ -16,7 +16,12 @@ from workbench.memory.noop import NoopMemoryLayer
 from workbench.privacy import SanitizingProcessor
 from workbench.metrics import create_metrics
 from workbench.middleware import CorrelationIdMiddleware
-from workbench.registry import close_provider, create_provider, create_providers_from_list, create_composite_enricher
+from workbench.registry import (
+    close_provider,
+    create_provider,
+    create_providers_from_list,
+    create_composite_enricher,
+)
 from workbench.storage.factory import create_stores
 
 setup_logging()
@@ -46,7 +51,9 @@ async def lifespan(app: FastAPI):
         timezone=log_cfg.timezone,
         extra_processors=[sanitizer],
     )
-    logger.info("Config loaded (version=%s, port=%d)", config.version, config.server.port)
+    logger.info(
+        "Config loaded (version=%s, port=%d)", config.version, config.server.port
+    )
 
     app.state.metrics = create_metrics()
 
@@ -62,7 +69,9 @@ async def lifespan(app: FastAPI):
         logger.info("Connection '%s' initialized", name)
     app.state.connections = connections
 
-    app.state.llm = InstrumentedLLMProvider(create_provider(config.llm), app.state.metrics)
+    app.state.llm = InstrumentedLLMProvider(
+        create_provider(config.llm), app.state.metrics
+    )
 
     if config.messenger:
         app.state.messenger = create_provider(config.messenger)
@@ -70,9 +79,12 @@ async def lifespan(app: FastAPI):
         app.state.messenger = None
 
     if config.enrichment.providers:
-        app.state.enricher = create_composite_enricher(config.enrichment, connections=connections)
+        app.state.enricher = create_composite_enricher(
+            config.enrichment, connections=connections
+        )
     else:
         from workbench.providers.enrichment.stub import StubEnricher
+
         app.state.enricher = StubEnricher()
 
     if config.memory:
@@ -85,30 +97,75 @@ async def lifespan(app: FastAPI):
     else:
         app.state.queue_scorer = None
 
-    app.state.sources = create_providers_from_list(config.sources, connections=connections, metrics=app.state.metrics)
+    app.state.sources = create_providers_from_list(
+        config.sources, connections=connections, metrics=app.state.metrics
+    )
 
     from workbench.pipeline.engine import PipelineEngine
+
     app.state.pipeline = PipelineEngine(
-        app.state.stores, app.state.memory, app.state.llm, app.state.enricher,
+        app.state.stores,
+        app.state.memory,
+        app.state.llm,
+        app.state.enricher,
         queue_scorer=app.state.queue_scorer,
     )
 
     # Ingestion queue worker
     from workbench.pipeline.worker import IngestionQueueWorker
+
     worker = IngestionQueueWorker(
-        app.state.stores, app.state.pipeline,
+        app.state.stores,
+        app.state.pipeline,
         concurrency=config.queue.worker_concurrency,
     )
     worker.start()
     app.state.worker = worker
 
+    # Build per-source SourceConfig rows (YAML is the source of truth) with
+    # DETERMINISTIC ids, and a stable source_id -> live adapter mapping. The
+    # scheduler registers one CronTrigger Source Job per enabled source.
+    from workbench.models import SourceConfig
+    from workbench.registry import source_id_for
+
+    db_sources: list[SourceConfig] = []
+    source_by_id: dict[str, object] = {}
+    for section, adapter in zip(config.sources, app.state.sources):
+        sid = source_id_for(section)
+        inner = getattr(adapter, "_inner", adapter)
+        try:
+            adapter_type = inner.adapter_type()
+        except Exception:
+            adapter_type = section.get("class", "unknown").rsplit(".", 1)[-1]
+        sc = SourceConfig(
+            id=sid,
+            adapter_type=adapter_type,
+            config=section.get("config", {}),
+            schedule=section.get("schedule", "*/15 * * * *"),
+            enabled=section.get("enabled", True),
+        )
+        # Attach the stable id to the live adapter for downstream mapping.
+        try:
+            adapter._source_id = sid  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        db_sources.append(sc)
+        source_by_id[sid] = adapter
+
     # Scheduler
     from workbench.pipeline.scheduler import WorkbenchScheduler
+
     app.state.scheduler = WorkbenchScheduler(
-        app.state.stores, app.state.memory, app.state.pipeline,
-        app.state.messenger, config, sources=app.state.sources,
+        app.state.stores,
+        app.state.memory,
+        app.state.pipeline,
+        app.state.messenger,
+        config,
+        sources=app.state.sources,
         llm=app.state.llm,
     )
+    app.state.scheduler._db_sources = db_sources
+    app.state.scheduler._source_by_id = source_by_id
     app.state.scheduler.start()
     logger.info("Workbench %s ready on port %d", __version__, config.server.port)
 
@@ -117,12 +174,17 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
 
     # Cleanup
-    if hasattr(app.state, 'worker'):
+    if hasattr(app.state, "worker"):
         app.state.worker.stop()
     app.state.scheduler.scheduler.shutdown(wait=False)
 
-    for provider in [app.state.llm, app.state.messenger, app.state.enricher,
-                     app.state.memory, app.state.queue_scorer]:
+    for provider in [
+        app.state.llm,
+        app.state.messenger,
+        app.state.enricher,
+        app.state.memory,
+        app.state.queue_scorer,
+    ]:
         if provider:
             await close_provider(provider)
     for source in app.state.sources:
@@ -131,7 +193,7 @@ async def lifespan(app: FastAPI):
     for conn in app.state.connections.values():
         await close_provider(conn)
 
-    if hasattr(app.state.stores, 'close'):
+    if hasattr(app.state.stores, "close"):
         await app.state.stores.close()
 
 
@@ -141,15 +203,37 @@ def create_app() -> FastAPI:
     app.add_middleware(CorrelationIdMiddleware)
 
     from workbench.api import (
-        actions, auth_token,
-        config as config_api, debug, filter_rules, health, identity,
-        items, jobs, memory, process, queue, sources, triage,
+        actions,
+        auth_token,
+        config as config_api,
+        debug,
+        filter_rules,
+        health,
+        identity,
+        items,
+        jobs,
+        memory,
+        process,
+        queue,
+        sources,
+        triage,
     )
+
     for r in [
-        health.router, items.router, triage.router, process.router,
-        filter_rules.router, sources.router, config_api.router,
-        memory.router, identity.router, jobs.router, queue.router,
-        actions.router, auth_token.router, debug.router,
+        health.router,
+        items.router,
+        triage.router,
+        process.router,
+        filter_rules.router,
+        sources.router,
+        config_api.router,
+        memory.router,
+        identity.router,
+        jobs.router,
+        queue.router,
+        actions.router,
+        auth_token.router,
+        debug.router,
     ]:
         app.include_router(r)
 
@@ -164,6 +248,7 @@ def create_app() -> FastAPI:
     ui_dir = os.path.join(os.path.dirname(__file__), "../../ui/dist")
     if os.path.exists(ui_dir):
         from starlette.staticfiles import StaticFiles
+
         app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
 
     return app
@@ -174,6 +259,11 @@ app = create_app()
 
 def cli_main():
     import uvicorn
+
     config = get_config()
-    uvicorn.run("workbench.main:app", host="::", port=config.server.port,
-                reload=config.server.debug)
+    uvicorn.run(
+        "workbench.main:app",
+        host="::",
+        port=config.server.port,
+        reload=config.server.debug,
+    )

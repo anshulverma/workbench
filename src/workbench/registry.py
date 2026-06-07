@@ -1,13 +1,33 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import inspect
+import json
 import logging
 from typing import Any
 
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+def source_id_for(section: dict[str, Any]) -> str:
+    """Compute a DETERMINISTIC, stable source_id from a YAML source section.
+
+    The id is a hash of the source's ``class`` (which encodes adapter type)
+    plus its sorted config, so it is identical across restarts as long as the
+    YAML entry is unchanged. If the section already carries an explicit ``id``
+    (e.g. written back to YAML by a later task), that wins.
+    """
+    if section.get("id"):
+        return str(section["id"])
+    payload = {k: v for k, v in section.items() if k != "id"}
+    blob = json.dumps(payload, sort_keys=True, default=str)
+    digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+    cls = section.get("class", "")
+    short = cls.rsplit(".", 1)[-1].lower() if cls else "source"
+    return f"{short}-{digest}"
 
 
 class ProviderConfig(BaseModel):
@@ -40,7 +60,9 @@ def create_provider(
     if connection_name and connections is not None:
         resolved_connection = connections.get(connection_name)
         if resolved_connection is None:
-            raise ValueError(f"Connection '{connection_name}' not found in connections config")
+            raise ValueError(
+                f"Connection '{connection_name}' not found in connections config"
+            )
 
     sig = inspect.signature(cls.__init__)
     kwargs: dict[str, Any] = {}
@@ -70,6 +92,7 @@ def create_providers_from_list(
         provider = create_provider(s, connections=connections, state_store=state_store)
         if metrics:
             from workbench.instrumentation import InstrumentedSourceAdapter
+
             provider = InstrumentedSourceAdapter(provider, name, metrics)
         providers.append(provider)
     return providers
@@ -97,7 +120,11 @@ def create_composite_enricher(
             for st in source_types:
                 budgets[st] = budget
 
-    default = create_provider(dict(config.default), connections=connections) if config.default else None
+    default = (
+        create_provider(dict(config.default), connections=connections)
+        if config.default
+        else None
+    )
     return CompositeEnricher(enrichers, default=default, budgets=budgets)
 
 

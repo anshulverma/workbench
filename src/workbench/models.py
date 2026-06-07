@@ -1,9 +1,10 @@
 # server/models.py
 from typing import Any
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import uuid
+
 
 class Priority(str, Enum):
     P0 = "P0"
@@ -12,11 +13,13 @@ class Priority(str, Enum):
     P3 = "P3"
     PENDING = "pending"
 
+
 class ItemStatus(str, Enum):
     PENDING_TRIAGE = "pending_triage"
     ACTIVE = "active"
     DONE = "done"
     ARCHIVED = "archived"
+
 
 class ItemCategory(str, Enum):
     ACTION_ITEM = "action_item"
@@ -24,10 +27,12 @@ class ItemCategory(str, Enum):
     PLAN_SEED = "plan_seed"
     INFORMATIONAL = "informational"
 
+
 class ItemOrigin(str, Enum):
     AUTO_INCLUDED = "auto_included"
     TRIAGED = "triaged"
     MANUAL = "manual"
+
 
 class EntityType(str, Enum):
     PERSON = "person"
@@ -35,6 +40,7 @@ class EntityType(str, Enum):
     TEAM = "team"
     SPACE = "space"
     GROUP = "group"
+
 
 class ActionCategory(str, Enum):
     DELEGATION = "delegation"
@@ -46,6 +52,7 @@ class ActionCategory(str, Enum):
     DECISION = "decision"
     INVESTIGATION = "investigation"
 
+
 class JobStatus(str, Enum):
     QUEUED = "queued"
     PENDING = "pending"
@@ -53,9 +60,11 @@ class JobStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+
 class JobTrigger(str, Enum):
     MANUAL = "manual"
     POLL = "poll"
+
 
 class RawItem(BaseModel):
     id: str
@@ -64,11 +73,13 @@ class RawItem(BaseModel):
     raw_text: str
     urgency_signals: dict[str, Any] = Field(default_factory=dict)
 
+
 class ExtractedItem(BaseModel):
     summary: str
     category: ItemCategory
     source_context: str
     raw_item: RawItem
+
 
 class Item(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -88,10 +99,12 @@ class Item(BaseModel):
     snoozed_until: datetime | None = None
     completed_at: datetime | None = None
 
+
 class ItemUpdate(BaseModel):
     priority: Priority | None = None
     status: ItemStatus | None = None
     summary: str | None = None
+
 
 class ItemFilters(BaseModel):
     priority: Priority | None = None
@@ -99,12 +112,14 @@ class ItemFilters(BaseModel):
     source_type: str | None = None
     category: ItemCategory | None = None
 
+
 class TriageOption(BaseModel):
     label: str
     action: str
     details: dict = Field(default_factory=dict)
     suggested: bool = False
     suggestion_reason: str | None = None
+
 
 class TriageCard(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -122,10 +137,12 @@ class TriageCard(BaseModel):
     response: str | None = None
     deferred_until: datetime | None = None
 
+
 class TriageResponse(BaseModel):
     card_id: str
     choice: int | None = None
     raw_text: str | None = None
+
 
 class FilterRule(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -134,6 +151,7 @@ class FilterRule(BaseModel):
     action: str  # "include" or "drop"
     priority: Priority | None = None
     created_from_interaction_id: str | None = None
+
 
 class InteractionEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -154,6 +172,7 @@ class InteractionEntry(BaseModel):
     interpreted: dict | None = None
     confirmed: bool | None = None
 
+
 class EnrichmentTrace(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     item_id: str
@@ -163,9 +182,11 @@ class EnrichmentTrace(BaseModel):
     context_retrieved: dict = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
+
 class TraceFilters(BaseModel):
     item_id: str | None = None
     since: datetime | None = None
+
 
 class SourceConfig(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -175,10 +196,12 @@ class SourceConfig(BaseModel):
     enabled: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+
 class SourceConfigUpdate(BaseModel):
     config: dict | None = None
     schedule: str | None = None
     enabled: bool | None = None
+
 
 class PipelineJob(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -194,6 +217,7 @@ class PipelineJob(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
 
+
 class Plan(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str
@@ -202,37 +226,55 @@ class Plan(BaseModel):
     sources: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+
 class PlanFilters(BaseModel):
     status: str | None = None
+
 
 class PlanUpdate(BaseModel):
     title: str | None = None
     status: str | None = None
     content: str | None = None
 
+
 class PreferenceSummary(BaseModel):
     content: str
     cursor_position: int
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+
 class EnrichmentBudget(BaseModel):
     max_api_calls: int = 3
     max_seconds: int = 10
+
 
 class Fact(BaseModel):
     content: str
     source: str = ""
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
+
+class IngestionRun(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    source_id: str
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+    status: str = "running"  # running | success | error
+    raw_enqueued: int = 0
+    error: str | None = None
+
+
 class EntityKnowledge(BaseModel):
     entity_type: str
     entity_id: str
     facts: dict = Field(default_factory=dict)
 
+
 class Relationship(BaseModel):
     from_entity: str
     to_entity: str
     relation: str
+
 
 class QueueEntryStatus(str, Enum):
     QUEUED = "queued"
@@ -240,6 +282,7 @@ class QueueEntryStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     DEAD_LETTER = "dead_letter"
+
 
 class IngestionQueueEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -257,18 +300,22 @@ class IngestionQueueEntry(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+
 class SystemAction(BaseModel):
     action: str
     details: dict = Field(default_factory=dict)
+
 
 class UserTodo(BaseModel):
     summary: str
     action_category: str
 
+
 class InterpretedResponse(BaseModel):
     system_actions: list[SystemAction] = Field(default_factory=list)
     user_todos: list[UserTodo] = Field(default_factory=list)
     explanation: str = ""
+
 
 class TriageResponseResult(BaseModel):
     status: str

@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 
+from workbench.storage.ingestion_runs import IngestionRunStore
 from workbench.models import (
     EnrichmentTrace,
     FilterRule,
@@ -191,6 +192,7 @@ class Stores:
         config: ConfigStore,
         jobs: JobStore,
         ingestion_queue: IngestionQueueStore,
+        ingestion_runs: IngestionRunStore,
         close_fn=None,
     ):
         self.items = items
@@ -204,6 +206,7 @@ class Stores:
         self.config = config
         self.jobs = jobs
         self.ingestion_queue = ingestion_queue
+        self.ingestion_runs = ingestion_runs
         self._close_fn = close_fn
 
     async def close(self):

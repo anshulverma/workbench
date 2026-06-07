@@ -5,6 +5,7 @@ import pytest
 TEST_DSN = "postgres://workbench:workbench@localhost:5432/workbench"
 
 TABLES = [
+    "ingestion_runs",
     "ingestion_queue",
     "config",
     "jobs",
