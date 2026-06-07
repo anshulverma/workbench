@@ -36,11 +36,13 @@ const CATEGORIES = [
   'investigation',
 ]
 
+// Priority badge classes use the AA-contrast .prio-P* tokens from index.css so
+// the colors remain legible against the dark-mode background (spec 11.3).
 const priorityClasses: Record<string, string> = {
-  P0: 'text-red-600 font-semibold',
-  P1: 'text-orange-600 font-semibold',
-  P2: 'text-blue-600 font-semibold',
-  P3: 'text-muted-foreground font-semibold',
+  P0: 'prio-P0',
+  P1: 'prio-P1',
+  P2: 'prio-P2',
+  P3: 'prio-P3',
 }
 
 export function ActionItems() {
@@ -85,7 +87,11 @@ export function ActionItems() {
       key: 'priority',
       header: 'Priority',
       render: (r) => (
-        <span className={priorityClasses[r.priority] ?? 'font-semibold'}>
+        <span
+          className={`inline-block rounded px-2 py-0.5 text-xs font-semibold ${
+            priorityClasses[r.priority] ?? ''
+          }`}
+        >
           {r.priority}
         </span>
       ),

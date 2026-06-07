@@ -83,4 +83,50 @@
     background-color: var(--background);
     color: var(--foreground);
   }
+
+  /* Visible focus rings on all interactive elements. The Tailwind reset and
+     `focus-visible:outline-none` on some primitives can otherwise strip the
+     keyboard focus indicator (spec 11.3). Components that draw their own ring
+     (e.g. shadcn Button via focus-visible:ring-2) still get one; this is the
+     baseline for native controls and any element lacking an explicit ring. */
+  a,
+  button,
+  select,
+  input,
+  textarea,
+  [role="switch"],
+  [role="menuitem"],
+  [tabindex] {
+    outline-offset: 2px;
+  }
+  a:focus-visible,
+  button:focus-visible,
+  select:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  [role="switch"]:focus-visible,
+  [role="menuitem"]:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--ring);
+  }
+}
+
+/* Priority badge tokens (P0–P3) with WCAG AA contrast in both light and dark
+   modes (spec 11.3). Foreground/background pairs are chosen so the text meets
+   AA against the badge fill regardless of the page background. */
+.prio-P0 {
+  background-color: oklch(0.55 0.22 25);
+  color: oklch(1 0 0);
+}
+.prio-P1 {
+  background-color: oklch(0.72 0.16 65);
+  color: oklch(0.15 0 0);
+}
+.prio-P2 {
+  background-color: oklch(0.7 0.13 250);
+  color: oklch(0.15 0 0);
+}
+.prio-P3 {
+  background-color: oklch(0.6 0 0);
+  color: oklch(1 0 0);
 }
