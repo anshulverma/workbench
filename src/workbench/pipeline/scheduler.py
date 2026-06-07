@@ -122,6 +122,17 @@ class WorkbenchScheduler:
                 "Scheduled Source Job 'poll_source:%s' (%s)", source.id, source.schedule
             )
 
+    def set_messenger(self, messenger: Messenger | None) -> None:
+        """Rebind the messenger after a hot-swap (ADR 0013).
+
+        Both the scheduler's own reference and the AlertManager's reference hold
+        the messenger; a swap must update BOTH so triage sends and alerts use the
+        new provider.
+        """
+        self.messenger = messenger
+        # AlertManager stores the messenger as a private attribute (_messenger).
+        self.alert_manager._messenger = messenger
+
     def _cron_trigger(self, schedule: str) -> CronTrigger:
         """Validate + build a CronTrigger; raises ValueError on a bad cron string."""
         return CronTrigger.from_crontab(

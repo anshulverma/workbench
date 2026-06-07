@@ -249,6 +249,7 @@ def create_app() -> FastAPI:
         items,
         jobs,
         memory,
+        messenger,
         process,
         queue,
         sources,
@@ -273,6 +274,7 @@ def create_app() -> FastAPI:
         debug.router,
         stats.router,
         activity.router,
+        messenger.router,
         connections.router,
     ]:
         app.include_router(r)
