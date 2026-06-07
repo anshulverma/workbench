@@ -68,34 +68,3 @@ export const apiPost = <T>(path: string, body?: unknown) =>
 export const apiPatch = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined })
 export const apiDelete = <T>(path: string) => request<T>(path, { method: 'DELETE' })
-
-// --- Action Items helpers (used by the legacy ActionList; reused in Phase E) ---
-
-export interface Action {
-  id: string
-  summary: string
-  priority: string
-  parent_item: { id: string; summary: string } | null
-  action_source: string
-  action_category: string | null
-  created_at: string
-}
-
-export async function fetchActions(
-  params?: Record<string, string>,
-): Promise<{ categories: Record<string, Action[]>; total: number }> {
-  const query = params ? '?' + new URLSearchParams(params).toString() : ''
-  return apiGet(`/api/actions${query}`)
-}
-
-export async function markDone(id: string): Promise<void> {
-  await apiPost(`/api/actions/${id}/done`)
-}
-
-export async function changePriority(id: string, priority: string): Promise<void> {
-  await apiPost(`/api/actions/${id}/priority`, { priority })
-}
-
-export async function snooze(id: string, hours: number): Promise<void> {
-  await apiPost(`/api/actions/${id}/snooze`, { hours })
-}
