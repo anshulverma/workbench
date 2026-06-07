@@ -92,3 +92,42 @@ def test_explicit_exc_info_still_works():
     rec = json.loads(lines()[-1])
     assert rec["exception"].count("Traceback") == 1
     assert "KeyError" in rec["exception"]
+
+
+def test_warning_in_except_has_no_traceback():
+    """A warning logged inside an except block (e.g. apscheduler's benign
+    "maximum number of running instances reached" MaxInstancesReachedError) is a
+    handled, expected condition — it must NOT get a spurious auto-traceback."""
+    setup_logging(log_format="json")
+    lines, detach = _attach_capture()
+    try:
+        log = logging.getLogger("apscheduler.scheduler")
+        try:
+            raise RuntimeError("MaxInstancesReachedError")
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "Execution of job skipped: maximum number of running instances reached (1)"
+            )
+    finally:
+        detach()
+    rec = json.loads(lines()[-1])
+    assert "exception" not in rec, "benign warning should not carry a traceback"
+
+
+def test_warning_with_explicit_exc_info_keeps_traceback():
+    """A warning that genuinely wants a traceback can still opt in with
+    exc_info=True — the auto-attach gate only affects the implicit safety net."""
+    setup_logging(log_format="json")
+    lines, detach = _attach_capture()
+    try:
+        log = logging.getLogger("workbench.test")
+        try:
+            raise ValueError("warn-boom")
+        except Exception:  # noqa: BLE001
+            log.warning("degraded but recoverable", exc_info=True)
+    finally:
+        detach()
+    rec = json.loads(lines()[-1])
+    assert "exception" in rec
+    assert "ValueError" in rec["exception"]
+    assert "warn-boom" in rec["exception"]
