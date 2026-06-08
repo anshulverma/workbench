@@ -187,7 +187,10 @@ async def lifespan(app: FastAPI):
         source_by_id[sid] = adapter
 
     # Scheduler
-    from workbench.pipeline.scheduler import WorkbenchScheduler
+    from workbench.pipeline.scheduler import (
+        WorkbenchScheduler,
+        build_change_detectors,
+    )
 
     app.state.scheduler = WorkbenchScheduler(
         app.state.stores,
@@ -200,6 +203,8 @@ async def lifespan(app: FastAPI):
     )
     app.state.scheduler._db_sources = db_sources
     app.state.scheduler._source_by_id = source_by_id
+    # Change-monitoring: register per-source-type ChangeDetectors from config.
+    app.state.scheduler._change_detectors = build_change_detectors(config.sources)
     app.state.scheduler.start()
     logger.info("Workbench %s ready on port %d", __version__, config.server.port)
 

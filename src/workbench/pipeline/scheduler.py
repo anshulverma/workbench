@@ -41,6 +41,22 @@ from workbench.storage.base import Stores
 logger = logging.getLogger(__name__)
 
 
+def build_change_detectors(sources: list[dict]) -> dict[str, ChangeDetector]:
+    """Build {source_type: ChangeDetector} from the sources config. Each source
+    entry may carry an optional `change_detector` provider section; sources
+    without one are skipped (routing falls back to AlwaysMaterialDetector)."""
+    from workbench.registry import create_provider
+
+    registry: dict[str, ChangeDetector] = {}
+    for entry in sources:
+        cd_section = entry.get("change_detector")
+        if not cd_section:
+            continue
+        detector = create_provider(dict(cd_section))
+        registry[detector.source_type()] = detector
+    return registry
+
+
 class WorkbenchScheduler:
     def __init__(
         self,
