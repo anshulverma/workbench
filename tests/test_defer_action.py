@@ -15,6 +15,7 @@ def _mock_stores():
 
 def test_defer_action_sets_deferred_until():
     """Responding with a defer option sets deferred_until and re-queues the card."""
+
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(
@@ -52,6 +53,7 @@ def test_defer_action_sets_deferred_until():
 
 def test_defer_action_in_scheduler():
     """Scheduler _handle_triage_response defers card and sends confirmation."""
+
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(
@@ -69,7 +71,13 @@ def test_defer_action_in_scheduler():
         from workbench.memory.noop import NoopMemoryLayer
         from workbench.config import AppConfig
 
-        config = AppConfig()
+        config = AppConfig(
+            storage={"postgres_dsn": "postgres://localhost/workbench"},
+            llm={
+                "class": "workbench.providers.llm.anthropic.AnthropicLLM",
+                "api_key": "test",
+            },
+        )
         memory = NoopMemoryLayer()
         messenger = AsyncMock()
         pipeline = AsyncMock()
@@ -100,6 +108,7 @@ def test_defer_action_in_scheduler():
 
 def test_other_action_sets_awaiting_followup():
     """Responding with an 'other' option sets status to awaiting_followup."""
+
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(
@@ -132,6 +141,7 @@ def test_other_action_sets_awaiting_followup():
 
 def test_defer_default_hours():
     """Defer action defaults to 4 hours when hours not specified in details."""
+
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(

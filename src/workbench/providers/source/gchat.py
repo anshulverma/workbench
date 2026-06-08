@@ -28,7 +28,9 @@ class GChatAdapter(SourceAdapter):
         spaces: list[str] = []
         exclude_spaces: list[str] = []
         track: str = "all"  # "participating" | "mentioned" | "all"
-        user_id: str = ""  # e.g. "users/user-me", required for participating/mentioned modes
+        user_id: str = (
+            ""  # e.g. "users/user-me", required for participating/mentioned modes
+        )
 
     def __init__(self, config: ProviderConfig, connection=None):
         self._config = config
@@ -47,7 +49,8 @@ class GChatAdapter(SourceAdapter):
 
         # Expire stale tracked threads (no activity for 48h)
         stale_threads = [
-            tid for tid, last_active in self._tracked_threads.items()
+            tid
+            for tid, last_active in self._tracked_threads.items()
             if (now - last_active).total_seconds() > _THREAD_EXIT_HOURS * 3600
         ]
         for tid in stale_threads:
@@ -55,23 +58,29 @@ class GChatAdapter(SourceAdapter):
             logger.debug("Thread exited (48h inactivity): %s", tid)
 
         effective_spaces = [
-            s for s in self._config.spaces
-            if s not in self._config.exclude_spaces
+            s for s in self._config.spaces if s not in self._config.exclude_spaces
         ]
 
         for space_name in effective_spaces:
+
             def _fetch_messages(sn=space_name):
-                result = self._connection.chat.spaces().messages().list(
-                    parent=sn,
-                    pageSize=100,
-                ).execute()
+                result = (
+                    self._connection.chat.spaces()
+                    .messages()
+                    .list(
+                        parent=sn,
+                        pageSize=100,
+                    )
+                    .execute()
+                )
                 return result.get("messages", [])
 
             raw_messages = await asyncio.to_thread(_fetch_messages)
 
             # Filter bot messages
             human_messages = [
-                m for m in raw_messages
+                m
+                for m in raw_messages
                 if m.get("sender", {}).get("type", "HUMAN") != "BOT"
             ]
 
@@ -90,34 +99,48 @@ class GChatAdapter(SourceAdapter):
 
                 # Update thread tracking timestamp
                 latest_time = self._get_latest_time(thread_msgs)
+                if (now - latest_time).total_seconds() > _THREAD_EXIT_HOURS * 3600:
+                    continue
                 self._tracked_threads[thread_name] = latest_time
 
                 # Build the raw text with full thread context
-                space_display = thread_msgs[0].get("space", {}).get("displayName", space_name)
+                space_display = (
+                    thread_msgs[0].get("space", {}).get("displayName", space_name)
+                )
                 formatted_messages = []
                 for m in thread_msgs:
-                    formatted_messages.append({
-                        "sender_name": m.get("sender", {}).get("name", ""),
-                        "sender_display": m.get("sender", {}).get("displayName", ""),
-                        "text": m.get("text", ""),
-                        "create_time": m.get("createTime", ""),
-                    })
+                    formatted_messages.append(
+                        {
+                            "sender_name": m.get("sender", {}).get("name", ""),
+                            "sender_display": m.get("sender", {}).get(
+                                "displayName", ""
+                            ),
+                            "text": m.get("text", ""),
+                            "create_time": m.get("createTime", ""),
+                        }
+                    )
 
-                participant_names = list(set(
-                    m["sender_display"] for m in formatted_messages if m["sender_display"]
-                ))
+                participant_names = list(
+                    set(
+                        m["sender_display"]
+                        for m in formatted_messages
+                        if m["sender_display"]
+                    )
+                )
 
                 # source_id includes thread name and latest timestamp for dedup
                 latest_ts = int(latest_time.timestamp())
                 source_id = f"gchat_{thread_name.replace('/', '_')}_{latest_ts}"
 
-                raw_text = json.dumps({
-                    "space_name": space_display,
-                    "thread_name": thread_name,
-                    "messages": formatted_messages,
-                    "participant_count": len(participant_names),
-                    "participants": participant_names,
-                })
+                raw_text = json.dumps(
+                    {
+                        "space_name": space_display,
+                        "thread_name": thread_name,
+                        "messages": formatted_messages,
+                        "participant_count": len(participant_names),
+                        "participants": participant_names,
+                    }
+                )
 
                 urgency_signals = {
                     "space": space_display,
@@ -127,13 +150,15 @@ class GChatAdapter(SourceAdapter):
                     "is_direct_message": len(participant_names) <= 2,
                 }
 
-                items.append(RawItem(
-                    id=source_id,
-                    source_type="chat",
-                    source_label=f"Chat: {space_display}",
-                    raw_text=raw_text,
-                    urgency_signals=urgency_signals,
-                ))
+                items.append(
+                    RawItem(
+                        id=source_id,
+                        source_type="chat",
+                        source_label=f"Chat: {space_display}",
+                        raw_text=raw_text,
+                        urgency_signals=urgency_signals,
+                    )
+                )
 
         return items
 
@@ -165,7 +190,7 @@ class GChatAdapter(SourceAdapter):
 
     def _get_latest_time(self, messages: list[dict]) -> datetime:
         """Get the latest createTime from a list of messages."""
-        latest = datetime.now(timezone.utc)
+        latest: datetime | None = None
         for msg in messages:
             create_time = msg.get("createTime", "")
             if create_time:
@@ -173,8 +198,8 @@ class GChatAdapter(SourceAdapter):
                     dt = datetime.fromisoformat(create_time)
                     if dt.tzinfo is None:
                         dt = dt.replace(tzinfo=timezone.utc)
-                    if dt > latest or latest == datetime.now(timezone.utc):
+                    if latest is None or dt > latest:
                         latest = dt
                 except (ValueError, TypeError):
                     logger.debug("Could not parse message createTime %r", create_time)
-        return latest
+        return latest or datetime.now(timezone.utc)
