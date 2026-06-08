@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import logging
+from abc import ABC, abstractmethod
+
+from pydantic import ValidationError
+
+from workbench.models import CardMessage, CardSection, ExtractedItem, TriageCard
+from workbench.pipeline.triage import format_card_for_chat
+
+logger = logging.getLogger(__name__)
+
+
+class CardPresenter(ABC):
+    @abstractmethod
+    def render(self, card: TriageCard, item: ExtractedItem) -> CardMessage: ...
+
+
+class PlainCardPresenter(CardPresenter):
+    """Universal fallback. Wraps legacy format_card_for_chat output."""
+
+    def render(self, card: TriageCard, item: ExtractedItem) -> CardMessage:
+        body = format_card_for_chat(card, position=1, total=1)
+        return CardMessage(
+            header=card.card_content.get("summary", "Item to triage"),
+            sections=[CardSection(title="", body=body)],
+            options=list(card.options),
+        )
+
+
+class CompositeCardPresenter(CardPresenter):
+    def __init__(
+        self, by_source_type: dict[str, CardPresenter], default: CardPresenter
+    ):
+        self._by_source_type = by_source_type
+        self._default = default
+
+    def render(self, card: TriageCard, item: ExtractedItem) -> CardMessage:
+        source_type = item.raw_item.source_type
+        delegate = self._by_source_type.get(source_type, self._default)
+        if delegate is self._default:
+            if source_type not in self._by_source_type:
+                logger.info(
+                    "presenter_fallback source_type=%s item_id=%s reason=no_delegate",
+                    source_type,
+                    item.raw_item.id,
+                )
+            return self._default.render(card, item)
+        try:
+            return delegate.render(card, item)
+        except ValidationError as exc:
+            logger.warning(
+                "presenter_content_invalid source_type=%s presenter=%s item_id=%s exc=%s",
+                source_type,
+                type(delegate).__name__,
+                item.raw_item.id,
+                exc,
+            )
+            return self._default.render(card, item)
+        except Exception as exc:
+            logger.warning(
+                "presenter_failure source_type=%s presenter=%s item_id=%s exc=%s",
+                source_type,
+                type(delegate).__name__,
+                item.raw_item.id,
+                exc,
+            )
+            return self._default.render(card, item)
