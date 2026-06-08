@@ -92,6 +92,11 @@ class WorkbenchScheduler:
         # startup, T16) + in-memory debounce of re-triage requests (T14 fire).
         self._change_detectors: dict[str, ChangeDetector] = {}
         self._debounce = DebounceManager(self._fire_retriage)
+        # Card presenter (CardMessage builder). main.py swaps in the
+        # CompositeCardPresenter built from presentation config; default Plain.
+        from workbench.pipeline.presenter import PlainCardPresenter
+
+        self.presenter = PlainCardPresenter()
 
     def start(self):
         jobs = [
@@ -313,6 +318,25 @@ class WorkbenchScheduler:
             except Exception as e:
                 await self.stores.ingestion_runs.error_run(run_id, str(e))
                 logger.error("Source %s poll failed: %s", source_id, e)
+
+    def _ext_item_for(self, card):
+        """Reconstruct a minimal ExtractedItem for presenter routing from a
+        stored card (the presenter only needs raw_item.source_type and id)."""
+        from workbench.models import ExtractedItem, RawItem, ItemCategory
+
+        source_type = card.card_content.get("source_type", "unknown")
+        raw = RawItem(
+            id=card.item_id or card.id,
+            source_type=source_type,
+            source_label="",
+            raw_text="",
+        )
+        return ExtractedItem(
+            summary=card.card_content.get("summary", ""),
+            category=ItemCategory.INFORMATIONAL,
+            source_context="",
+            raw_item=raw,
+        )
 
     @staticmethod
     def _parse_raw(raw_data: dict) -> dict:
@@ -537,8 +561,9 @@ class WorkbenchScheduler:
         if not card:
             return
 
-        text = format_card_for_chat(card, position=1, total=len(pending))
-        msg_id = await self.messenger.send_card(text)
+        ext_item = self._ext_item_for(card)
+        message = self.presenter.render(card, ext_item)
+        msg_id = await self.messenger.send_card(message)
         card.status = "sent"
         card.sent_at = datetime.now(timezone.utc)
         card.bot_message_id = msg_id
