@@ -1,0 +1,7 @@
+# ADR 0025: Per-Source `CardContentGenerator` Registry Instead of Source-Type Branching
+
+Rich card-content generation is a `CardContentGenerator` resolved by `source_type` via dynamic import (the same pattern as the Composite Enricher's per-source enrichers). The foundational `generate_card()` dispatches to the registered generator **without ever naming `"diff"`**; sources with no registered generator fall back to `llm.generate_triage_card`, preserving today's behavior. The Meta `DiffCardContentGenerator` owns the diff-specific 5-section schema and prompt and lives in `workbench-meta`.
+
+We chose a registry over (a) an `if source_type == "diff"` branch in foundational code — which violates the source-agnostic mandate and would accrete a branch per source; (b) extending `generate_triage_card` with a content-schema parameter supplied by the enricher — viable but couples the enricher to card generation and is less discoverable. The registry keeps each source's bespoke generation logic out of the foundational core and in its own overlay.
+
+**Consequence:** Adding a new source's rich card is a new `CardContentGenerator` plus a config entry — no foundational change. The diff generator makes a single structured (`json_schema`) Opus 4.8 call producing all five sections to preserve cross-section grounding, reusing the `memory_context` already gathered in `generate_card` (no new Memory Layer queries). Hunk token-bounding is the Diff Enricher's responsibility; the generator trusts the pre-bounded hunks and counts defensively.

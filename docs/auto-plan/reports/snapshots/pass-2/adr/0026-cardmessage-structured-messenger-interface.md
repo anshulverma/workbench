@@ -1,0 +1,7 @@
+# ADR 0026: `send_card` Accepts a Structured `CardMessage`; the Messenger Owns Wire Rendering
+
+The `Messenger.send_card` signature changes from `send_card(card_text: str)` to `send_card(card: CardMessage)`, where `CardMessage` is a transport-neutral structure (header, semantic sections, link targets, numbered options, `thread_hunks`). The presenter builds the `CardMessage`; each messenger translates it to its own wire format. The base `Messenger` provides a default `render_to_text(CardMessage) -> str` so `ConsoleMessenger` and any non-rich messenger degrade automatically; `GoogleChatMessenger` overrides `send_card` to emit cardsV2 with threaded hunk replies.
+
+We chose a single structured method over (a) adding a separate `send_rich_card` — which leaves two code paths the scheduler must branch on; (b) keeping `send_card(str)` plus a `send_thread_reply` — which re-introduces caller-side pre-rendering (the thing we are removing) and splits the atomic "post card + hunks" operation across calls. A single structured method gives one call site, atomic posting, and a clean transport boundary, mirroring how a Source Adapter fetches raw data and the pipeline interprets it.
+
+**Consequence:** `format_card_for_chat` becomes the `PlainCardPresenter`/`render_to_text` fallback rather than the primary path. cardsV2 wire JSON exists only inside `GoogleChatMessenger`. "Rich" is opt-in by overriding the renderer; no `supports_rich` flag gates control flow (it may exist for diagnostics only).
