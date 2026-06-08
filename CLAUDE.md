@@ -41,7 +41,7 @@ make up
 make logs
 
 # Dev server
-workbench serve
+make serve
 ```
 
 ## Project Structure

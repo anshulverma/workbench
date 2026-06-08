@@ -1,4 +1,5 @@
-"""Workbench CLI: ``workbench serve`` and ``workbench triage``."""
+#!/usr/bin/env python3
+"""Terminal triage (replaces `workbench triage`). Run via `make triage`."""
 
 from __future__ import annotations
 
@@ -62,58 +63,28 @@ def triage(server_url: str, token: str) -> None:
             print("  Invalid input. Skipping.\n")
 
 
-def serve(config_path: str = None, override_path: str = None) -> None:
-    """Start the Workbench server via uvicorn."""
-    import uvicorn
-
-    from workbench.config import load_config
-
-    config_path = config_path or os.environ.get("WORKBENCH_CONFIG", "config.yml")
-    override_path = override_path or os.environ.get("WORKBENCH_CONFIG_OVERRIDE")
-    os.environ["WORKBENCH_CONFIG"] = config_path
-    if override_path:
-        os.environ["WORKBENCH_CONFIG_OVERRIDE"] = override_path
-    config = load_config(config_path, override_path)
-    uvicorn.run(
-        "workbench.main:app",
-        host="0.0.0.0",
-        port=config.server.port,
-        reload=config.server.debug,
-    )
-
-
 def main() -> None:
-    """Entry point for the ``workbench`` console script."""
+    """Entry point for `scripts/triage.py` / `make triage`."""
     parser = argparse.ArgumentParser(
-        prog="workbench",
-        description="Workbench Intelligence Feed",
+        prog="triage", description="Interactive terminal triage"
     )
-    subparsers = parser.add_subparsers(dest="command")
-
-    serve_parser = subparsers.add_parser("serve", help="Start the server")
-    serve_parser.add_argument("--config", default=None, help="Config file path (or set WORKBENCH_CONFIG)")
-    serve_parser.add_argument("--override", default=None, help="Override config file (or set WORKBENCH_CONFIG_OVERRIDE)")
-
-    triage_parser = subparsers.add_parser("triage", help="Interactive triage from stdin")
-    triage_parser.add_argument(
-        "--server", default="http://localhost:8421", help="Server URL",
+    parser.add_argument(
+        "--server",
+        default="http://localhost:8421",
+        help="Server URL",
     )
-    triage_parser.add_argument(
-        "--token", default=None, help="API token (or set WORKBENCH_API_TOKEN)",
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="API token (or set WORKBENCH_API_TOKEN)",
     )
-
     args = parser.parse_args()
 
-    if args.command == "serve":
-        serve(config_path=args.config, override_path=args.override)
-    elif args.command == "triage":
-        token = args.token or os.environ.get("WORKBENCH_API_TOKEN", "")
-        if not token:
-            print("Error: --token or WORKBENCH_API_TOKEN required", file=sys.stderr)
-            sys.exit(1)
-        triage(args.server, token)
-    else:
-        parser.print_help()
+    token = args.token or os.environ.get("WORKBENCH_API_TOKEN", "")
+    if not token:
+        print("Error: --token or WORKBENCH_API_TOKEN required", file=sys.stderr)
+        sys.exit(1)
+    triage(args.server, token)
 
 
 if __name__ == "__main__":

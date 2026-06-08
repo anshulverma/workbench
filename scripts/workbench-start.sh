@@ -14,7 +14,7 @@ export WORKBENCH_ANTHROPIC_API_KEY=$(/usr/local/bin/claude_code/api-key-helper)
 mkdir -p "$PROJECT_DIR/data"
 
 mkdir -p "$PROJECT_DIR/logs"
-exec "$PROJECT_DIR/.venv/bin/python" -m uvicorn workbench.main:app \
-    --host 0.0.0.0 \
-    --port "$WORKBENCH_PORT" \
+# Launch via `python -m workbench` so host/port/reload come from config
+# (config.server.host defaults to loopback; reached via the SSH tunnel).
+exec "$PROJECT_DIR/.venv/bin/python" -m workbench \
     2>&1 | tee -a "$PROJECT_DIR/logs/workbench.log"

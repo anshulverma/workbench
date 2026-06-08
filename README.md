@@ -13,9 +13,9 @@ cp config.example.yml config.yml
 docker compose up -d
 
 # Or run locally
-pip install -e .
-alembic upgrade head
-workbench serve
+make setup
+make migrate
+make serve
 ```
 
 ## Architecture
@@ -28,7 +28,7 @@ Source Adapter → Ingestion Queue (LLM scoring) → Queue Worker → LLM Extrac
 ```
 
 The server does all heavy lifting. Clients are thin interfaces:
-- **CLI** -- `workbench triage` for terminal-based triage
+- **CLI** -- `make triage` (`scripts/triage.py`) for terminal-based triage
 - **Claude Code plugin** -- slash commands wrapping API calls
 - **MCP server** -- tool access from any MCP-compatible client
 - **Messenger** -- primary surface for triage cards and responses
@@ -74,9 +74,9 @@ make health         # Check server health
 ## CLI
 
 ```bash
-workbench serve                        # Start the server
-workbench serve --config config.yml    # Explicit config path
-workbench triage --token TOKEN         # Interactive triage from terminal
+make serve                                   # Start the server (python -m workbench; honors config.server.host)
+WORKBENCH_CONFIG=config.yml make serve       # Explicit config path (env var)
+make triage                                  # Interactive triage from terminal (scripts/triage.py)
 ```
 
 ## UI Access (Remote / DevGPU)

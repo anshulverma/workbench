@@ -14,8 +14,8 @@ COPY src/ src/
 COPY entrypoint.sh .
 RUN pip install --no-cache-dir -e .
 
-# Copy built React UI from stage 1
-COPY --from=ui-builder /ui/dist /app/ui-dist
+# Copy built React UI from stage 1 (main.py mounts ../../ui/dist = /app/ui/dist)
+COPY --from=ui-builder /ui/dist /app/ui/dist
 
 EXPOSE 8421
 ENTRYPOINT ["./entrypoint.sh"]

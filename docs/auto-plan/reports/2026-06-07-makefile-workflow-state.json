@@ -1,0 +1,24 @@
+{
+  "topic": "makefile-workflow",
+  "title": "Make as the developer interface; remove the workbench console script",
+  "domains": ["devops", "backend", "api-design"],
+  "phase": "artifacts",
+  "settled_decisions": {
+    "D1": "Make is the single developer interface for workbench/. Base Makefile gains: setup, ui-setup, ui-build, gen-api, ui-test, build (depends on ui-build), up, down, serve, test, migrate, lint, format, logs, health, triage, clean.",
+    "D2": "Remove the `workbench` console script: delete src/workbench/cli.py and [project.scripts]. serve -> thin launcher src/workbench/__main__.py (python -m workbench) that loads config and runs uvicorn with config.server.host/port/debug (preserves the loopback default from T274646800).",
+    "D3": "Terminal triage kept: move triage() to scripts/triage.py (argparse --server/--token), invoked by `make triage`. Update console.py message and ADR 0001 reference.",
+    "D4": "make build builds the UI: add ui-build target; build depends on it; fix base Dockerfile COPY /app/ui-dist -> /app/ui/dist so the image serves /ui. Align scripts/workbench-start.sh to python -m workbench (loopback).",
+    "D5": "Both repos in lockstep: workbench-meta Makefile gains a host ui-build step before `make up` (it volume-mounts ui/dist); its override command switches to `python -m workbench` so it honors config (loopback boundary) + WORKBENCH_CONFIG_OVERRIDE.",
+    "D6": "lint/format targets add `ruff` to dev-deps (the one additive tool choice; modern default).",
+    "D7": "Commit each artifact as it passes, on branch feat/dashboard-followups."
+  },
+  "key_findings": [
+    "`workbench serve` has NO runtime callers (entrypoint.sh + meta override both run uvicorn directly); only docs reference it.",
+    "`workbench triage` IS used: base Makefile triage target + console.py message + ADR 0001.",
+    "No tests import workbench.cli (clean removal).",
+    "Latent bug: base Dockerfile copies UI to /app/ui-dist but main.py mounts /app/ui/dist -> base image 404s /ui.",
+    "Meta mounts host-built ui/dist as a volume + sets WORKBENCH_CONFIG_OVERRIDE env -> override survives script removal; but ui/dist must be host-built before `make up`.",
+    "Extra launch paths binding host: scripts/workbench-start.sh (--host 0.0.0.0), meta override command (--host ::)."
+  ],
+  "artifacts": {"spec": null, "adrs": [], "plan": null}
+}
