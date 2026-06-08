@@ -166,6 +166,8 @@ class WorkbenchScheduler:
         (e.g. triage queue management) become no-ops, then stops APScheduler
         without waiting on in-flight jobs."""
         self._shutting_down = True
+        # Cancel any pending re-triage debounce timers before tearing down.
+        self._debounce.cancel_all()
         try:
             self.scheduler.shutdown(wait=False)
         except Exception:
