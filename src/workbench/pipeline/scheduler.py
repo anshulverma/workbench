@@ -13,6 +13,8 @@ from workbench.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.memory.base import MemoryLayer
 from workbench.models import (
+    ChangeContext,
+    ExtractedItem,
     FilterRule,
     InteractionEntry,
     InterpretedResponse,
@@ -31,8 +33,9 @@ from workbench.models import (
 from workbench.pipeline.debounce import DebounceManager
 from workbench.providers.change_detector.base import ChangeDetector
 from workbench.providers.change_detector.fallback import AlwaysMaterialDetector
-from workbench.pipeline.engine import PipelineEngine
-from workbench.pipeline.triage import format_card_for_chat
+from workbench.pipeline.change_context import build_change_context
+from workbench.pipeline.engine import PipelineEngine, enrich_item
+from workbench.pipeline.triage import format_card_for_chat, generate_card
 from workbench.pipeline.worker import DB_UNAVAILABLE
 from workbench.providers.llm.base import LLMProvider
 from workbench.providers.messenger.base import Messenger
@@ -419,9 +422,109 @@ class WorkbenchScheduler:
             card.status = "expired"
             await self.stores.triage.update_card(card)
 
-    async def _fire_retriage(self, item_id, result, raw_item, old_raw) -> None:
-        """Debounce callback — fully implemented in T14. Stub for now."""
-        logger.debug("re-triage fire (stub) for item %s", item_id)
+    _LIGHT_CHANGE_TYPES = {"status_changed", "ci_changed", "comment_added"}
+
+    async def _fire_retriage(
+        self, item_id: str, result, raw_item: RawItem, old_raw: dict
+    ) -> None:
+        """Debounce callback. Presenter-driven re-triage (ADR 0030,0031,0032).
+        old_raw is the pre-update snapshot stashed at detection time."""
+        item = await self.stores.items.get_item(item_id)
+        if item is None or item.status == ItemStatus.ARCHIVED:
+            return
+
+        # Daily cap BEFORE any LLM work; critical bypasses (ADR 0032).
+        if not result.is_critical:
+            sent_today = await self.stores.triage.count_sent_today()
+            if sent_today >= self.config.triage.daily_cap:
+                logger.info("Daily cap reached; skipping re-triage for %s", item.id)
+                return
+
+        new_raw = json.loads(raw_item.raw_text)
+        existing_card = await self.stores.triage.get_card_by_item_id(item.id)
+        change_ctx = build_change_context(result, old_raw, new_raw, existing_card)
+
+        ext_item = ExtractedItem(
+            summary=item.summary,
+            category=item.category,
+            source_context=raw_item.source_label,
+            raw_item=raw_item,
+        )
+
+        # Two-tier regen depth keyed on change_type (ADR 0032).
+        if result.change_type == "code_updated":
+            # MUST pass depth="deep": DiffEnricher only re-fetches the diff
+            # (and regenerates curated hunks) in deep mode; the default
+            # "shallow" would silently skip the fetch and defeat ADR 0032.
+            enrichment = await enrich_item(
+                self.pipeline.enricher, ext_item, "deep", memory=self.memory
+            )
+        else:
+            # Light path: reuse stored curated hunks; no diff re-fetch.
+            stored_sections = (
+                existing_card.card_content.get("sections", {}) if existing_card else {}
+            )
+            enrichment = {
+                "context": {
+                    "curated_hunks": stored_sections.get("hunks", []),
+                    "metadata": stored_sections.get("metadata", {}),
+                    "revision_id": stored_sections.get("revision_id", ""),
+                }
+            }
+
+        new_card = await generate_card(
+            self.llm,
+            ext_item,
+            enrichment,
+            raw_item.source_type,
+            memory=self.memory,
+            content_generators=self.content_generators,
+            change_context=change_ctx,
+        )
+        new_card.item_id = item.id
+
+        if existing_card is None:
+            new_card.expires_at = datetime.now(timezone.utc) + timedelta(
+                days=self.pipeline.triage_expiry_days
+            )
+            await self.stores.triage.save_card(new_card)
+            return
+
+        # Re-read status (race mitigation).
+        existing_card = await self.stores.triage.get_card(existing_card.id)
+        if existing_card.deferred_until is not None:
+            await self.stores.triage.clear_deferral(existing_card.id)
+
+        if existing_card.status == "queued":
+            self._copy_card_content(existing_card, new_card)
+            await self.stores.triage.update_card(existing_card)
+
+        elif existing_card.status == "sent":
+            self._copy_card_content(existing_card, new_card)
+            await self.stores.triage.update_card(existing_card)
+            if self.messenger:
+                message = self.presenter.render(existing_card, ext_item)
+                message.header = f"[Updated] {message.header}"
+                ok = await self.messenger.update_message(
+                    existing_card.bot_message_id, message
+                )
+                if not ok:
+                    new_id = await self.messenger.send_card(message)
+                    existing_card.bot_message_id = new_id
+                    await self.stores.triage.update_card(existing_card)
+
+        else:  # responded / expired -> new card
+            new_card.expires_at = datetime.now(timezone.utc) + timedelta(
+                days=self.pipeline.triage_expiry_days
+            )
+            await self.stores.triage.save_card(new_card)
+
+    @staticmethod
+    def _copy_card_content(dst, src) -> None:
+        dst.card_content = src.card_content
+        dst.options = src.options
+        dst.relevance_score = src.relevance_score
+        dst.confidence_score = src.confidence_score
 
     async def _alert_check(self):
         """Build health dict and run alert checks."""
