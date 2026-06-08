@@ -15,6 +15,7 @@
 // unauthorized / empty ("Inbox zero") / normal.
 
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   useTriagePending,
   useRespond,
@@ -76,6 +77,9 @@ function TriageCardItem({ card }: { card: TriageCard }) {
             relevance {card.relevance_score}
           </Badge>
         )}
+        <Link to={`/triage/${card.id}`} className="shrink-0 text-sm underline">
+          Review
+        </Link>
       </div>
 
       <div className="flex flex-wrap gap-2">
