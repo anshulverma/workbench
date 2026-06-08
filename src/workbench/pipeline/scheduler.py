@@ -336,7 +336,7 @@ class WorkbenchScheduler:
             card = sent_cards[0]
             responses = await self.messenger.poll_responses(card.bot_message_id)
             if responses:
-                logger.info(
+                logger.debug(
                     "Got %d responses for card %s (msg=%s)",
                     len(responses),
                     card.id,

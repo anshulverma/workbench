@@ -162,3 +162,5 @@ def setup_logging(
         uv_logger = logging.getLogger(name)
         uv_logger.handlers.clear()
         uv_logger.propagate = True
+
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
