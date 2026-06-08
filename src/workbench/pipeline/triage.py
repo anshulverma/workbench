@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from workbench.providers.llm.base import LLMProvider
-from workbench.models import ExtractedItem, TriageCard, TriageOption
+from workbench.models import ChangeContext, ExtractedItem, TriageCard, TriageOption
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,17 @@ async def generate_card(
     source_type: str,
     *,
     memory=None,
+    content_generators: dict | None = None,
+    change_context: ChangeContext | None = None,
 ) -> TriageCard:
     """Generate a triage card with LLM, enriched by memory context.
 
-    Gathers entity knowledge, relationships, and preference facts from memory
-    for any entity_refs found in the enrichment context.
+    Gathers entity knowledge (cap 5), relationships (cap 10), and preference
+    facts (cap 20) from memory for any entity_refs found in the enrichment
+    context. Dispatches to a registered CardContentGenerator by source_type;
+    when none is registered, falls back to llm.generate_triage_card. When
+    change_context is provided (re-triage), it is threaded to the generator /
+    LLM and the template fallback marks the card "[Updated]" (ADR 0030,0032).
     """
     memory_context = None
 
@@ -45,9 +51,7 @@ async def generate_card(
 
         try:
             # Build parallel query lists
-            entity_queries = [
-                memory.query_entity(t, i) for t, i in entity_refs
-            ]
+            entity_queries = [memory.query_entity(t, i) for t, i in entity_refs]
             relationship_queries = [
                 memory.query_relationships(t, i) for t, i in entity_refs
             ]
@@ -66,7 +70,7 @@ async def generate_card(
             for (etype, eid), entity_result in zip(entity_refs, raw_entity_results):
                 if entity_result and not isinstance(entity_result, Exception):
                     # Use .value for enum types to get clean string keys
-                    etype_str = etype.value if hasattr(etype, 'value') else str(etype)
+                    etype_str = etype.value if hasattr(etype, "value") else str(etype)
                     entity_facts[f"{etype_str}:{eid}"] = entity_result.facts
 
             relationships = []
@@ -95,17 +99,36 @@ async def generate_card(
             logger.warning("Failed to gather memory context: %s", e)
             memory_context = None
 
-    # Generate card via LLM, with template fallback
-    try:
-        # FIX 30/31: Pass only the context dict to LLM, not the full enrichment
-        # wrapper with calls_made/time_ms.
-        context_for_llm = enrichment_context.get("context", enrichment_context)
-        card = await llm.generate_triage_card(
-            item, context_for_llm, source_type, memory_context=memory_context,
-        )
-    except Exception as e:
-        logger.warning("LLM card generation failed, using template: %s", e)
-        card = _template_card(item, enrichment_context, source_type)
+    # Generate card content: dispatch to a registered CardContentGenerator by
+    # source_type; otherwise fall back to the default LLM. Template on failure.
+    # FIX 30/31: Pass only the context dict, not the full enrichment wrapper.
+    context_for_llm = enrichment_context.get("context", enrichment_context)
+    generator = (content_generators or {}).get(source_type)
+    if generator is not None:
+        try:
+            envelope = await generator.generate(
+                item=item,
+                llm=llm,
+                enrichment_context=context_for_llm,
+                memory_context=memory_context,
+                change_context=change_context,
+            )
+            card = TriageCard(card_content=envelope)
+        except Exception as e:
+            logger.warning("Content generator failed, using template: %s", e)
+            card = _template_card(item, enrichment_context, source_type, change_context)
+    else:
+        try:
+            card = await llm.generate_triage_card(
+                item,
+                context_for_llm,
+                source_type,
+                memory_context=memory_context,
+                change_context=change_context,
+            )
+        except Exception as e:
+            logger.warning("LLM card generation failed, using template: %s", e)
+            card = _template_card(item, enrichment_context, source_type, change_context)
 
     # FIX 10: Validate any suggested options
     if memory_context and memory_context.get("preference_facts"):
@@ -125,36 +148,44 @@ async def generate_card(
 
 
 def _template_card(
-    item: ExtractedItem, enrichment_context: dict, source_type: str
+    item: ExtractedItem,
+    enrichment_context: dict,
+    source_type: str,
+    change_context: ChangeContext | None = None,
 ) -> TriageCard:
-    """Fallback template card when LLM generation fails."""
-    return TriageCard(
-        card_content={
-            "summary": item.summary,
-            "source_type": source_type,
-            "enrichment": enrichment_context,
-        },
-        options=[
+    """Fallback template card when LLM/generator generation fails."""
+    card_content = {
+        "summary": item.summary,
+        "source_type": source_type,
+        "enrichment": enrichment_context,
+    }
+    if change_context is not None:
+        card_content["summary"] = f"[Updated] {item.summary}"
+        card_content["change"] = change_context.model_dump()
+        options = [
             TriageOption(
-                label="Add todo P1", action="add_todo",
-                details={"priority": "P1"},
+                label="Bump to P1", action="add_todo", details={"priority": "P1"}
+            ),
+            TriageOption(label="Keep current priority", action="skip"),
+            TriageOption(label="Acknowledge change", action="skip"),
+        ]
+    else:
+        options = [
+            TriageOption(
+                label="Add todo P1", action="add_todo", details={"priority": "P1"}
             ),
             TriageOption(
-                label="Add todo P2", action="add_todo",
-                details={"priority": "P2"},
+                label="Add todo P2", action="add_todo", details={"priority": "P2"}
             ),
             TriageOption(label="Skip", action="skip"),
             TriageOption(
-                label=f"Never surface {source_type} like this",
-                action="mute_pattern",
+                label=f"Never surface {source_type} like this", action="mute_pattern"
             ),
-        ],
-    )
+        ]
+    return TriageCard(card_content=card_content, options=options)
 
 
-def format_card_for_chat(
-    card: TriageCard, position: int = 1, total: int = 1
-) -> str:
+def format_card_for_chat(card: TriageCard, position: int = 1, total: int = 1) -> str:
     body = card.card_content.get(
         "card_body", card.card_content.get("summary", "Unknown item")
     )

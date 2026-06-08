@@ -7,7 +7,18 @@ from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
 from workbench.providers.llm.base import LLMProvider
-from workbench.models import ExtractedItem, ItemCategory, RawItem, FilterRule, TriageCard, TriageOption, Fact, InterpretedResponse, SystemAction, UserTodo
+from workbench.models import (
+    ExtractedItem,
+    ItemCategory,
+    RawItem,
+    FilterRule,
+    TriageCard,
+    TriageOption,
+    Fact,
+    InterpretedResponse,
+    SystemAction,
+    UserTodo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +60,8 @@ class AnthropicLLM(LLMProvider):
     def __init__(self, config: ProviderConfig):
         self._http_client = config.http_client
         self.client = AsyncAnthropic(
-            api_key=config.api_key, base_url=config.base_url,
+            api_key=config.api_key,
+            base_url=config.base_url,
             http_client=self._http_client,
         )
         self.model = config.model
@@ -59,7 +71,9 @@ class AnthropicLLM(LLMProvider):
             await self._http_client.aclose()
 
     async def extract(self, raw_text: str, source_type: str) -> list[ExtractedItem]:
-        raw_item = RawItem(id="", source_type=source_type, source_label="", raw_text=raw_text)
+        raw_item = RawItem(
+            id="", source_type=source_type, source_label="", raw_text=raw_text
+        )
         response = await self._call_with_retry(
             EXTRACT_PROMPT.format(source_type=source_type, raw_text=raw_text[:10000])
         )
@@ -78,9 +92,19 @@ class AnthropicLLM(LLMProvider):
             logger.warning("Failed to parse extraction response, returning no items")
             return []
 
-    async def score_relevance(self, item: ExtractedItem, preference_facts: list[Fact], rules: list[FilterRule]) -> tuple[int, int]:
-        prefs_text = "\n".join(f"- {f.content}" for f in preference_facts) if preference_facts else "No preferences yet."
-        rules_text = "\n".join(f"- {r.pattern} → {r.action}" for r in rules) if rules else "No rules yet."
+    async def score_relevance(
+        self, item: ExtractedItem, preference_facts: list[Fact], rules: list[FilterRule]
+    ) -> tuple[int, int]:
+        prefs_text = (
+            "\n".join(f"- {f.content}" for f in preference_facts)
+            if preference_facts
+            else "No preferences yet."
+        )
+        rules_text = (
+            "\n".join(f"- {r.pattern} → {r.action}" for r in rules)
+            if rules
+            else "No rules yet."
+        )
         response = await self._call_with_retry(
             SCORE_PROMPT.format(
                 summary=item.summary,
@@ -96,9 +120,20 @@ class AnthropicLLM(LLMProvider):
             logger.warning("Failed to parse score response, using default (50, 30)")
             return 50, 30
 
-    async def generate_triage_card(self, item: ExtractedItem, enrichment_context: dict, source_type: str, *, memory_context: dict | None = None) -> TriageCard:
+    async def generate_triage_card(
+        self,
+        item: ExtractedItem,
+        enrichment_context: dict,
+        source_type: str,
+        *,
+        memory_context: dict | None = None,
+        change_context=None,
+    ) -> TriageCard:
         summary = item.summary
         options = self._template_options(source_type)
+        if change_context is not None:
+            # Re-triage: mark the card and surface what changed (ADR 0030,0032).
+            summary = f"[Updated] {summary}"
 
         # If memory_context is available, use LLM to generate a richer card body
         if memory_context:
@@ -119,17 +154,18 @@ class AnthropicLLM(LLMProvider):
         )
 
     async def _generate_card_body(
-        self, summary: str, source_type: str,
-        enrichment_context: dict, memory_context: dict,
+        self,
+        summary: str,
+        source_type: str,
+        enrichment_context: dict,
+        memory_context: dict,
     ) -> str:
         entity_lines = []
         for key, facts in memory_context.get("entity_facts", {}).items():
             fact_str = ", ".join(f"{k}: {v}" for k, v in facts.items())
             entity_lines.append(f"  {key}: {fact_str}")
 
-        pref_lines = [
-            f"  - {p}" for p in memory_context.get("preference_facts", [])
-        ]
+        pref_lines = [f"  - {p}" for p in memory_context.get("preference_facts", [])]
 
         prompt = f"""Generate a concise triage card body (1-3 sentences) for this item.
 Include relevant context about people, teams, and user preferences.
@@ -155,21 +191,41 @@ Return ONLY the card body text, no JSON wrapping."""
 
     def _template_options(self, source_type: str) -> list[TriageOption]:
         base = [
-            TriageOption(label="Add todo (P1)", action="add_todo", details={"priority": "P1"}),
-            TriageOption(label="Add todo (P2)", action="add_todo", details={"priority": "P2"}),
+            TriageOption(
+                label="Add todo (P1)", action="add_todo", details={"priority": "P1"}
+            ),
+            TriageOption(
+                label="Add todo (P2)", action="add_todo", details={"priority": "P2"}
+            ),
             TriageOption(label="Skip", action="skip"),
         ]
         if source_type == "diff":
-            base.append(TriageOption(label="Never surface diffs like this", action="mute_pattern"))
+            base.append(
+                TriageOption(
+                    label="Never surface diffs like this", action="mute_pattern"
+                )
+            )
         elif source_type == "email":
-            base.append(TriageOption(label="Never surface emails like this", action="mute_pattern"))
+            base.append(
+                TriageOption(
+                    label="Never surface emails like this", action="mute_pattern"
+                )
+            )
         else:
-            base.append(TriageOption(label="Never surface items like this", action="mute_pattern"))
+            base.append(
+                TriageOption(
+                    label="Never surface items like this", action="mute_pattern"
+                )
+            )
         return base
 
-    async def interpret_triage_response(self, card: TriageCard, raw_text: str) -> InterpretedResponse:
+    async def interpret_triage_response(
+        self, card: TriageCard, raw_text: str
+    ) -> InterpretedResponse:
         """Interpret free-text triage response using Anthropic tool use."""
-        summary = card.card_content.get("summary", card.card_content.get("card_body", ""))
+        summary = card.card_content.get(
+            "summary", card.card_content.get("card_body", "")
+        )
         source_type = card.card_content.get("source_type", "unknown")
         options_text = "\n".join(
             f"  {i}. {o.label} (action={o.action})"
@@ -192,7 +248,9 @@ Return ONLY the card body text, no JSON wrapping."""
                                     "action": {
                                         "type": "string",
                                         "enum": [
-                                            "add_todo", "skip", "mute_pattern",
+                                            "add_todo",
+                                            "skip",
+                                            "mute_pattern",
                                             "defer",
                                         ],
                                     },
@@ -219,9 +277,12 @@ Return ONLY the card body text, no JSON wrapping."""
                                     "action_category": {
                                         "type": "string",
                                         "enum": [
-                                            "delegation", "communication",
-                                            "scheduling", "review",
-                                            "creation", "update",
+                                            "delegation",
+                                            "communication",
+                                            "scheduling",
+                                            "review",
+                                            "creation",
+                                            "update",
                                         ],
                                     },
                                 },
@@ -311,9 +372,11 @@ Return ONLY the card body text, no JSON wrapping."""
                 if attempt == max_retries - 1:
                     raise
                 logger.warning(
-                    "LLM call failed (attempt %d/%d), retrying", attempt + 1, max_retries,
+                    "LLM call failed (attempt %d/%d), retrying",
+                    attempt + 1,
+                    max_retries,
                 )
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
 
     def _extract_json(self, text: str) -> str:
         if "```json" in text:
