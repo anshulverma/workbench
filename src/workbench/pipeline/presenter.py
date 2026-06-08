@@ -66,3 +66,23 @@ class CompositeCardPresenter(CardPresenter):
                 exc,
             )
             return self._default.render(card, item)
+
+
+def build_composite_presenter(presentation_config) -> "CompositeCardPresenter":
+    """Build a CompositeCardPresenter from the presentation.providers list.
+
+    Each entry: {source_type, class, config?}. Disabled (config.enabled is False)
+    entries are skipped. Unimportable class strings raise at startup (hard error).
+    """
+    from workbench.registry import create_provider
+
+    by_source_type: dict[str, CardPresenter] = {}
+    for entry in presentation_config.providers:
+        entry = dict(entry)
+        source_type = entry.pop("source_type")
+        provider_config = entry.pop("config", {}) or {}
+        if provider_config.get("enabled", True) is False:
+            continue
+        section = {"class": entry["class"], **provider_config}
+        by_source_type[source_type] = create_provider(section)
+    return CompositeCardPresenter(by_source_type, default=PlainCardPresenter())
