@@ -4,10 +4,22 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+import asyncpg
+
 from workbench.models import JobStatus, RawItem
 from workbench.storage.base import Stores
 
 logger = logging.getLogger(__name__)
+
+# Errors that mean "the database went away" rather than a real bug -- most
+# commonly seen during shutdown, when PostgreSQL (a separate container) stops
+# accepting connections while this loop is still polling. Treated as a benign,
+# recoverable condition: warn without a traceback and back off / exit cleanly.
+DB_UNAVAILABLE = (
+    ConnectionError,  # includes ConnectionRefusedError / ConnectionResetError
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,  # e.g. "pool is closing" / "pool is closed"
+)
 
 
 class IngestionQueueWorker:
@@ -24,10 +36,20 @@ class IngestionQueueWorker:
         self._task = asyncio.create_task(self._run_loop())
         logger.info(f"Ingestion queue worker started (concurrency={self.concurrency})")
 
-    def stop(self):
+    async def stop(self):
+        """Stop the loop and wait for it to unwind before returning, so callers
+        can safely tear down the DB pool afterwards."""
         self._running = False
-        if self._task:
-            self._task.cancel()
+        if not self._task:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._task = None
+        logger.info("Ingestion queue worker stopped")
 
     async def _run_loop(self):
         recovered = await self.stores.ingestion_queue.recover_stuck()
@@ -36,7 +58,9 @@ class IngestionQueueWorker:
 
         while self._running:
             try:
-                entries = await self.stores.ingestion_queue.dequeue(limit=self.concurrency)
+                entries = await self.stores.ingestion_queue.dequeue(
+                    limit=self.concurrency
+                )
                 if not entries:
                     await asyncio.sleep(2)
                     continue
@@ -45,6 +69,13 @@ class IngestionQueueWorker:
                 await asyncio.gather(*tasks)
             except asyncio.CancelledError:
                 break
+            except DB_UNAVAILABLE as e:
+                if not self._running:
+                    break
+                # Benign during shutdown / transient PG outage: warn (no
+                # traceback) and back off rather than spamming error stacks.
+                logger.warning(f"Queue worker: database unavailable ({e}); retrying")
+                await asyncio.sleep(5)
             except Exception as e:
                 logger.error(f"Queue worker error: {e}")
                 await asyncio.sleep(5)

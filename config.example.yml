@@ -34,7 +34,7 @@ triage:
   daily_cap: 20
   expiry_days: 7
   timeout_minutes: 30
-  triage_poll_interval_seconds: 0.5
+  triage_poll_interval_seconds: 5.0
 
 pipeline:
   include_threshold: 70

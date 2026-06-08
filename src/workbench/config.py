@@ -32,7 +32,10 @@ class TriageConfig(BaseModel):
     daily_cap: int = 20
     expiry_days: int = 7
     timeout_minutes: int = 30
-    triage_poll_interval_seconds: float = 0.5
+    # How often to poll the messenger for triage responses. Kept at a few
+    # seconds: sub-second intervals overrun each poll and make APScheduler spam
+    # "maximum number of running instances reached" warnings every tick.
+    triage_poll_interval_seconds: float = 5.0
 
 
 class PipelineConfig(BaseModel):

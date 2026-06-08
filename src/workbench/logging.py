@@ -42,6 +42,15 @@ class AgeRotatingFileHandler(RotatingFileHandler):
 _AUTO_EXC_INFO_LEVELS = frozenset({"error", "critical", "exception"})
 
 
+class _MaxInstancesSkipFilter(logging.Filter):
+    """Suppress apscheduler's benign "maximum number of running instances
+    reached" skip warning, emitted every tick an interval job overruns its
+    interval. It signals a handled, expected condition, not a problem."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "maximum number of running instances reached" not in record.getMessage()
+
+
 def add_active_exc_info(logger: Any, method_name: str, event_dict: dict) -> dict:
     """Auto-attach the currently-handled exception so error logs emitted inside an
     `except` block render a full traceback — even when the call site forgot
@@ -164,3 +173,8 @@ def setup_logging(
         uv_logger.propagate = True
 
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
+    # Drop only the benign "still busy, skipping this tick" warning that an
+    # interval job emits whenever a run overruns its interval (expected for the
+    # triage poll, which waits on the messenger). All other apscheduler
+    # warnings/errors still propagate.
+    logging.getLogger("apscheduler.scheduler").addFilter(_MaxInstancesSkipFilter())

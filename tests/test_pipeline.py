@@ -473,7 +473,7 @@ async def test_e2e_enqueue_to_triage_card(stores, mock_llm):
         if await stores.ingestion_queue.queue_depth() == 0:
             break
         await asyncio.sleep(0.1)
-    worker.stop()
+    await worker.stop()
 
     assert await stores.ingestion_queue.queue_depth() == 0
 
@@ -506,7 +506,7 @@ async def test_e2e_auto_include(stores, mock_llm):
         if await stores.ingestion_queue.queue_depth() == 0:
             break
         await asyncio.sleep(0.1)
-    worker.stop()
+    await worker.stop()
 
     assert len(await stores.triage.get_pending()) == 0
 
@@ -531,7 +531,7 @@ async def test_e2e_auto_drop(stores, mock_llm):
         if await stores.ingestion_queue.queue_depth() == 0:
             break
         await asyncio.sleep(0.1)
-    worker.stop()
+    await worker.stop()
 
     assert len(await stores.triage.get_pending()) == 0
     assert len(await stores.items.get_items(ItemFilters())) == 0

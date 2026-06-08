@@ -28,6 +28,7 @@ from workbench.models import (
 )
 from workbench.pipeline.engine import PipelineEngine
 from workbench.pipeline.triage import format_card_for_chat
+from workbench.pipeline.worker import DB_UNAVAILABLE
 from workbench.providers.llm.base import LLMProvider
 from workbench.providers.messenger.base import Messenger
 from workbench.storage.base import Stores
@@ -57,6 +58,9 @@ class WorkbenchScheduler:
         self.scheduler = AsyncIOScheduler(
             timezone=ZoneInfo(config.logging.timezone),
         )
+        # Set during graceful shutdown so interval jobs stop touching the DB
+        # before the connection pool is torn down.
+        self._shutting_down = False
         # Per-source asyncio.Lock so manual + scheduled polls of the same source serialize.
         self._source_locks: dict[str, asyncio.Lock] = {}
         # Maps source_id -> live adapter instance (kept in sync by hot-reload).
@@ -96,7 +100,17 @@ class WorkbenchScheduler:
 
         for job_id, trigger, kwargs, func in jobs:
             logger.info(f"Scheduling job '{job_id}' ({trigger})")
-            self.scheduler.add_job(func, trigger, id=job_id, **kwargs)
+            # coalesce + max_instances=1 so a run that overruns its interval is
+            # collapsed into a single next run rather than triggering
+            # APScheduler "maximum number of running instances reached" warnings.
+            self.scheduler.add_job(
+                func,
+                trigger,
+                id=job_id,
+                max_instances=1,
+                coalesce=True,
+                **kwargs,
+            )
 
         # Per-source Source Jobs (replaces the global poll_sources interval job).
         # First runs are staggered a few seconds into the future to avoid a
@@ -121,6 +135,17 @@ class WorkbenchScheduler:
             logger.info(
                 "Scheduled Source Job 'poll_source:%s' (%s)", source.id, source.schedule
             )
+
+    def shutdown(self) -> None:
+        """Stop the scheduler gracefully. Flags shutdown first so interval jobs
+        (e.g. triage queue management) become no-ops, then stops APScheduler
+        without waiting on in-flight jobs."""
+        self._shutting_down = True
+        try:
+            self.scheduler.shutdown(wait=False)
+        except Exception:
+            # Already stopped / never started -- nothing to do.
+            pass
 
     def set_messenger(self, messenger: Messenger | None) -> None:
         """Rebind the messenger after a hot-swap (ADR 0013).
@@ -279,11 +304,16 @@ class WorkbenchScheduler:
             logger.error("Alert check failed", exc_info=True)
 
     async def _manage_triage_queue(self):
-        if not self.messenger:
+        if not self.messenger or self._shutting_down:
             return
 
         try:
             await self._manage_triage_queue_inner()
+        except DB_UNAVAILABLE as e:
+            # Benign during shutdown / transient PG outage -- warn without a
+            # traceback instead of an error stack on every poll.
+            if not self._shutting_down:
+                logger.warning("Triage queue management: database unavailable (%s)", e)
         except Exception:
             logger.error("Triage queue management failed", exc_info=True)
 

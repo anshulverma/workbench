@@ -207,10 +207,14 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down...")
 
-    # Cleanup
+    # Stop background work FIRST, before tearing down providers or the DB pool,
+    # so the scheduler's interval jobs and the queue worker stop issuing queries
+    # against a connection pool that is about to close. worker.stop() is awaited
+    # so the loop has fully unwound before we proceed.
+    if hasattr(app.state, "scheduler"):
+        app.state.scheduler.shutdown()
     if hasattr(app.state, "worker"):
-        app.state.worker.stop()
-    app.state.scheduler.scheduler.shutdown(wait=False)
+        await app.state.worker.stop()
 
     for provider in [
         app.state.llm,
@@ -226,6 +230,12 @@ async def lifespan(app: FastAPI):
 
     for conn in app.state.connections.values():
         await close_provider(conn)
+
+    # Close the DB pool last -- everything that uses it has now stopped.
+    if hasattr(app.state, "stores"):
+        await app.state.stores.close()
+
+    logger.info("Shutdown complete")
 
     if hasattr(app.state.stores, "close"):
         await app.state.stores.close()
