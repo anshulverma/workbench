@@ -13,16 +13,16 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._token = token
 
-    @property
-    def token(self) -> str | None:
+    def _resolve_token(self, request: Request | None = None) -> str | None:
         if self._token is not None:
             return self._token
-        try:
-            config = self.app.state.config
-            self._token = config.server.api_token
-            return self._token
-        except AttributeError:
-            pass
+        if request is not None:
+            try:
+                config = request.app.state.config
+                self._token = config.server.api_token
+                return self._token
+            except AttributeError:
+                pass
         try:
             from workbench.config import load_config
 
@@ -41,7 +41,7 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if path.startswith("/ui") or path == "/api/auth/token":
             return await call_next(request)
-        token = self.token
+        token = self._resolve_token(request)
         if token and request.headers.get("Authorization", "") != f"Bearer {token}":
             return JSONResponse(status_code=401, content={"detail": "Invalid token"})
         return await call_next(request)

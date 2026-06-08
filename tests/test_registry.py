@@ -6,6 +6,7 @@ from workbench.providers.connection.base import Connection
 def test_registry_module_exists():
     """Placeholder — requires pydantic to be installed."""
     import importlib
+
     spec = importlib.util.find_spec("workbench.registry")
     assert True
 
@@ -30,8 +31,10 @@ class FakeConnection(Connection):
 
 def test_connection_abc_requires_methods():
     with pytest.raises(TypeError):
+
         class BadConnection(Connection):
             pass
+
         BadConnection()
 
 
@@ -82,6 +85,9 @@ class ConnectionUnawareProvider:
 
 
 def test_create_provider_injects_connection_when_accepted():
+    import sys
+
+    sys.modules.setdefault("tests.test_registry", sys.modules[__name__])
     conn = StubConnection()
     section = {
         "class": "tests.test_registry.ConnectionAwareProvider",
@@ -95,6 +101,9 @@ def test_create_provider_injects_connection_when_accepted():
 
 
 def test_create_provider_skips_connection_when_not_accepted():
+    import sys
+
+    sys.modules.setdefault("tests.test_registry", sys.modules[__name__])
     conn = StubConnection()
     section = {
         "class": "tests.test_registry.ConnectionUnawareProvider",
