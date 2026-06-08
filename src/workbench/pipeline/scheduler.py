@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -22,10 +23,14 @@ from workbench.models import (
     ItemUpdate,
     JobTrigger,
     Priority,
+    RawItem,
     SystemAction,
     TriageResponse,
     UserTodo,
 )
+from workbench.pipeline.debounce import DebounceManager
+from workbench.providers.change_detector.base import ChangeDetector
+from workbench.providers.change_detector.fallback import AlwaysMaterialDetector
 from workbench.pipeline.engine import PipelineEngine
 from workbench.pipeline.triage import format_card_for_chat
 from workbench.pipeline.worker import DB_UNAVAILABLE
@@ -67,6 +72,10 @@ class WorkbenchScheduler:
         self._source_by_id: dict[str, object] = {}
         # Stable DB source configs the scheduler manages (set at startup).
         self._db_sources: list = []
+        # Change-monitoring: per-source-type ChangeDetector registry (filled at
+        # startup, T16) + in-memory debounce of re-triage requests (T14 fire).
+        self._change_detectors: dict[str, ChangeDetector] = {}
+        self._debounce = DebounceManager(self._fire_retriage)
 
     def start(self):
         jobs = [
@@ -239,24 +248,38 @@ class WorkbenchScheduler:
             try:
                 since = await self._read_watermark(source_id, adapter_type)
                 raw_items = await adapter.poll(since=since)
-                enqueued = 0
-                for raw_item in raw_items:
-                    try:
-                        await self.pipeline.enqueue(
-                            raw_item.raw_text,
-                            raw_item.source_type,
-                            source_id=raw_item.id,
-                            urgency_signals=raw_item.urgency_signals,
-                            trigger=trigger,
-                        )
-                        enqueued += 1
-                    except Exception as e:
-                        logger.error(
-                            "Failed to enqueue item %s from %s: %s",
-                            raw_item.id,
-                            source_id,
-                            e,
-                        )
+                # Duck-typed adapters (e.g. test fakes) may lack the monitoring
+                # method; default to non-monitoring so the legacy path runs. Only
+                # an explicit True routes to change-monitoring.
+                supports_monitoring = getattr(
+                    adapter, "supports_monitoring", lambda: False
+                )
+                if supports_monitoring() is True:
+                    detector = self._change_detectors.get(
+                        adapter_type
+                    ) or AlwaysMaterialDetector(adapter_type)
+                    enqueued = await self._route_poll_results(
+                        source_id, adapter, detector, raw_items, trigger
+                    )
+                else:
+                    enqueued = 0
+                    for raw_item in raw_items:
+                        try:
+                            await self.pipeline.enqueue(
+                                raw_item.raw_text,
+                                raw_item.source_type,
+                                source_id=raw_item.id,
+                                urgency_signals=raw_item.urgency_signals,
+                                trigger=trigger,
+                            )
+                            enqueued += 1
+                        except Exception as e:
+                            logger.error(
+                                "Failed to enqueue item %s from %s: %s",
+                                raw_item.id,
+                                source_id,
+                                e,
+                            )
                 await self.stores.config.set(
                     f"source_last_polled:{source_id}",
                     datetime.now(timezone.utc).isoformat(),
@@ -272,6 +295,91 @@ class WorkbenchScheduler:
             except Exception as e:
                 await self.stores.ingestion_runs.error_run(run_id, str(e))
                 logger.error("Source %s poll failed: %s", source_id, e)
+
+    @staticmethod
+    def _parse_raw(raw_data: dict) -> dict:
+        """Extract the source JSON from Item.raw_data for comparison."""
+        raw_text = raw_data.get("raw_text", "{}")
+        return json.loads(raw_text) if isinstance(raw_text, str) else raw_text
+
+    async def _route_poll_results(
+        self, source_id, adapter, detector, raw_items, trigger
+    ) -> int:
+        """Route poll results for a monitoring-capable source: new items ->
+        enqueue, existing items -> change detection. Returns count enqueued
+        (new ingestion only)."""
+        enqueued = 0
+        seen_ids: set[str] = set()
+
+        for raw_item in raw_items:
+            sid = adapter.stable_id(raw_item)
+            seen_ids.add(sid)
+
+            existing = await self.stores.items.get_item_by_source_id(
+                adapter.adapter_type(), sid
+            )
+
+            if existing is None:
+                try:
+                    await self.pipeline.enqueue(
+                        raw_item.raw_text,
+                        raw_item.source_type,
+                        source_id=sid,
+                        urgency_signals=raw_item.urgency_signals,
+                        trigger=trigger,
+                    )
+                    enqueued += 1
+                except Exception as e:
+                    logger.error("Failed to enqueue %s: %s", sid, e)
+                continue
+
+            old_raw = self._parse_raw(existing.raw_data)
+            new_raw = json.loads(raw_item.raw_text)
+            result = detector.detect(old_raw, new_raw)
+
+            if result.is_terminal:
+                await self._archive_terminal(existing)
+                continue
+
+            # Always update raw_data to the latest snapshot.
+            await self.stores.items.update_raw_data(existing.id, raw_item)
+
+            if result.is_material:
+                self._debounce.schedule(existing.id, result, raw_item, old_raw)
+
+        # Disappearance detection only when poll returns a complete snapshot;
+        # watermark-filtered adapters return partial sets and must not archive
+        # items that simply haven't changed since the watermark.
+        if adapter.supports_monitoring() and adapter.poll_returns_complete_set():
+            await self._detect_disappeared(adapter.adapter_type(), seen_ids)
+
+        return enqueued
+
+    async def _detect_disappeared(self, source_type: str, seen_ids: set[str]) -> None:
+        """Items in DB but absent from the latest complete poll -> terminal."""
+        active_items = await self.stores.items.get_active_by_source(source_type)
+        for item in active_items:
+            if item.source_id not in seen_ids:
+                logger.info(
+                    "Item %s disappeared from %s; archiving",
+                    item.source_id,
+                    source_type,
+                )
+                await self._archive_terminal(item)
+
+    async def _archive_terminal(self, item: Item) -> None:
+        """Archive an item and expire its pending triage card (no cooldown)."""
+        await self.stores.items.update_item(
+            item.id, ItemUpdate(status=ItemStatus.ARCHIVED)
+        )
+        card = await self.stores.triage.get_card_by_item_id(item.id)
+        if card and card.status in ("queued", "sent"):
+            card.status = "expired"
+            await self.stores.triage.update_card(card)
+
+    async def _fire_retriage(self, item_id, result, raw_item, old_raw) -> None:
+        """Debounce callback — fully implemented in T14. Stub for now."""
+        logger.debug("re-triage fire (stub) for item %s", item_id)
 
     async def _alert_check(self):
         """Build health dict and run alert checks."""
