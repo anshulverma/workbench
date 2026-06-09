@@ -152,6 +152,8 @@ async def lifespan(app: FastAPI):
         app.state.enricher,
         queue_scorer=app.state.queue_scorer,
         content_generators=app.state.content_generators,
+        triage_expiry_days=config.triage.expiry_days,
+        record_drop_decisions=config.pipeline.record_drop_decisions,
     )
 
     # Ingestion queue worker

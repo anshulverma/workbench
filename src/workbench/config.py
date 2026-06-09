@@ -42,6 +42,10 @@ class PipelineConfig(BaseModel):
     include_threshold: int = 70
     drop_threshold: int = 30
     confidence_threshold: int = 70
+    # When False, auto_drop decisions are NOT recorded to the memory layer
+    # (avoids needless Graphiti episode fan-out for dropped noise). auto_include
+    # recording is unaffected. See ADR 0048 / spec 3.1.
+    record_drop_decisions: bool = False
 
 
 class LoggingConfig(BaseModel):

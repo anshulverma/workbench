@@ -38,6 +38,7 @@ class PipelineEngine:
         queue_scorer=None,
         triage_expiry_days: int = 7,
         content_generators=None,
+        record_drop_decisions: bool = False,
     ):
         self.stores = stores
         self.memory = memory
@@ -46,6 +47,7 @@ class PipelineEngine:
         self.queue_scorer = queue_scorer
         self.triage_expiry_days = triage_expiry_days
         self.content_generators = content_generators or {}
+        self.record_drop_decisions = record_drop_decisions
 
     async def enqueue(
         self,
@@ -152,18 +154,19 @@ class PipelineEngine:
                 await self.stores.jobs.update_job(job)
 
         elif action == "auto_drop":
-            await self.memory.record_pipeline_decision(
-                Item(
-                    source_type=ext_item.raw_item.source_type,
-                    source_id=ext_item.raw_item.id,
-                    summary=ext_item.summary,
-                    category=ext_item.category,
-                    origin=ItemOrigin.AUTO_INCLUDED,
-                    priority=Priority.P3,
-                ),
-                "auto_drop",
-                f"relevance={relevance}",
-            )
+            if self.record_drop_decisions:
+                await self.memory.record_pipeline_decision(
+                    Item(
+                        source_type=ext_item.raw_item.source_type,
+                        source_id=ext_item.raw_item.id,
+                        summary=ext_item.summary,
+                        category=ext_item.category,
+                        origin=ItemOrigin.AUTO_INCLUDED,
+                        priority=Priority.P3,
+                    ),
+                    "auto_drop",
+                    f"relevance={relevance}",
+                )
             if job:
                 job.items_dropped += 1
                 await self.stores.jobs.update_job(job)
