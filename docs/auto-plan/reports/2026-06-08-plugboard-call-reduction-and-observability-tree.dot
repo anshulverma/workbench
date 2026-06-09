@@ -1,0 +1,20 @@
+digraph plugboard_plan {
+  rankdir=TB; node [shape=box, style=filled, fontname="Helvetica"];
+  root [label="Plugboard call reduction & observability\n(6 branches)", fillcolor=lightgray];
+
+  b001 [label="b001 auto_drop config gate", fillcolor=lightskyblue];
+  b002 [label="b002 unit-of-work batching", fillcolor=lightskyblue];
+  b003 [label="b003 main-app LLM instrumentation\n(tokens/model/client)", fillcolor=lightskyblue];
+  b004 [label="b004 memory-service metrics\n+ Graphiti client", fillcolor=lightskyblue];
+  b005 [label="b005 periodic llm_usage_summary", fillcolor=palegreen];
+  b006 [label="b006 ops (prometheus/grafana/\ncompose/config/docs)", fillcolor=palegreen];
+
+  root -> b001; root -> b002; root -> b003; root -> b004; root -> b005; root -> b006;
+
+  // Hardening-discovered corrections (yellow = discovered during passes)
+  h1 [label="score_urgency in enqueue,\nnot scheduler loop\n(+ _route_poll_results path)", fillcolor=lightyellow];
+  h2 [label="memory type=entity needs\nrecord_entity handler", fillcolor=lightyellow];
+  h3 [label="memory binds 0.0.0.0,\nnot loopback", fillcolor=lightyellow];
+  h4 [label="decide_from_score in filter.py;\nwire dead PipelineConfig thresholds", fillcolor=lightyellow];
+  b002 -> h1; b004 -> h2; b003 -> h3; b002 -> h4;
+}
