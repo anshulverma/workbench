@@ -16,6 +16,7 @@ from workbench.logging import setup_logging
 from workbench.memory.noop import NoopMemoryLayer
 from workbench.privacy import SanitizingProcessor
 from workbench.metrics import create_metrics
+from workbench.usage_aggregator import UsageAggregator
 from workbench.middleware import CorrelationIdMiddleware
 from workbench.registry import (
     close_provider,
@@ -104,8 +105,10 @@ async def lifespan(app: FastAPI):
     # sink (a closure here) owns all Prometheus knowledge. See ADR 0049.
     if config.metrics.enabled:
         _m = app.state.metrics
+        app.state.usage_agg = UsageAggregator()
 
         def _plugboard_sink(rec):
+            app.state.usage_agg.record(rec)
             _m.plugboard_calls.labels(client=rec.client, model=rec.model).inc()
             _m.plugboard_call_seconds.labels(
                 client=rec.client, model=rec.model
@@ -135,6 +138,32 @@ async def lifespan(app: FastAPI):
         inner_llm._sink = _plugboard_sink
         if app.state.queue_scorer is not None:
             app.state.queue_scorer._sink = _plugboard_sink
+
+        # Periodic batched structured-log summary of plugboard usage (spec 3.6):
+        # drain the aggregator every summary_interval_seconds and emit one
+        # llm_usage_summary line; skip empty intervals.
+        app.state.summary_task = None
+        if config.metrics.summary_log:
+            _interval = config.metrics.summary_interval_seconds
+
+            async def _summary_loop():
+                while True:
+                    await asyncio.sleep(_interval)
+                    snapshot = app.state.usage_agg.drain()
+                    if not snapshot:
+                        continue
+                    usage = {
+                        f"{client}/{model}": counts
+                        for (client, model), counts in snapshot.items()
+                    }
+                    logger.info(
+                        "llm_usage_summary",
+                        process="workbench",
+                        interval_seconds=_interval,
+                        usage=usage,
+                    )
+
+            app.state.summary_task = asyncio.create_task(_summary_loop())
 
     app.state.sources = create_providers_from_list(
         config.sources, connections=connections, metrics=app.state.metrics
@@ -270,6 +299,13 @@ async def lifespan(app: FastAPI):
         app.state.scheduler.shutdown()
     if hasattr(app.state, "worker"):
         await app.state.worker.stop()
+    summary_task = getattr(app.state, "summary_task", None)
+    if summary_task is not None:
+        summary_task.cancel()
+        try:
+            await summary_task
+        except asyncio.CancelledError:
+            pass
 
     for provider in [
         app.state.llm,

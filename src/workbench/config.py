@@ -60,6 +60,9 @@ class LoggingConfig(BaseModel):
 class MetricsConfig(BaseModel):
     enabled: bool = True
     endpoint: str = "/metrics"
+    # Periodic batched structured-log summary of plugboard usage (spec 3.6).
+    summary_log: bool = True
+    summary_interval_seconds: int = 30
 
 
 class DebugConfig(BaseModel):
