@@ -176,7 +176,7 @@ async def lifespan(app: FastAPI):
 
     # Sync YAML sources (config.yml is the source of truth) into source_configs
     # so get_sources() reflects the live set. Stable ids are written back to YAML.
-    from workbench.config_writer import write_source as _yaml_write_source
+    from workbench.config.writer import write_source as _yaml_write_source
     from workbench.domain import SourceConfig as _SourceConfig
     from workbench.domain import SourceRelevanceConfig as _SourceRelevanceConfig
     from workbench.providers.registry import source_id_for as _source_id_for

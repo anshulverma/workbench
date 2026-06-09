@@ -1,5 +1,5 @@
 import pytest
-from workbench.config_writer import write_source, delete_source, write_messenger
+from workbench.config.writer import write_source, delete_source, write_messenger
 
 
 SAMPLE = """\
@@ -114,7 +114,7 @@ def test_no_resolved_secret_ever_written(tmp_path, monkeypatch):
 
 def test_atomic_dump_uses_replace_and_no_partial_on_failure(tmp_path, monkeypatch):
     """On a dump failure the original file is left intact and no .tmp remains."""
-    import workbench.config_writer as cw
+    import workbench.config.writer as cw
 
     path = _write(tmp_path, SAMPLE)
     original = (tmp_path / "config.yml").read_text()

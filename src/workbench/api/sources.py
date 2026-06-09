@@ -20,8 +20,8 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
-from workbench.config_writer import delete_source as yaml_delete_source
-from workbench.config_writer import write_source as yaml_write_source
+from workbench.config.writer import delete_source as yaml_delete_source
+from workbench.config.writer import write_source as yaml_write_source
 from workbench.domain import JobTrigger, SourceConfig, SourceConfigUpdate
 from workbench.providers.registry import close_provider
 
