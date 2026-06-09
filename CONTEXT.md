@@ -9,7 +9,7 @@ Personal intelligence feed. Ingests from configurable sources, filters noise ada
 **Item**: A single actionable thing stored in the `items` table -- an action item, meeting to schedule, or informational note. One raw input (email, meeting notes) produces multiple independent items via LLM extraction. Created eagerly when the pipeline decides to triage -- status starts as `pending_triage`. Status lifecycle: `pending_triage -> active` (user accepted or auto-expired), `pending_triage -> archived` (user skipped), `active -> done`, `active -> archived`.
 _Avoid_: "task" (ambiguous with external task trackers), "ticket", "entry"
 
-**Triage Card**: A structured, source-type-specific presentation of an item awaiting user decision. Sent to the configured messenger one at a time with numbered options. The user responds by typing a number or using a messenger-specific interaction.
+**Triage Card**: A structured, source-type-specific presentation of an item awaiting user decision. The LLM-generated card body explains *why* the item matters using entity knowledge, relationships, and preference facts, drawn under fixed caps (entity facts cap 5, preference facts cap 20, relationships cap 10; i.e. entity 5 / preference 20 / relationship 10 -- these are real, enforced caps). Memory context is stored on the card at generation time for use by the response interpreter. Sent to the configured messenger one at a time with numbered options (including a final "Other" option). The user responds by typing a number or using a messenger-specific interaction.
 _Avoid_: "notification" (triage cards are interactive, not just alerts), "message"
 
 **Triage Response**: A user's decision on a triage card (add todo, skip, mute source, etc.). Submitted via the messenger (primary) or API/CLI.
@@ -120,6 +120,23 @@ _Avoid_: "release number", "build number"
 **Enrichment**: Additional context gathered about entities referenced in an item before triage -- people (org chart), issues (related issues), PRs (CI results). Has depth (shallow/deep) and budget controls.
 _Avoid_: "context" alone (too generic), "lookup"
 
+#### Package taxonomy
+
+**Domain (package)**: `workbench.domain` -- the package holding the entity vocabulary (pydantic models + enums) the pipeline and API speak. Replaces the former single-file `models.py`; split by domain concern (`enums`, `items`, `pipeline`, `triage`, `diff`, `filters`, `preferences`, `enrichment`, `sources`, `plans`) with `domain/__init__.py` re-exporting the full public surface. Import path: `workbench.domain`.
+_Avoid_: "models" as a package name, "schema", "types", "entities"
+
+**Telemetry (package)**: `workbench.telemetry` -- the package of modules emitting operational signals about the running system: metrics (Prometheus), structured logging (incl. the Sanitizing Processor), instrumentation wrappers, LLM usage aggregation, and alerting.
+_Avoid_: "observability", "monitoring", "metrics" (too narrow -- metrics is one module within), "utils"
+
+**Runtime (package)**: `workbench.runtime` -- the package that assembles the running ASGI app: app factory + app-level middleware (auth, correlation-id). Hosts the entrypoint `workbench.runtime.app:app`.
+_Avoid_: "app" (collides with the `app` ASGI object), "service", "core", "server"
+
+**Package facade**: an `__init__.py` that re-exports its submodules' public symbols (via `__all__`) as the package's permanent interface, so callers import from the package (e.g. `from workbench.domain import Item`) and never learn submodule locations. Distinct from a back-compat shim (which preserves a deprecated name for later deletion); a facade is the intended, lasting interface. `workbench.domain` and `workbench.config` are facades.
+_Avoid_: "shim", "re-export module"
+
+**Package README**: every `__init__.py`-bearing directory under `src/workbench/` (except `__pycache__` and `migrations/versions`) carries a `README.md` stating its purpose and placement rule. Enforced by `tests/test_folder_docs.py`, which walks the tree and asserts a non-empty `README.md` for each discovered package.
+_Avoid_: "folder doc", "module doc"
+
 **Morning Briefing**: Daily automated notification summarizing six sections: (1) P0 -- Today, (2) P1 -- This Week, (3) new items since yesterday by source type, (4) pending triage count + oldest card age, (5) queue health -- ingestion queue depth and failed/stuck items (only if non-zero), (6) auto-decisions overnight -- cards that expired and were auto-included at P3 (only if non-zero). Sent by the scheduler at a configurable time.
 _Avoid_: "daily digest" (could be confused with preference digest), "summary"
 
@@ -163,6 +180,38 @@ _Avoid_: "edit preference" / "delete preference" (ambiguous with messenger confi
 
 **Source Health Status**: A source's derived dashboard state -- `never_run`, `healthy`, `erroring`, or `disabled` -- computed from the latest Ingestion Run plus the referenced `Connection.is_healthy()`, not stored on `SourceConfig`.
 _Avoid_: "source status" alone (ambiguous with the `enabled` flag).
+
+### Card Presentation & Change Monitoring
+
+**Card Presenter**: A pure, deterministic renderer (no LLM, no memory) that turns a `TriageCard` plus its `ExtractedItem` into a transport-neutral `CardMessage`. The `CardPresenter` ABC lives in `src/workbench/pipeline/presenter.py`; `CompositeCardPresenter` routes by `source_type` against delegates built from the `presentation.providers` config and falls back to `PlainCardPresenter` (which wraps `format_card_for_chat`) on unknown source type, missing/invalid sections, or any delegate exception (logged `presenter_failure`/`presenter_fallback`/`presenter_content_invalid`). Restart-only (ADR 0029); not on the hot-reload path.
+
+**Card Content Schema**: A typed pydantic shape persisted under the existing untyped `TriageCard.card_content` dict (no Alembic migration). `card_content['content_schema']="diff.v1"` is the discriminator and `card_content['sections']` holds the serialized `DiffCardContent{metadata, summary, risk, why_care, hunks}`; legacy `card_body`/`summary` keys remain for the plain fallback (ADR 0022).
+
+**Card Content Generator**: A registered `CardContentGenerator` selected by `source_type` (dynamic import like enrichers). `generate_card` dispatches to it without naming "diff"; the default when none is registered is `llm.generate_triage_card`. The Meta `DiffCardContentGenerator` makes a single Opus 4.8 (`claude-opus-4-8`) `json_schema` call (`max_tokens=8000`) producing all five sections, citing only changes present in the curated hunks (ADR 0025).
+
+**CardMessage**: The transport-neutral message object (`header`, `sections`, `links`, `options`, `thread_hunks`) emitted by a Card Presenter and consumed by `Messenger.send_card(CardMessage) -> message_id`. The base `Messenger.render_to_text(CardMessage)` flattens it for console/non-rich transports; `GoogleChatMessenger` overrides `send_card` to translate it to cardsV2 with threaded monospace hunk replies (ADR 0026).
+
+**Diff Enricher**: The Meta `DiffEnricher` registered for `source_type="diff"`. In deep mode it lazily fetches the diff (`meta phabricator.diff get`, `asyncio.create_subprocess_exec`, 30s timeout), applies a cheap Path Pre-skip (lockfiles/`__generated__`/vendored, recorded in `skipped_files`), enforces budget caps (40 files / ~200KB / `truncated`), and emits `{metadata, entity_refs, curated_hunks, skipped_files, truncated, revision_id, diff_url}` as enrichment context — never written to `raw_text`. Degrades to shallow (metadata + entity_refs) on fetch failure and never raises (ADR 0024).
+
+**ChangeDetector**: Pluggable, synchronous, no-LLM comparator of old vs new raw source dicts, returning a `ChangeResult`. Registered per source via `change_detector:` config; missing → `AlwaysMaterialDetector` fallback. Gated by `SourceAdapter.supports_monitoring()` so it never runs for email/calendar.
+
+**ChangeResult**: Value object `{is_material, is_terminal, is_critical, changed_fields, change_type, reason}` produced by a `ChangeDetector`. `change_type` keys regeneration depth (ADR 0032).
+
+**material change**: A source-type-specific field-set change (e.g. diff status/CI/comments, new diff version) that warrants re-triage. Defined per detector, not by LLM.
+
+**terminal state**: Source state needing no further monitoring (diff landed/abandoned, task resolved). Detected by `ChangeDetector.is_terminal` or by disappearance from a complete-set poll; archives the item and expires its card.
+
+**stable source_id**: An identifier surviving updates (`D12345`, `T67890`) via `SourceAdapter.stable_id()`, replacing the legacy compound `{number}_{updated}`. The item match key for change detection.
+
+**re-triage**: Regenerating a new/updated `TriageCard` for an existing `Item` after a material change, via `_fire_retriage` — the SINGLE diff-card regeneration path (ADR 0030). Renders through `CompositeCardPresenter → CardMessage` and sends via `send_card`/`update_message` (ADR 0031).
+
+**ChangeContext**: Structured `{change_type, changed_fields, change_summary, previous_triage_action, previous_priority}` built from a `ChangeResult` + old/new raw + previous card, threaded into `generate_card`/`CardContentGenerator` for change-aware copy and re-triage options.
+
+**DebounceManager**: In-memory 2-minute trailing-edge timer per `item_id` collapsing rapid changes into one re-triage; merges `ChangeResult`s with heaviest-`change_type` wins (ADR 0032). Lost on restart; re-detected next poll.
+
+**diff_version**: The active code-diff version id captured by Phabricator `poll()` into `Item.raw_data` (opaque, equality-compared). A change makes `PhabricatorChangeDetector` emit `change_type="code_updated"` (ADR 0032). Field name confirmed by the schema verification task; fallback proxy = files-changed/line-count.
+
+**code_updated**: The heaviest `change_type`; triggers the FULL re-triage path (`_fire_retriage` re-runs `DiffEnricher` to re-fetch the diff and `DiffCardContentGenerator` to regenerate hunks). All other change types take the LIGHT path (reuse stored hunks, regenerate only copy + options) (ADR 0032).
 
 ## Relationships
 
@@ -232,7 +281,7 @@ _Avoid_: "source status" alone (ambiguous with the `enabled` flag).
 
 **Unit-of-work batching**: collapsing an already-known synchronous fan-out (all extracted items of one raw item → `score_relevance_many`; all raw items of one poll → `score_urgency_many`) into ONE plugboard call, scattered back by explicit per-item index. NOT a time-window/DataLoader micro-batcher — there is no background flush task or wait window. Interactive calls (`interpret_triage_response`) are excluded. _Avoid_: "micro-batcher" implying a real-time time-window buffer.
 
-**Plugboard call sink**: a constructor-injected callback (`on_plugboard_call`) that receives a `PlugboardCallRecord` (client, model, input/output/cache tokens, latency, error_type, item_count) from the call-site shim. The workbench-side sink updates both Prometheus counters and the in-process usage aggregator. Providers never import `workbench.metrics` — this preserves provider pluggability. _Avoid_: "metrics hook" (vague).
+**Plugboard call sink**: a constructor-injected callback (`on_plugboard_call`) that receives a `PlugboardCallRecord` (client, model, input/output/cache tokens, latency, error_type, item_count) from the call-site shim. The workbench-side sink updates both Prometheus counters and the in-process usage aggregator. Providers never import `workbench.metrics` — this preserves provider pluggability. The transport module `providers/llm/plugboard.py` defines `PlugboardCallRecord` + `record_plugboard_call`; it is deliberately Prometheus-free, so a provider importing it does NOT violate the "providers never import `workbench.metrics`" rule. _Avoid_: "metrics hook" (vague).
 
 **Usage aggregator / `llm_usage_summary`**: an in-process per-interval delta of plugboard calls/errors/tokens (keyed by client+model), drained and emitted as one structlog line every `metrics.summary_interval_seconds` (default 30s); emitted by both the main app and the memory service; skipped when the interval was empty. _Avoid_: confusing with Prometheus counters (which stay cumulative).
 
