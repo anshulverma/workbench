@@ -95,9 +95,29 @@ def test_explicit_exc_info_still_works():
 
 
 def test_warning_in_except_has_no_traceback():
-    """A warning logged inside an except block (e.g. apscheduler's benign
-    "maximum number of running instances reached" MaxInstancesReachedError) is a
-    handled, expected condition — it must NOT get a spurious auto-traceback."""
+    """A warning logged inside an except block (a handled, expected condition)
+    must NOT get a spurious auto-traceback. (The specific apscheduler
+    "maximum number of running instances reached" message is suppressed entirely
+    by _MaxInstancesSkipFilter — see test_max_instances_skip_warning_is_filtered;
+    here we use a benign warning that is NOT filtered so we can inspect it.)"""
+    setup_logging(log_format="json")
+    lines, detach = _attach_capture()
+    try:
+        log = logging.getLogger("apscheduler.scheduler")
+        try:
+            raise RuntimeError("transient scheduler hiccup")
+        except Exception:  # noqa: BLE001
+            log.warning("scheduler job retried after a transient error")
+    finally:
+        detach()
+    rec = json.loads(lines()[-1])
+    assert "exception" not in rec, "benign warning should not carry a traceback"
+
+
+def test_max_instances_skip_warning_is_filtered():
+    """apscheduler's benign "maximum number of running instances reached" skip
+    warning is dropped entirely by _MaxInstancesSkipFilter (b585d2e), so it never
+    reaches a handler — even when emitted inside an except block."""
     setup_logging(log_format="json")
     lines, detach = _attach_capture()
     try:
@@ -110,8 +130,7 @@ def test_warning_in_except_has_no_traceback():
             )
     finally:
         detach()
-    rec = json.loads(lines()[-1])
-    assert "exception" not in rec, "benign warning should not carry a traceback"
+    assert lines() == [], "the benign skip warning must be filtered out entirely"
 
 
 def test_warning_with_explicit_exc_info_keeps_traceback():

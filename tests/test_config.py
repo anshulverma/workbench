@@ -1,7 +1,5 @@
 import os
-import tempfile
-import pytest
-from workbench.config import AppConfig, EnrichmentConfig, load_config_from_string
+from workbench.config import EnrichmentConfig, load_config_from_string
 
 
 def test_load_config_placeholder():
@@ -21,7 +19,9 @@ def test_triage_config_poll_interval_default():
     from workbench.config import TriageConfig
 
     config = TriageConfig()
-    assert config.triage_poll_interval_seconds == 0.5
+    # Default raised 0.5s -> 5s (b585d2e): sub-second polling overran each tick
+    # (the messenger poll takes seconds), flooding apscheduler skip warnings.
+    assert config.triage_poll_interval_seconds == 5.0
 
 
 def test_triage_config_poll_interval_custom():
