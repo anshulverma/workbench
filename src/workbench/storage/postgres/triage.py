@@ -138,6 +138,21 @@ class PgTriageStore(TriageStore):
         )
         return int(result.split()[-1])
 
+    async def avg_triage_seconds(self) -> float | None:
+        """Average response latency from triage_cards (ADR0040).
+
+        AVG(EXTRACT(EPOCH FROM (responded_at - sent_at))) over cards where both
+        timestamps are present. There is no ``triaged_at`` on items, so triage
+        time is sourced from the card request/response pair. Returns ``None``
+        when no responded cards exist.
+        """
+        row = await self.pool.fetchrow(
+            "SELECT AVG(EXTRACT(EPOCH FROM (responded_at - sent_at))) AS avg_s "
+            "FROM triage_cards "
+            "WHERE responded_at IS NOT NULL AND sent_at IS NOT NULL"
+        )
+        return float(row["avg_s"]) if row["avg_s"] is not None else None
+
     @staticmethod
     def _row_to_card(row: asyncpg.Record) -> TriageCard:
         card_content = row["card_content"]

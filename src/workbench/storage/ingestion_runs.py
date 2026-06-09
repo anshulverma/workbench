@@ -27,6 +27,8 @@ class IngestionRunStore(ABC):
         self, days: int, bucket: str
     ) -> list[tuple[datetime, int]]: ...
     @abstractmethod
+    async def success_rate(self, days: int) -> float | None: ...
+    @abstractmethod
     async def delete_older_than(self, days: int) -> int: ...
 
 
@@ -93,6 +95,25 @@ class PgIngestionRunStore(IngestionRunStore):
             days,
         )
         return [(r["ts"], int(r["total"])) for r in rows]
+
+    async def success_rate(self, days: int) -> float | None:
+        """success_runs / total_runs over the window (ADR0040).
+
+        Counts only finished runs (status in success/error); excludes still
+        'running' rows. Returns ``None`` when there are no finished runs in the
+        window so the UI renders "n/a" instead of a fabricated figure.
+        """
+        row = await self.pool.fetchrow(
+            "SELECT COUNT(*) FILTER (WHERE status = 'success') AS ok, "
+            "COUNT(*) FILTER (WHERE status IN ('success', 'error')) AS total "
+            "FROM ingestion_runs "
+            "WHERE started_at >= NOW() - INTERVAL '1 day' * $1",
+            days,
+        )
+        total = int(row["total"])
+        if total == 0:
+            return None
+        return int(row["ok"]) / total
 
     async def delete_older_than(self, days: int) -> int:
         result = await self.pool.execute(
