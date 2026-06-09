@@ -7,7 +7,7 @@
 // Purge is behind a confirm dialog). Implements the five UI States (loading /
 // error w/ X-Request-ID / empty / unauthorized / degraded).
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -33,7 +33,13 @@ import { DataTable, type Column } from '@/components/DataTable'
 import { EmptyState } from '@/components/EmptyState'
 import { HealthBadge } from '@/components/HealthBadge'
 import { ChartCard } from '@/components/ChartCard'
-import { CHART_COLORS } from '@/lib/chart-theme'
+import { LogStream, type LogLine } from '@/components/LogStream'
+import { Mono } from '@/components/Mono'
+import {
+  CHART_COLORS,
+  CHART_DEFAULTS,
+  TOOLTIP_CONTENT_STYLE,
+} from '@/lib/chart-theme'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
@@ -53,6 +59,9 @@ import {
 
 const JOB_STATUSES = ['queued', 'pending', 'running', 'completed', 'failed']
 const PAGE_SIZE = 25
+// Cap the LIVE INGESTION LOG so an unbounded poll history never grows without
+// bound; LogStream keeps the most recent (chronological) tail pinned to bottom.
+const LOG_CAP = 200
 
 function isUnauthorized(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401
@@ -60,6 +69,27 @@ function isUnauthorized(err: unknown): boolean {
 
 function requestIdOf(err: unknown): string | null {
   return err instanceof ApiError ? err.requestId : null
+}
+
+// Uppercase mono micro-label section header (spec §5 token system).
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      {children}
+    </h2>
+  )
+}
+
+// Render one ActivityItem as a single mono terminal line:
+//   "10:30:00  github      active    PR opened: fix the thing"
+function activityLogLine(item: ActivityItem): LogLine {
+  const when = item.created_at
+    ? new Date(item.created_at).toLocaleTimeString([], { hour12: false })
+    : '--:--:--'
+  const source = (item.source_type ?? '?').padEnd(10).slice(0, 10)
+  const status = (item.status ?? '?').padEnd(9).slice(0, 9)
+  const summary = item.summary ?? '(no summary)'
+  return { id: item.id, text: `${when}  ${source} ${status} ${summary}` }
 }
 
 function SourcePanel({ source }: { source: SourceRollup }) {
@@ -86,9 +116,9 @@ function SourcePanel({ source }: { source: SourceRollup }) {
       <CardContent className="space-y-3 text-sm">
         <div className="grid grid-cols-2 gap-1 text-muted-foreground">
           <span>Schedule</span>
-          <span className="text-right font-mono text-foreground">
+          <Mono className="text-right text-foreground">
             {source.schedule ?? '—'}
-          </span>
+          </Mono>
           <span>Last run</span>
           <span className="text-right text-foreground">
             {relativeTime(source.last_run)}
@@ -96,15 +126,15 @@ function SourcePanel({ source }: { source: SourceRollup }) {
         </div>
         <div className="grid grid-cols-3 gap-2 text-center">
           <div>
-            <div className="text-lg font-bold">{source.items_stored}</div>
+            <Mono className="block text-lg font-bold">{source.items_stored}</Mono>
             <div className="text-xs text-muted-foreground">stored</div>
           </div>
           <div>
-            <div className="text-lg font-bold">{source.raw_enqueued}</div>
+            <Mono className="block text-lg font-bold">{source.raw_enqueued}</Mono>
             <div className="text-xs text-muted-foreground">raw enqueued</div>
           </div>
           <div>
-            <div className="text-lg font-bold">{source.in_flight}</div>
+            <Mono className="block text-lg font-bold">{source.in_flight}</Mono>
             <div className="text-xs text-muted-foreground">in flight</div>
           </div>
         </div>
@@ -274,6 +304,16 @@ export function Ingestion() {
   const jobs = useJobs(PAGE_SIZE, offset, statusFilter || undefined)
   const queue = useQueueStats()
 
+  // LIVE INGESTION LOG lines (spec §11): each polled ActivityItem -> one mono
+  // line. Derived with useMemo over the stable query data + a primitive cap so
+  // we never re-create the array identity on unrelated renders (render-loop
+  // guardrail #1). Declared before any early return to keep hook order stable.
+  // LogStream owns fixed-height scroll + autoscroll.
+  const logLines = useMemo<LogLine[]>(
+    () => (activity.data ?? []).slice(0, LOG_CAP).map(activityLogLine),
+    [activity.data],
+  )
+
   // unauthorized: any query failing with a 401 (typically the token endpoint).
   const unauthorizedErr = [sources, activity, jobs, queue]
     .map((q) => q.error)
@@ -330,9 +370,15 @@ export function Ingestion() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Ingestion</h1>
 
+      {/* LIVE INGESTION LOG — useActivity (15s poll) streamed through LogStream */}
+      <section className="space-y-2" aria-label="live ingestion log">
+        <SectionHeader>Live Ingestion Log</SectionHeader>
+        <LogStream lines={logLines} />
+      </section>
+
       {/* Per-source panels */}
       <section className="space-y-2" aria-label="sources">
-        <h2 className="text-lg font-medium">Sources</h2>
+        <SectionHeader>Sources</SectionHeader>
         {sourceList.length === 0 ? (
           <EmptyState message="No sources configured yet" />
         ) : (
@@ -346,7 +392,7 @@ export function Ingestion() {
 
       {/* Activity feed */}
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Recent Activity</h2>
+        <SectionHeader>Recent Activity</SectionHeader>
         {activity.isPending ? (
           <Skeleton className="h-48" />
         ) : activity.isError ? (
@@ -367,7 +413,7 @@ export function Ingestion() {
       {/* Job history */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">Job History</h2>
+          <SectionHeader>Job History</SectionHeader>
           <label className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground">Status</span>
             <select
@@ -428,7 +474,7 @@ export function Ingestion() {
 
       {/* Queue health + dead letters */}
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Queue Health</h2>
+        <SectionHeader>Queue Health</SectionHeader>
         {queueDegraded ? (
           <p className="text-sm text-amber-600">
             Queue stats unavailable — showing partial data.
@@ -447,10 +493,24 @@ export function Ingestion() {
             <ChartCard title="Queue by status" empty={queueChart.length === 0}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={queueChart}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
+                  <CartesianGrid
+                    stroke={CHART_DEFAULTS.grid.stroke}
+                    strokeDasharray={CHART_DEFAULTS.grid.strokeDasharray}
+                  />
+                  <XAxis
+                    dataKey="name"
+                    stroke={CHART_DEFAULTS.axis.stroke}
+                    fontSize={CHART_DEFAULTS.axis.fontSize}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    stroke={CHART_DEFAULTS.axis.stroke}
+                    fontSize={CHART_DEFAULTS.axis.fontSize}
+                  />
+                  <Tooltip
+                    contentStyle={TOOLTIP_CONTENT_STYLE}
+                    cursor={{ fill: 'transparent' }}
+                  />
                   <Bar dataKey="value" fill={CHART_COLORS.primary} />
                 </BarChart>
               </ResponsiveContainer>
@@ -462,7 +522,7 @@ export function Ingestion() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Dead Letters</h2>
+        <SectionHeader>Dead Letters</SectionHeader>
         <DeadLetterTable />
       </section>
     </div>

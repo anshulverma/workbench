@@ -278,4 +278,32 @@ describe('Ingestion page', () => {
     renderIngestion()
     expect(await screen.findByText(/token unavailable/i)).toBeInTheDocument()
   })
+
+  it('renders the LIVE INGESTION LOG with one mono line per activity item', async () => {
+    renderIngestion()
+    // Wait for activity to land.
+    await screen.findByText('PR opened: fix the thing')
+    const log = screen.getByRole('log')
+    // Each ActivityItem becomes one mono log line containing source_type,
+    // status, and the summary.
+    expect(within(log).getByText(/github/)).toBeInTheDocument()
+    expect(within(log).getByText(/PR opened: fix the thing/)).toBeInTheDocument()
+    expect(within(log).getByText(/Weekly digest/)).toBeInTheDocument()
+  })
+
+  it('shows the no-activity terminal line when the activity feed is empty', async () => {
+    server.resetHandlers(
+      http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok-123' })),
+      http.get('/api/stats/sources', () => HttpResponse.json(SOURCES)),
+      http.get('/api/activity', () => HttpResponse.json([])),
+      http.get('/api/jobs', () => HttpResponse.json(JOBS_ALL)),
+      http.get('/api/stats/queue', () => HttpResponse.json(QUEUE)),
+      http.get('/api/queue/dead-letter', () => HttpResponse.json(DEAD_LETTERS)),
+    )
+    renderIngestion()
+    // Sources still render.
+    await screen.findByText('42')
+    const log = screen.getByRole('log')
+    expect(within(log).getByText('// no activity')).toBeInTheDocument()
+  })
 })
