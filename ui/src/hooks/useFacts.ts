@@ -12,7 +12,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ApiError, apiDelete, apiPatch } from '@/lib/api'
+import { ApiError, apiDelete, apiPatch, apiPost } from '@/lib/api'
 
 export interface Fact {
   id: string
@@ -70,6 +70,10 @@ export const useFacts = () =>
     queryFn: fetchFacts,
   })
 
+export function factErrorMessage(err: unknown): string {
+  return errMessage(err)
+}
+
 function errMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 501) return 'memory layer not configured'
@@ -102,5 +106,23 @@ export function useUpdateFact() {
       toast.success('Fact updated')
     },
     onError: (err) => toast.error(`Update failed: ${errMessage(err)}`),
+  })
+}
+
+// Manual fact create (ADR0045): POST /api/memory/facts {content} returns the
+// created Fact (source "manual"). On success we refetch the facts query so the
+// new row appears with its server-assigned id/timestamp. A 422 (blank content)
+// surfaces inline at the call site (the dialog stays open); a 501 (Noop memory
+// layer) maps to the friendly toast — though the Add Fact entry point is hidden
+// whenever the memory layer is degraded, so 501 is a defensive fallback only.
+export function useCreateFact() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (content: string) =>
+      apiPost<Fact>('/api/memory/facts', { content }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['memory', 'facts'] })
+      toast.success('Fact added')
+    },
   })
 }

@@ -33,8 +33,40 @@ const FACTS = [
   },
 ]
 
+function statsOverview(overrides: Record<string, unknown> = {}) {
+  return {
+    pending_triage: 0,
+    in_flight: 0,
+    dead_letters: 0,
+    active_items: 0,
+    sources_enabled: 3,
+    sources_total: 5,
+    items: {
+      by_status: {},
+      by_priority: {},
+      by_category: {},
+      by_source: {},
+      total: 0,
+    },
+    queue: { in_flight: 0, dead_letters: 0 },
+    metrics: {
+      signal_velocity: 0,
+      throughput: 0,
+      efficiency_peak: null,
+      auto_resolved_pct: null,
+      avg_triage_seconds: null,
+      growth_velocity: null,
+      ingestion_success_rate: null,
+    },
+    ...overrides,
+  }
+}
+
 function baseHandlers() {
-  return [http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok' }))]
+  return [
+    http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok' })),
+    http.get('/api/stats/overview', () => HttpResponse.json(statsOverview())),
+  ]
 }
 
 const server = setupServer(...baseHandlers())
@@ -235,6 +267,120 @@ describe('Knowledge page', () => {
     )
     renderPage()
     expect(await screen.findByText(/req-5/)).toBeInTheDocument()
+  })
+
+  it('renders stat cards: total facts, active sources, and growth velocity n/a', async () => {
+    server.use(
+      http.get('/api/memory/facts', () =>
+        HttpResponse.json({ available: true, memory_type: 'zep', facts: FACTS }),
+      ),
+    )
+    renderPage()
+    const total = await screen.findByTestId('stat-total-facts')
+    expect(within(total).getByText('2')).toBeInTheDocument()
+    const sources = screen.getByTestId('stat-active-sources')
+    expect(within(sources).getByText('3')).toBeInTheDocument()
+    // growth_velocity is null in the overview -> "n/a", never fabricated.
+    const growth = screen.getByTestId('stat-growth-velocity')
+    expect(within(growth).getByText('n/a')).toBeInTheDocument()
+  })
+
+  it('renders growth velocity scalar when present', async () => {
+    server.use(
+      http.get('/api/stats/overview', () =>
+        HttpResponse.json(statsOverview({ metrics: { ...statsOverview().metrics, growth_velocity: 4.5 } })),
+      ),
+      http.get('/api/memory/facts', () =>
+        HttpResponse.json({ available: true, memory_type: 'zep', facts: FACTS }),
+      ),
+    )
+    renderPage()
+    const growth = await screen.findByTestId('stat-growth-velocity')
+    expect(within(growth).getByText('4.5')).toBeInTheDocument()
+  })
+
+  it('renders the facts table with source pills and created dates', async () => {
+    server.use(
+      http.get('/api/memory/facts', () =>
+        HttpResponse.json({
+          available: true,
+          memory_type: 'zep',
+          facts: [
+            { id: 'f1', content: 'has a timestamp', source: 'interaction', timestamp: '2026-06-01T00:00:00Z' },
+            { id: 'f2', content: 'no timestamp', source: '', timestamp: null },
+          ],
+        }),
+      ),
+    )
+    renderPage()
+    const row1 = (await screen.findByText('has a timestamp')).closest('tr')!
+    expect(within(row1).getByText('interaction')).toBeInTheDocument()
+    // Empty source renders the "unknown" pill.
+    const row2 = screen.getByText('no timestamp').closest('tr')!
+    expect(within(row2).getByText('unknown')).toBeInTheDocument()
+    // Null timestamp renders an em-dash.
+    expect(within(row2).getByText('—')).toBeInTheDocument()
+  })
+
+  it('Add Fact POSTs the content and shows the manual fact', async () => {
+    let posted: Record<string, unknown> | null = null
+    const facts = [...FACTS]
+    server.use(
+      http.get('/api/memory/facts', () =>
+        HttpResponse.json({ available: true, memory_type: 'zep', facts }),
+      ),
+      http.post('/api/memory/facts', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        const created = {
+          id: 'f3',
+          content: String(posted.content),
+          source: 'manual',
+          timestamp: '2026-06-08T00:00:00Z',
+        }
+        facts.push(created)
+        return HttpResponse.json(created)
+      }),
+    )
+    renderPage()
+    await screen.findByText('prioritizes blocked PRs')
+    await userEvent.click(screen.getByRole('button', { name: /add fact/i }))
+    const textarea = await screen.findByLabelText('New fact content')
+    await userEvent.type(textarea, 'manually added fact')
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }))
+    await waitFor(() => expect(posted).toMatchObject({ content: 'manually added fact' }))
+    const row = (await screen.findByText('manually added fact')).closest('tr')!
+    expect(within(row).getByText('manual')).toBeInTheDocument()
+  })
+
+  it('Add Fact 422 on blank content shows an inline error', async () => {
+    server.use(
+      http.get('/api/memory/facts', () =>
+        HttpResponse.json({ available: true, memory_type: 'zep', facts: FACTS }),
+      ),
+      http.post('/api/memory/facts', () =>
+        HttpResponse.json({ detail: 'content must not be empty' }, { status: 422 }),
+      ),
+    )
+    renderPage()
+    await screen.findByText('prioritizes blocked PRs')
+    await userEvent.click(screen.getByRole('button', { name: /add fact/i }))
+    const textarea = await screen.findByLabelText('New fact content')
+    await userEvent.type(textarea, '   ')
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }))
+    expect(await screen.findByText(/content must not be empty/i)).toBeInTheDocument()
+    // The dialog stays open after a 422 so the user can correct the input.
+    expect(screen.getByLabelText('New fact content')).toBeInTheDocument()
+  })
+
+  it('Add Fact is hidden when the memory layer is unreachable', async () => {
+    server.use(
+      http.get('/api/memory/facts', () =>
+        HttpResponse.json({ available: false, memory_type: 'zep', facts: [] }),
+      ),
+    )
+    renderPage()
+    await screen.findByText(/Memory service unreachable/i)
+    expect(screen.queryByRole('button', { name: /add fact/i })).not.toBeInTheDocument()
   })
 
   it('renders the unauthorized state when the token endpoint returns 401', async () => {
