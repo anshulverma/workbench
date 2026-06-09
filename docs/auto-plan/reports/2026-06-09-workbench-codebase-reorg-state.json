@@ -1,0 +1,64 @@
+{
+  "topic": "workbench-codebase-reorg",
+  "domains": ["backend", "architecture", "devops"],
+  "iteration": 1,
+  "phase": "complete",
+  "user_model_brief": "Single-user FastAPI+Postgres personal-intelligence-feed. Pluggable providers resolved from YAML via importlib. Owner values deep modules, high locality, precise vocabulary (strict CONTEXT.md glossary + 51 ADRs), 'do it now / avoid future migrations'. Separate workbench-meta repo imports a public surface. Owner chose AGGRESSIVE reorg + MOVE-AND-UPDATE-EVERYTHING (no shims, hard cutover) twice, with full knowledge of cross-repo + local-config costs.",
+  "settled_decisions": {
+    "D1_scope": "Aggressive: layered packages, rename modules, split models.py, regroup api.",
+    "D2_import_paths": "Move and update everything; no back-compat shims; hard cutover; update config.example.yml, local config.yml, string-literal allowlists, workbench-meta (lockstep PR), entrypoint/scripts.",
+    "D3_folder_doc": "README.md per package folder.",
+    "D4_enforcement": "CLAUDE.md rule + pytest asserting every package dir under src/workbench has a non-empty README.md.",
+    "D5_plugboard_home": "providers/llm/plugboard.py (de-underscored).",
+    "D6_glossary_pin": "Provider interface subfolder names (llm, source, messenger, queue_scorer, enrichment, connection, change_detector, doc_reader) are retained — renaming would contradict the 'Provider' glossary term.",
+    "D7_memory_unify": "workbench.memory.* -> workbench.providers.memory.* (MemoryLayer is a provider).",
+    "D8_main_move": "main.py -> runtime/app.py; workbench.main:app -> workbench.runtime.app:app; update entrypoint + scripts (no main.py shim)."
+  },
+  "branches": [
+    {"id": "b001", "topic": "target package taxonomy", "confidence": "resolved", "status": "resolved"},
+    {"id": "b002", "topic": "models.py split + domain rename", "confidence": "resolved", "status": "resolved"},
+    {"id": "b003", "topic": "import-path migration mechanics + cross-repo", "confidence": "resolved", "status": "resolved"},
+    {"id": "b004", "topic": "providers cleanup + README convention + test guard", "confidence": "resolved", "status": "resolved"},
+    {"id": "b005", "topic": "memory unification under providers", "confidence": "resolved", "status": "resolved"},
+    {"id": "b006", "topic": "runtime package + main:app move", "confidence": "resolved", "status": "resolved"},
+    {"id": "b007", "topic": "telemetry grouping", "confidence": "resolved", "status": "resolved"},
+    {"id": "b008", "topic": "two CONTEXT.md consolidation", "confidence": "resolved", "status": "resolved"}
+  ],
+  "decisions": [
+    {"id": "d001", "question": "Top-level taxonomy", "answer": "domain/ config/ runtime/ telemetry/ providers/ pipeline/ storage/ api/ mcp/ migrations/", "confidence": "high", "source": "griller-A + principle", "branch": "b001"},
+    {"id": "d002", "question": "models.py fate", "answer": "Split into domain/ package; rename workbench.models -> workbench.domain; __init__ re-exports full surface with __all__", "confidence": "high", "source": "user D1/D2 + griller-B", "branch": "b002"},
+    {"id": "d003", "question": "domain submodules", "answer": "enums, items, pipeline, triage, diff, filters, preferences, enrichment, sources, plans", "confidence": "high", "source": "griller-B", "branch": "b002"},
+    {"id": "d004", "question": "memory placement", "answer": "workbench.memory.* -> workbench.providers.memory.*", "confidence": "high", "source": "glossary (MemoryLayer is a provider)", "branch": "b005"},
+    {"id": "d005", "question": "plugboard placement", "answer": "providers/llm/plugboard.py", "confidence": "high", "source": "user D5", "branch": "b004"},
+    {"id": "d006", "question": "telemetry contents", "answer": "metrics, instrumentation, logging, usage_aggregator, alerting, privacy", "confidence": "high", "source": "griller-A/D", "branch": "b007"},
+    {"id": "d007", "question": "redaction placement", "answer": "api/redaction.py (Redaction Rule, API output)", "confidence": "medium", "source": "griller-A", "branch": "b001"},
+    {"id": "d008", "question": "registry placement", "answer": "providers/registry.py", "confidence": "high", "source": "glossary (Provider Registry)", "branch": "b001"},
+    {"id": "d009", "question": "web wiring", "answer": "runtime/ package: app.py (factory), auth.py, middleware.py; main:app moves to runtime.app:app", "confidence": "medium", "source": "user D8 + griller-A", "branch": "b006"},
+    {"id": "d010", "question": "config placement", "answer": "config/ package: models.py + loader.py + writer.py; __init__ preserves workbench.config.load_config", "confidence": "high", "source": "griller-A", "branch": "b001"},
+    {"id": "d011", "question": "provider interface subfolder names", "answer": "retained (glossary-pinned)", "confidence": "high", "source": "glossary", "branch": "b001"},
+    {"id": "d012", "question": "README convention", "answer": "Every __init__.py-bearing dir under src/workbench except __pycache__ and migrations/versions gets a non-empty README.md", "confidence": "high", "source": "user D3 + griller-D", "branch": "b004"},
+    {"id": "d013", "question": "test guard", "answer": "tests/test_folder_docs.py walks src/workbench, parametrized per package dir, asserts README.md exists and is non-empty; exclusions __pycache__, migrations/versions", "confidence": "high", "source": "user D4 + griller-D", "branch": "b004"},
+    {"id": "d014", "question": "cutover atomicity", "answer": "single atomic commit in workbench using git mv; workbench-meta follows (dependency direction one-way)", "confidence": "high", "source": "griller-C", "branch": "b003"},
+    {"id": "d015", "question": "reference classes to update", "answer": "static imports (ruff), YAML class: paths (grep *.yml), string-literal class paths in api/messenger.py+api/sources.py+config.py (grep .py), entrypoint/scripts main:app", "confidence": "high", "source": "griller-C", "branch": "b003"},
+    {"id": "d016", "question": "CONTEXT.md duplication", "answer": "Make root CONTEXT.md authoritative; repoint tests/test_context_doc.py to it; delete/merge docs/CONTEXT.md", "confidence": "medium", "source": "orchestrator (root is richer, 239 vs 205 lines)", "branch": "b008"}
+  ],
+  "unresolved": [],
+  "artifacts": {
+    "context_md": "CONTEXT.md (root, authoritative)",
+    "spec": "docs/auto-plan/specs/2026-06-09-workbench-codebase-reorg-design.md",
+    "adrs": ["docs/adr/0052-layered-package-taxonomy.md", "docs/adr/0053-hard-cutover-domain-rename-and-cross-repo-protocol.md", "docs/adr/0054-per-package-readme-convention.md"],
+    "plan": "docs/auto-plan/plans/2026-06-09-workbench-codebase-reorg.md"
+  },
+  "harden": {
+    "enabled": true,
+    "max_passes": 3,
+    "current_pass": 3,
+    "convergence_status": "converged",
+    "snapshots_dir": "docs/auto-plan/reports/snapshots",
+    "passes": [
+      {"pass": 1, "status": "complete", "snapshot_path": "docs/auto-plan/reports/snapshots/pass-1", "judge_verdict": "BASELINE", "judge_rationale": "Initial artifact set authored (Snapshot-0).", "decisions_delta": {"added": ["d001-d016"], "modified": [], "invalidated": []}, "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}},
+      {"pass": 2, "status": "complete", "snapshot_path": "docs/auto-plan/reports/snapshots/pass-2", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Two material gaps found and fixed: missing runtime/__init__.py creation step (D8 cutover-breaker); verification grep missed the 'from workbench import X' bare-import form.", "gaps_filled": ["runtime/__init__.py creation", "bare-import grep coverage"], "decisions_delta": {"added": [], "modified": [], "invalidated": []}, "metrics": {"material_changes": 2, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 2}},
+      {"pass": 3, "status": "complete", "snapshot_path": null, "judge_verdict": "CONVERGED", "judge_rationale": "Zero material edits. Verified 12 cross-repo domain symbols present, all moved modules have plan slices, __init__.py assumptions explicit, no circular imports, test guard exclusions sound.", "gaps_filled": [], "decisions_delta": {"added": [], "modified": [], "invalidated": []}, "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}}
+    ]
+  }
+}
