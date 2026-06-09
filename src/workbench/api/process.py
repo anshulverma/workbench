@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from workbench.models import JobTrigger
+from workbench.domain import JobTrigger
 
 router = APIRouter(prefix="/api", tags=["process"])
 

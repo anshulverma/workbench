@@ -1,6 +1,6 @@
 import pytest
 from workbench.pipeline.triage import format_card_for_chat
-from workbench.models import TriageCard, TriageOption
+from workbench.domain import TriageCard, TriageOption
 
 
 def test_format_uses_card_body_when_present():

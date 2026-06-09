@@ -4,9 +4,9 @@ import pytest
 from unittest.mock import AsyncMock
 from workbench.pipeline.engine import PipelineEngine
 from workbench.pipeline.triage import format_card_for_chat
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
-from workbench.models import (
+from workbench.domain import (
     ExtractedItem,
     ItemCategory,
     RawItem,
@@ -43,7 +43,7 @@ def mock_llm():
 @pytest.mark.asyncio
 async def test_score_and_decide_with_entity_and_relationships(stores, mock_llm):
     from workbench.pipeline.filter import score_and_decide
-    from workbench.models import EntityKnowledge, Relationship, Fact
+    from workbench.domain import EntityKnowledge, Relationship, Fact
 
     mock_memory = AsyncMock()
     mock_memory.query_preferences = AsyncMock(
@@ -105,7 +105,7 @@ async def test_score_and_decide_with_entity_and_relationships(stores, mock_llm):
 @pytest.mark.asyncio
 async def test_score_and_decide_handles_none_entity(stores, mock_llm):
     from workbench.pipeline.filter import score_and_decide
-    from workbench.models import Fact
+    from workbench.domain import Fact
 
     mock_memory = AsyncMock()
     mock_memory.query_preferences = AsyncMock(return_value=[])
@@ -286,10 +286,10 @@ def test_format_card_without_enrichment():
 async def test_scheduler_poll_sources_enqueues_items(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
-    from workbench.models import RawItem
+    from workbench.domain import RawItem
     from unittest.mock import AsyncMock, MagicMock
 
     config = AppConfig(
@@ -333,10 +333,10 @@ async def test_scheduler_poll_sources_enqueues_items(stores, mock_llm):
 async def test_scheduler_poll_sources_tracks_last_polled(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
-    from workbench.models import RawItem
+    from workbench.domain import RawItem
     from unittest.mock import AsyncMock, MagicMock
 
     config = AppConfig(
@@ -382,10 +382,10 @@ async def test_scheduler_poll_sources_tracks_last_polled(stores, mock_llm):
 async def test_scheduler_poll_sources_skips_duplicates(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
-    from workbench.models import RawItem
+    from workbench.domain import RawItem
     from unittest.mock import AsyncMock, MagicMock
 
     config = AppConfig(
@@ -423,7 +423,7 @@ async def test_scheduler_poll_sources_skips_duplicates(stores, mock_llm):
 async def test_scheduler_poll_sources_handles_adapter_failure(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
     from unittest.mock import AsyncMock, MagicMock
@@ -543,7 +543,7 @@ async def test_e2e_auto_drop(stores, mock_llm):
 @pytest.mark.asyncio
 async def test_scheduler_skips_unhealthy_connection(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
     from unittest.mock import AsyncMock, MagicMock
@@ -584,7 +584,7 @@ async def test_auto_drop_not_recorded_when_flag_false(monkeypatch):
     from unittest.mock import AsyncMock
     from workbench.pipeline.engine import PipelineEngine
     from workbench.providers.enrichment.stub import StubEnricher
-    from workbench.models import ExtractedItem, ItemCategory, RawItem
+    from workbench.domain import ExtractedItem, ItemCategory, RawItem
     import workbench.pipeline.engine as eng
 
     mem = AsyncMock()
@@ -609,7 +609,7 @@ async def test_auto_drop_recorded_when_flag_true(monkeypatch):
     from unittest.mock import AsyncMock
     from workbench.pipeline.engine import PipelineEngine
     from workbench.providers.enrichment.stub import StubEnricher
-    from workbench.models import ExtractedItem, ItemCategory, RawItem
+    from workbench.domain import ExtractedItem, ItemCategory, RawItem
     import workbench.pipeline.engine as eng
 
     mem = AsyncMock()

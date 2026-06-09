@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncpg
 
-from workbench.models import PipelineJob
+from workbench.domain import PipelineJob
 from workbench.storage.base import JobStore
 
 

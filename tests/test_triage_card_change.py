@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
-from workbench.models import (
+from workbench.domain import (
     ExtractedItem,
     RawItem,
     ItemCategory,

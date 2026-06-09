@@ -8,7 +8,7 @@ import logging
 
 import structlog
 
-from workbench.logging import setup_logging
+from workbench.telemetry.logging import setup_logging
 
 
 def _attach_capture():

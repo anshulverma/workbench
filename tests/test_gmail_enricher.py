@@ -3,7 +3,7 @@ import time
 import pytest
 from unittest.mock import AsyncMock
 from workbench.providers.enrichment.gmail import GmailEnricher
-from workbench.models import ExtractedItem, RawItem, EnrichmentBudget, ItemCategory
+from workbench.domain import ExtractedItem, RawItem, EnrichmentBudget, ItemCategory
 
 
 def _make_email_item(

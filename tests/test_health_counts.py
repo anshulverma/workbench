@@ -1,6 +1,6 @@
 import pytest
 
-from workbench.models import IngestionQueueEntry, QueueEntryStatus
+from workbench.domain import IngestionQueueEntry, QueueEntryStatus
 
 
 async def _enqueue(stores, status, n):

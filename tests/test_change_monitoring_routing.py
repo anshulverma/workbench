@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from workbench.config import AppConfig, ServerConfig, StorageConfig
-from workbench.memory.noop import NoopMemoryLayer
-from workbench.models import (
+from workbench.providers.memory.noop import NoopMemoryLayer
+from workbench.domain import (
     Item,
     ItemCategory,
     ItemOrigin,

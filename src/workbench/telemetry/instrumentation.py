@@ -6,7 +6,7 @@ from typing import Any
 
 import structlog
 
-from workbench.metrics import WorkbenchMetrics
+from workbench.telemetry.metrics import WorkbenchMetrics
 
 logger = structlog.get_logger(__name__)
 

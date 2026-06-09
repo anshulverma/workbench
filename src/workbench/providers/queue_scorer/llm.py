@@ -5,7 +5,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
-from workbench.providers._plugboard import record_plugboard_call
+from workbench.providers.llm.plugboard import record_plugboard_call
 from workbench.providers.queue_scorer.base import QueueScorer
 
 logger = logging.getLogger(__name__)

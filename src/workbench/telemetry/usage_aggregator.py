@@ -9,7 +9,7 @@ deltas. See spec 3.6-3.7.
 
 from __future__ import annotations
 
-from workbench.providers._plugboard import PlugboardCallRecord
+from workbench.providers.llm.plugboard import PlugboardCallRecord
 
 
 class UsageAggregator:

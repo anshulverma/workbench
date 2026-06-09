@@ -192,7 +192,7 @@ def test_connection_probe_exception_is_unknown_not_error():
 # Memory service
 # --------------------------------------------------------------------------- #
 def test_memory_noop_is_not_configured():
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
 
     app = _make_app(memory=NoopMemoryLayer())
     nodes = _nodes_by_id(TestClient(app).get("/api/topology").json())

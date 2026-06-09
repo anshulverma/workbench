@@ -91,7 +91,7 @@ def create_providers_from_list(
         name = s.get("class", "").rsplit(".", 1)[-1] if "class" in s else "unknown"
         provider = create_provider(s, connections=connections, state_store=state_store)
         if metrics:
-            from workbench.instrumentation import InstrumentedSourceAdapter
+            from workbench.telemetry.instrumentation import InstrumentedSourceAdapter
 
             provider = InstrumentedSourceAdapter(provider, name, metrics)
         providers.append(provider)
@@ -104,7 +104,7 @@ def create_composite_enricher(
     metrics: Any | None = None,
 ):
     from workbench.providers.enrichment.composite import CompositeEnricher
-    from workbench.models import EnrichmentBudget
+    from workbench.domain import EnrichmentBudget
 
     enrichers = {}
     budgets = {}

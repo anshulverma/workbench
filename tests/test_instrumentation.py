@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
 
 from prometheus_client import CollectorRegistry
-from workbench.metrics import create_metrics
-from workbench.instrumentation import InstrumentedSourceAdapter
+from workbench.telemetry.metrics import create_metrics
+from workbench.telemetry.instrumentation import InstrumentedSourceAdapter
 
 
 @pytest.mark.asyncio

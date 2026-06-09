@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock
-from workbench.models import TriageCard, TriageOption, TriageResponse
+from workbench.domain import TriageCard, TriageOption, TriageResponse
 
 
 def _mock_stores():
@@ -68,7 +68,7 @@ def test_defer_action_in_scheduler():
         )
 
         from workbench.pipeline.scheduler import WorkbenchScheduler
-        from workbench.memory.noop import NoopMemoryLayer
+        from workbench.providers.memory.noop import NoopMemoryLayer
         from workbench.config import AppConfig
 
         config = AppConfig(

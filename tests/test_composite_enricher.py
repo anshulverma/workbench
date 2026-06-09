@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock
 from workbench.providers.enrichment.composite import CompositeEnricher
 from workbench.providers.enrichment.stub import StubEnricher
-from workbench.models import EnrichmentBudget, ExtractedItem, RawItem, ItemCategory
+from workbench.domain import EnrichmentBudget, ExtractedItem, RawItem, ItemCategory
 
 
 def _make_item(source_type: str) -> ExtractedItem:

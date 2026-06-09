@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from workbench.providers._plugboard import PlugboardCallRecord, record_plugboard_call
+from workbench.providers.llm.plugboard import PlugboardCallRecord, record_plugboard_call
 
 
 @pytest.mark.asyncio

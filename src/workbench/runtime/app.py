@@ -9,16 +9,16 @@ import structlog
 from fastapi import FastAPI
 
 from workbench import __version__
-from workbench.auth import BearerTokenMiddleware
+from workbench.runtime.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
-from workbench.instrumentation import InstrumentedLLMProvider
-from workbench.logging import setup_logging
-from workbench.memory.noop import NoopMemoryLayer
-from workbench.privacy import SanitizingProcessor
-from workbench.metrics import create_metrics
-from workbench.usage_aggregator import UsageAggregator
-from workbench.middleware import CorrelationIdMiddleware
-from workbench.registry import (
+from workbench.telemetry.instrumentation import InstrumentedLLMProvider
+from workbench.telemetry.logging import setup_logging
+from workbench.providers.memory.noop import NoopMemoryLayer
+from workbench.telemetry.privacy import SanitizingProcessor
+from workbench.telemetry.metrics import create_metrics
+from workbench.telemetry.usage_aggregator import UsageAggregator
+from workbench.runtime.middleware import CorrelationIdMiddleware
+from workbench.providers.registry import (
     close_provider,
     create_provider,
     create_providers_from_list,
@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
 
     # Wire the plugboard transport-view sink onto the underlying providers.
     # The main LLM is wrapped by InstrumentedLLMProvider, so target its _inner.
-    # Gated on metrics.enabled. Providers never import workbench.metrics; the
+    # Gated on metrics.enabled. Providers never import workbench.telemetry.metrics; the
     # sink (a closure here) owns all Prometheus knowledge. See ADR 0049.
     if config.metrics.enabled:
         _m = app.state.metrics
@@ -176,10 +176,10 @@ async def lifespan(app: FastAPI):
 
     # Sync YAML sources (config.yml is the source of truth) into source_configs
     # so get_sources() reflects the live set. Stable ids are written back to YAML.
-    from workbench.config_writer import write_source as _yaml_write_source
-    from workbench.models import SourceConfig as _SourceConfig
-    from workbench.models import SourceRelevanceConfig as _SourceRelevanceConfig
-    from workbench.registry import source_id_for as _source_id_for
+    from workbench.config.writer import write_source as _yaml_write_source
+    from workbench.domain import SourceConfig as _SourceConfig
+    from workbench.domain import SourceRelevanceConfig as _SourceRelevanceConfig
+    from workbench.providers.registry import source_id_for as _source_id_for
 
     # Per-source relevance/noise thresholds keyed by adapter_type (== the
     # ingested item source_type), loaded from YAML for the PipelineEngine
@@ -260,8 +260,8 @@ async def lifespan(app: FastAPI):
     # Build per-source SourceConfig rows (YAML is the source of truth) with
     # DETERMINISTIC ids, and a stable source_id -> live adapter mapping. The
     # scheduler registers one CronTrigger Source Job per enabled source.
-    from workbench.models import SourceConfig
-    from workbench.registry import source_id_for
+    from workbench.domain import SourceConfig
+    from workbench.providers.registry import source_id_for
 
     db_sources: list[SourceConfig] = []
     source_by_id: dict[str, object] = {}
@@ -432,7 +432,7 @@ def cli_main():
 
     config = get_config()
     uvicorn.run(
-        "workbench.main:app",
+        "workbench.runtime.app:app",
         host=config.server.host,
         port=config.server.port,
         reload=config.server.debug,

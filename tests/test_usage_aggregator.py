@@ -1,5 +1,5 @@
-from workbench.usage_aggregator import UsageAggregator
-from workbench.providers._plugboard import PlugboardCallRecord
+from workbench.telemetry.usage_aggregator import UsageAggregator
+from workbench.providers.llm.plugboard import PlugboardCallRecord
 
 
 def test_aggregate_and_drain():

@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-from workbench.alerting import AlertManager, AlertConfig, AlertConditions
+from workbench.telemetry.alerting import AlertManager, AlertConfig, AlertConditions
 
 
 @pytest.mark.asyncio

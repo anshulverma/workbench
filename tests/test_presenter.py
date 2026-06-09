@@ -2,7 +2,7 @@ import logging
 
 from pydantic import ValidationError
 
-from workbench.models import (
+from workbench.domain import (
     TriageCard,
     TriageOption,
     ExtractedItem,

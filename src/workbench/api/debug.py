@@ -3,7 +3,7 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Request
 
-from workbench.redaction import redact_secrets as _redact_secrets
+from workbench.api.redaction import redact_secrets as _redact_secrets
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/debug", tags=["debug"])

@@ -1,6 +1,6 @@
 import os
 
-CONTEXT = os.path.join(os.path.dirname(__file__), "..", "docs", "CONTEXT.md")
+CONTEXT = os.path.join(os.path.dirname(__file__), "..", "CONTEXT.md")
 
 
 def _text():

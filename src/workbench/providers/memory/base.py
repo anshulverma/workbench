@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from workbench.models import (
+from workbench.domain import (
     TriageCard,
     TriageResponse,
     Item,

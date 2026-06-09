@@ -3,7 +3,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from workbench.providers.enrichment.github import GitHubEnricher
-from workbench.models import EntityKnowledge, ExtractedItem, ItemCategory, RawItem, EnrichmentBudget
+from workbench.domain import EntityKnowledge, ExtractedItem, ItemCategory, RawItem, EnrichmentBudget
 
 
 def _make_item(source_type="github", raw_text=None, source_id="gh-pr-owner/repo-42"):

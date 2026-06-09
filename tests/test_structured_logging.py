@@ -8,8 +8,8 @@ import uuid
 import pytest
 import structlog
 
-from workbench.logging import setup_logging
-from workbench.middleware import CorrelationIdMiddleware
+from workbench.telemetry.logging import setup_logging
+from workbench.runtime.middleware import CorrelationIdMiddleware
 
 
 def _attach_capture():
@@ -145,7 +145,7 @@ def test_json_is_default_format():
 
 def test_sanitizer_excludes_callsite_fields():
     from workbench.config import PrivacyConfig
-    from workbench.privacy import SanitizingProcessor
+    from workbench.telemetry.privacy import SanitizingProcessor
 
     config = PrivacyConfig(max_content_in_logs=5, redact_emails=True, redact_phones=True)
     p = SanitizingProcessor(config)

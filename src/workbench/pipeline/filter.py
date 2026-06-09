@@ -2,9 +2,9 @@ import asyncio
 import logging
 
 from workbench.providers.llm.base import LLMProvider
-from workbench.memory.base import MemoryLayer
+from workbench.providers.memory.base import MemoryLayer
 from workbench.storage.base import FilterRuleStore
-from workbench.models import ExtractedItem, Fact, FilterRule
+from workbench.domain import ExtractedItem, Fact, FilterRule
 
 logger = logging.getLogger(__name__)
 

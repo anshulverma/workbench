@@ -4,7 +4,7 @@ import json
 
 import asyncpg
 
-from workbench.models import InteractionEntry
+from workbench.domain import InteractionEntry
 from workbench.storage.base import InteractionStore
 
 

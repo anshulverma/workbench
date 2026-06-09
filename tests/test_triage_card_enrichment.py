@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from workbench.pipeline.triage import generate_card
-from workbench.models import (
+from workbench.domain import (
     ExtractedItem, RawItem, TriageCard, TriageOption,
     EntityType, Fact, ItemCategory,
 )

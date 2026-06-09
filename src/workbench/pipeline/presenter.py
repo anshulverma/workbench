@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import ValidationError
 
-from workbench.models import CardMessage, CardSection, ExtractedItem, TriageCard
+from workbench.domain import CardMessage, CardSection, ExtractedItem, TriageCard
 from workbench.pipeline.triage import format_card_for_chat
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def build_composite_presenter(presentation_config) -> "CompositeCardPresenter":
     Each entry: {source_type, class, config?}. Disabled (config.enabled is False)
     entries are skipped. Unimportable class strings raise at startup (hard error).
     """
-    from workbench.registry import create_provider
+    from workbench.providers.registry import create_provider
 
     by_source_type: dict[str, CardPresenter] = {}
     for entry in presentation_config.providers:

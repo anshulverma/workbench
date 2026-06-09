@@ -15,10 +15,10 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
-from workbench.models import TriageCard, TriageOption
+from workbench.domain import TriageCard, TriageOption
 
 
 # --------------------------------------------------------------------------- #
@@ -99,12 +99,12 @@ async def app_with_state(stores, mock_llm):
         server=ServerConfig(api_token="dev-token-change-me"),
     )
 
-    with patch("workbench.main.get_config", return_value=test_config):
-        from workbench.main import create_app
+    with patch("workbench.runtime.app.get_config", return_value=test_config):
+        from workbench.runtime.app import create_app
 
         test_app = create_app()
 
-    from workbench.auth import BearerTokenMiddleware
+    from workbench.runtime.auth import BearerTokenMiddleware
 
     for mw in test_app.user_middleware:
         if mw.cls is BearerTokenMiddleware:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncpg
 
-from workbench.models import FilterRule
+from workbench.domain import FilterRule
 from workbench.storage.base import FilterRuleStore
 
 

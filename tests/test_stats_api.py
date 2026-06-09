@@ -11,10 +11,10 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
-from workbench.models import (
+from workbench.domain import (
     Item,
     ItemCategory,
     ItemOrigin,
@@ -61,8 +61,8 @@ async def app_with_state(stores, mock_llm):
         server=ServerConfig(api_token="dev-token-change-me"),
     )
 
-    with patch("workbench.main.get_config", return_value=test_config):
-        from workbench.main import create_app
+    with patch("workbench.runtime.app.get_config", return_value=test_config):
+        from workbench.runtime.app import create_app
 
         test_app = create_app()
 
@@ -70,7 +70,7 @@ async def app_with_state(stores, mock_llm):
     # deterministically in tests (otherwise it lazily loads config.yml, which
     # fails to resolve ${oc.env:ANTHROPIC_API_KEY} in CI and silently disables
     # auth — the cause of the pre-existing test_api auth failure).
-    from workbench.auth import BearerTokenMiddleware
+    from workbench.runtime.auth import BearerTokenMiddleware
 
     for mw in test_app.user_middleware:
         if mw.cls is BearerTokenMiddleware:
@@ -463,7 +463,7 @@ async def test_overview_metrics_null_on_empty_denominator(client):
 async def test_overview_signal_velocity_counts_recent_items(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     now = datetime.now(timezone.utc)
@@ -487,7 +487,7 @@ async def test_overview_signal_velocity_counts_recent_items(client, app_with_sta
 
 @pytest.mark.asyncio
 async def test_overview_auto_resolved_pct(client, app_with_state):
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     # one auto-included, one triaged → 50% auto-resolved
@@ -553,7 +553,7 @@ async def test_overview_ingestion_success_rate(client, app_with_state):
 async def test_overview_efficiency_peak_and_throughput(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     now = datetime.now(timezone.utc)
@@ -594,7 +594,7 @@ async def test_timeseries_signal_velocity_zero_filled(client):
 async def test_timeseries_signal_velocity_counts_items(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     # tz-aware created_at so it lands in a real backward bucket (the legacy
@@ -622,7 +622,7 @@ async def test_timeseries_signal_velocity_counts_items(client, app_with_state):
 async def test_timeseries_throughput_counts_completed(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     now = datetime.now(timezone.utc)

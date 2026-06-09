@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from workbench.providers.llm.anthropic import AnthropicLLM
-from workbench.models import ExtractedItem, ItemCategory, RawItem
+from workbench.domain import ExtractedItem, ItemCategory, RawItem
 from workbench.pipeline.filter import decide_from_score
 
 

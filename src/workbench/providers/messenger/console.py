@@ -13,7 +13,7 @@ class ConsoleMessenger(Messenger):
         pass
 
     async def send_card(self, card) -> str:
-        from workbench.models import CardMessage
+        from workbench.domain import CardMessage
 
         card_text = (
             self.render_to_text(card) if isinstance(card, CardMessage) else str(card)
@@ -29,7 +29,7 @@ class ConsoleMessenger(Messenger):
         return msg_id
 
     async def update_message(self, message_id: str, card) -> bool:
-        from workbench.models import CardMessage
+        from workbench.domain import CardMessage
 
         card_text = (
             self.render_to_text(card) if isinstance(card, CardMessage) else str(card)

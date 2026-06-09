@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from workbench.models import ExtractedItem, EnrichmentBudget
+from workbench.domain import ExtractedItem, EnrichmentBudget
 
 
 class ContextEnricher(ABC):

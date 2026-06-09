@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from workbench.providers.llm.base import LLMProvider
-from workbench.models import ChangeContext, ExtractedItem, TriageCard, TriageOption
+from workbench.domain import ChangeContext, ExtractedItem, TriageCard, TriageOption
 
 logger = logging.getLogger(__name__)
 

@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock
 from workbench.config import AppConfig, StorageConfig
-from workbench.memory.noop import NoopMemoryLayer
-from workbench.models import JobTrigger, RawItem, SourceConfig
+from workbench.providers.memory.noop import NoopMemoryLayer
+from workbench.domain import JobTrigger, RawItem, SourceConfig
 from workbench.pipeline.engine import PipelineEngine
 from workbench.pipeline.scheduler import WorkbenchScheduler
 

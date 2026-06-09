@@ -6,9 +6,9 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
-from workbench.providers._plugboard import record_plugboard_call
+from workbench.providers.llm.plugboard import record_plugboard_call
 from workbench.providers.llm.base import LLMProvider
-from workbench.models import (
+from workbench.domain import (
     ExtractedItem,
     ItemCategory,
     RawItem,
@@ -56,7 +56,7 @@ class AnthropicLLM(LLMProvider):
         http_client: Any = None
         # Optional sink (PlugboardSink) receiving a PlugboardCallRecord per
         # messages.create. Injected post-construction in lifespan; providers
-        # never import workbench.metrics. See ADR 0049.
+        # never import workbench.telemetry.metrics. See ADR 0049.
         on_plugboard_call: Any = None
 
         class Config:

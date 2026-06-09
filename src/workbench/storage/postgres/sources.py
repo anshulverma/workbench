@@ -4,7 +4,7 @@ import json
 
 import asyncpg
 
-from workbench.models import (
+from workbench.domain import (
     SourceConfig,
     SourceConfigUpdate,
     SourceRelevanceConfig,

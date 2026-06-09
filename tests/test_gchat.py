@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime, timezone, timedelta
 from workbench.providers.source.gchat import GChatAdapter
 from workbench.providers.enrichment.gchat import GChatEnricher
-from workbench.models import ExtractedItem, RawItem, EnrichmentBudget, ItemCategory
+from workbench.domain import ExtractedItem, RawItem, EnrichmentBudget, ItemCategory
 
 
 async def _run_sync(fn, *a, **kw):

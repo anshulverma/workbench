@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
-from workbench.models import TriageCard, TriageOption, TriageResponse
+from workbench.domain import TriageCard, TriageOption, TriageResponse
 from workbench.storage.base import TriageStore
 
 

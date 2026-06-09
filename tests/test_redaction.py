@@ -1,6 +1,6 @@
 import pytest
 
-from workbench.redaction import REDACTED, redact_secrets
+from workbench.api.redaction import REDACTED, redact_secrets
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from workbench.models import CardMessage
+from workbench.domain import CardMessage
 
 
 class Messenger(ABC):

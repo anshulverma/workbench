@@ -11,14 +11,14 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from httpx import AsyncClient, ASGITransport
 
-from workbench.models import (
+from workbench.domain import (
     ExtractedItem,
     ItemCategory,
     RawItem,
     TriageCard,
     TriageOption,
 )
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
 
@@ -55,9 +55,9 @@ async def app_with_state(stores, mock_llm):
         server=ServerConfig(api_token="dev-token-change-me"),
     )
 
-    with patch("workbench.main.get_config", return_value=test_config):
+    with patch("workbench.runtime.app.get_config", return_value=test_config):
         # Import create_app inside the patch so the module-level app is not affected
-        from workbench.main import create_app
+        from workbench.runtime.app import create_app
 
         test_app = create_app()
 
@@ -119,7 +119,7 @@ async def test_health(client):
 
 @pytest.mark.asyncio
 async def test_health_uses_queue_depth_and_count(client, app_with_state):
-    from workbench.models import IngestionQueueEntry, QueueEntryStatus
+    from workbench.domain import IngestionQueueEntry, QueueEntryStatus
 
     stores = app_with_state.state.stores
 
