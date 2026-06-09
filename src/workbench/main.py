@@ -178,8 +178,13 @@ async def lifespan(app: FastAPI):
     # so get_sources() reflects the live set. Stable ids are written back to YAML.
     from workbench.config_writer import write_source as _yaml_write_source
     from workbench.models import SourceConfig as _SourceConfig
+    from workbench.models import SourceRelevanceConfig as _SourceRelevanceConfig
     from workbench.registry import source_id_for as _source_id_for
 
+    # Per-source relevance/noise thresholds keyed by adapter_type (== the
+    # ingested item source_type), loaded from YAML for the PipelineEngine
+    # (ADR0044). Absent -> the global PipelineConfig thresholds apply.
+    source_thresholds: dict = {}
     for raw in config.sources:
         sid = raw.get("id")
         if not sid:
@@ -193,12 +198,24 @@ async def lifespan(app: FastAPI):
         adapter_type = raw.get("adapter_type")
         if not adapter_type:
             adapter_type = raw.get("class", "unknown").rsplit(".", 1)[-1]
+        relevance = None
+        raw_relevance = raw.get("relevance")
+        if raw_relevance:
+            try:
+                relevance = _SourceRelevanceConfig(**dict(raw_relevance))
+                source_thresholds[adapter_type] = relevance
+            except Exception:
+                logger.warning(
+                    "Invalid per-source relevance config; using global thresholds",
+                    source_id=sid,
+                )
         sc = _SourceConfig(
             id=sid,
             adapter_type=adapter_type,
             config=raw.get("config", {}),
             schedule=raw.get("schedule", "*/15 * * * *"),
             enabled=raw.get("enabled", True),
+            relevance=relevance,
         )
         await app.state.stores.sources.upsert_source(sc)
 
@@ -226,6 +243,7 @@ async def lifespan(app: FastAPI):
         confidence_threshold=config.pipeline.confidence_threshold,
         batch_relevance=config.batching.enabled and config.batching.score_relevance,
         max_batch_size=config.batching.max_batch_size,
+        source_thresholds=source_thresholds,
     )
 
     # Ingestion queue worker

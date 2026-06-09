@@ -4,7 +4,11 @@ import json
 
 import asyncpg
 
-from workbench.models import SourceConfig, SourceConfigUpdate
+from workbench.models import (
+    SourceConfig,
+    SourceConfigUpdate,
+    SourceRelevanceConfig,
+)
 from workbench.storage.base import SourceConfigStore
 
 
@@ -27,18 +31,20 @@ class PgSourceConfigStore(SourceConfigStore):
     async def upsert_source(self, source: SourceConfig) -> SourceConfig:
         await self.pool.execute(
             """INSERT INTO source_configs
-               (id, adapter_type, config, schedule, enabled, created_at)
-               VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+               (id, adapter_type, config, schedule, enabled, relevance, created_at)
+               VALUES ($1, $2, $3::jsonb, $4, $5, $6::jsonb, $7)
                ON CONFLICT (id) DO UPDATE SET
                  adapter_type = EXCLUDED.adapter_type,
                  config = EXCLUDED.config,
                  schedule = EXCLUDED.schedule,
-                 enabled = EXCLUDED.enabled""",
+                 enabled = EXCLUDED.enabled,
+                 relevance = EXCLUDED.relevance""",
             source.id,
             source.adapter_type,
             json.dumps(source.config),
             source.schedule,
             source.enabled,
+            json.dumps(source.relevance.model_dump()) if source.relevance else None,
             source.created_at,
         )
         return source
@@ -61,6 +67,10 @@ class PgSourceConfigStore(SourceConfigStore):
             sets.append(f"enabled = ${idx}")
             params.append(updates.enabled)
             idx += 1
+        if updates.relevance is not None:
+            sets.append(f"relevance = ${idx}::jsonb")
+            params.append(json.dumps(updates.relevance.model_dump()))
+            idx += 1
         if not sets:
             return await self.get_source(source_id)  # type: ignore[return-value]
         params.append(source_id)
@@ -75,11 +85,15 @@ class PgSourceConfigStore(SourceConfigStore):
         cfg = row["config"]
         if isinstance(cfg, str):
             cfg = json.loads(cfg)
+        rel = row["relevance"] if "relevance" in row else None
+        if isinstance(rel, str):
+            rel = json.loads(rel)
         return SourceConfig(
             id=row["id"],
             adapter_type=row["adapter_type"],
             config=cfg,
             schedule=row["schedule"],
             enabled=row["enabled"],
+            relevance=SourceRelevanceConfig(**rel) if rel else None,
             created_at=row["created_at"],
         )

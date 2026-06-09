@@ -49,6 +49,7 @@ class PipelineEngine:
         confidence_threshold: int = 70,
         batch_relevance: bool = False,
         max_batch_size: int = 20,
+        source_thresholds: dict | None = None,
     ):
         self.stores = stores
         self.memory = memory
@@ -63,6 +64,37 @@ class PipelineEngine:
         self.confidence_threshold = confidence_threshold
         self.batch_relevance = batch_relevance
         self.max_batch_size = max_batch_size
+        # Per-source relevance/noise thresholds keyed by source_type (==
+        # adapter_type), populated at boot and mutated by Targeted Hot-Reload
+        # (ADR0013/ADR0044). Absent key -> inherit the global thresholds above,
+        # which preserves current routing for every existing source.
+        self.source_thresholds: dict = dict(source_thresholds or {})
+
+    def set_source_thresholds(self, source_type: str, relevance) -> None:
+        """Install (or clear with ``None``) per-source thresholds for a
+        source_type. Mutates in place so the live engine picks the new values up
+        on the next routed item -- no restart (ADR0044 hot-reload)."""
+        if relevance is None:
+            self.source_thresholds.pop(source_type, None)
+        else:
+            self.source_thresholds[source_type] = relevance
+
+    def thresholds_for(self, source_type: str) -> tuple[int, int, int]:
+        """Resolve (include_threshold, drop_threshold, confidence_threshold) for
+        a source_type: the per-source override if set, else the global config.
+        ``confidence_threshold`` is global (not per-source)."""
+        rel = self.source_thresholds.get(source_type)
+        if rel is None:
+            return (
+                self.include_threshold,
+                self.drop_threshold,
+                self.confidence_threshold,
+            )
+        return (
+            rel.auto_include_threshold,
+            rel.drop_below,
+            self.confidence_threshold,
+        )
 
     async def enqueue(
         self,
@@ -178,17 +210,23 @@ class PipelineEngine:
         job: PipelineJob | None,
         precomputed: tuple[int, int] | None = None,
     ) -> None:
+        # Resolve the routing thresholds for THIS item's source (ADR0044): a
+        # per-source override if configured, otherwise the global PipelineConfig
+        # thresholds. source_type == adapter_type for ingested items.
+        include_t, drop_t, confidence_t = self.thresholds_for(
+            ext_item.raw_item.source_type
+        )
         if precomputed is not None:
             # Batched path: score already computed by score_relevance_many; apply
-            # the same thresholds (sourced from PipelineConfig) without a second
-            # LLM call. Thresholds live in filter.decide_from_score (ADR 0048).
+            # the resolved thresholds without a second LLM call. Threshold logic
+            # lives in filter.decide_from_score (ADR 0048).
             relevance, confidence = precomputed
             action = decide_from_score(
                 relevance,
                 confidence,
-                include_threshold=self.include_threshold,
-                drop_threshold=self.drop_threshold,
-                confidence_threshold=self.confidence_threshold,
+                include_threshold=include_t,
+                drop_threshold=drop_t,
+                confidence_threshold=confidence_t,
             )
         else:
             action, relevance, confidence = await score_and_decide(
@@ -196,9 +234,9 @@ class PipelineEngine:
                 self.memory,
                 self.stores.filter_rules,
                 ext_item,
-                include_threshold=self.include_threshold,
-                drop_threshold=self.drop_threshold,
-                confidence_threshold=self.confidence_threshold,
+                include_threshold=include_t,
+                drop_threshold=drop_t,
+                confidence_threshold=confidence_t,
             )
 
         if action == "auto_include":
