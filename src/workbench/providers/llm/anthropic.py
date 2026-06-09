@@ -56,7 +56,7 @@ class AnthropicLLM(LLMProvider):
         http_client: Any = None
         # Optional sink (PlugboardSink) receiving a PlugboardCallRecord per
         # messages.create. Injected post-construction in lifespan; providers
-        # never import workbench.metrics. See ADR 0049.
+        # never import workbench.telemetry.metrics. See ADR 0049.
         on_plugboard_call: Any = None
 
         class Config:

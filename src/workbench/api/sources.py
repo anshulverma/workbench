@@ -107,7 +107,7 @@ def _instantiate(
 
     metrics = getattr(request.app.state, "metrics", None)
     if metrics is not None:
-        from workbench.instrumentation import InstrumentedSourceAdapter
+        from workbench.telemetry.instrumentation import InstrumentedSourceAdapter
 
         adapter = InstrumentedSourceAdapter(adapter, adapter_type, metrics)
     return adapter

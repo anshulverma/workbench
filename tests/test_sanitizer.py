@@ -1,7 +1,7 @@
 # tests/test_sanitizer.py
 
 import pytest
-from workbench.privacy import SanitizingProcessor, PrivacyConfig
+from workbench.telemetry.privacy import SanitizingProcessor, PrivacyConfig
 
 
 def _process(processor, event_dict):

@@ -14,7 +14,7 @@ import logging
 
 import pytest
 
-from workbench.logging import setup_logging
+from workbench.telemetry.logging import setup_logging
 from workbench.pipeline.worker import IngestionQueueWorker
 
 

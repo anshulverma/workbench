@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from workbench.alerting import AlertManager
+from workbench.telemetry.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.memory.base import MemoryLayer
 from workbench.domain import (

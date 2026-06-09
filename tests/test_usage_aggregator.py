@@ -1,4 +1,4 @@
-from workbench.usage_aggregator import UsageAggregator
+from workbench.telemetry.usage_aggregator import UsageAggregator
 from workbench.providers._plugboard import PlugboardCallRecord
 
 

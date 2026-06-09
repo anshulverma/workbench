@@ -11,12 +11,12 @@ from fastapi import FastAPI
 from workbench import __version__
 from workbench.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
-from workbench.instrumentation import InstrumentedLLMProvider
-from workbench.logging import setup_logging
+from workbench.telemetry.instrumentation import InstrumentedLLMProvider
+from workbench.telemetry.logging import setup_logging
 from workbench.memory.noop import NoopMemoryLayer
-from workbench.privacy import SanitizingProcessor
-from workbench.metrics import create_metrics
-from workbench.usage_aggregator import UsageAggregator
+from workbench.telemetry.privacy import SanitizingProcessor
+from workbench.telemetry.metrics import create_metrics
+from workbench.telemetry.usage_aggregator import UsageAggregator
 from workbench.middleware import CorrelationIdMiddleware
 from workbench.registry import (
     close_provider,
@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
 
     # Wire the plugboard transport-view sink onto the underlying providers.
     # The main LLM is wrapped by InstrumentedLLMProvider, so target its _inner.
-    # Gated on metrics.enabled. Providers never import workbench.metrics; the
+    # Gated on metrics.enabled. Providers never import workbench.telemetry.metrics; the
     # sink (a closure here) owns all Prometheus knowledge. See ADR 0049.
     if config.metrics.enabled:
         _m = app.state.metrics

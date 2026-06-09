@@ -3,7 +3,7 @@
 import pytest
 from prometheus_client import CollectorRegistry
 
-from workbench.metrics import create_metrics
+from workbench.telemetry.metrics import create_metrics
 
 
 def test_all_metrics_registered():
@@ -32,7 +32,7 @@ def test_all_metrics_registered():
 
 def test_plugboard_metrics_exist():
     from prometheus_client import CollectorRegistry
-    from workbench.metrics import create_metrics
+    from workbench.telemetry.metrics import create_metrics
 
     m = create_metrics(CollectorRegistry())
     m.plugboard_calls.labels(client="main_llm", model="m").inc()

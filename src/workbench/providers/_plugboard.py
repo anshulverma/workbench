@@ -3,7 +3,7 @@
 A thin wrapper around ``messages.create`` that is the one layer where the
 Anthropic response ``usage`` (tokens), the model string, and the calling
 client identity are all in scope. Providers emit a ``PlugboardCallRecord`` to an
-injected sink; they do NOT import ``workbench.metrics`` (preserves provider
+injected sink; they do NOT import ``workbench.telemetry.metrics`` (preserves provider
 pluggability). See ADR 0049 / spec 3.3-3.4.
 """
 
