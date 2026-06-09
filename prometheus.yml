@@ -1,0 +1,13 @@
+# Prometheus scrape config for Workbench observability (ADR 0051).
+# Everything runs with `network_mode: host`, so targets are localhost ports,
+# not compose service names.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: workbench
+    static_configs:
+      - targets: ["localhost:8421"]
+  - job_name: memory
+    static_configs:
+      - targets: ["localhost:8422"]

@@ -33,6 +33,14 @@ queue:
   base_delay_seconds: 5
   worker_concurrency: 1
 
+# Prometheus metrics + periodic llm_usage_summary log (ADR 0050, 0051).
+# /metrics is unauthenticated; restart-only (the memory service has no hot-reload).
+metrics:
+  enabled: true
+  endpoint: /metrics
+  summary_log: true
+  summary_interval_seconds: 30
+
 logging:
   level: INFO
   timezone: America/Los_Angeles
