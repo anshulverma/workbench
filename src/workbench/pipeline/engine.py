@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -19,7 +20,11 @@ from workbench.models import (
 )
 from workbench.pipeline.enrichment import enrich_item
 from workbench.pipeline.extraction import extract_items
-from workbench.pipeline.filter import score_and_decide
+from workbench.pipeline.filter import (
+    decide_from_score,
+    gather_facts_and_rules,
+    score_and_decide,
+)
 from workbench.pipeline.triage import generate_card
 from workbench.providers.enrichment.base import ContextEnricher
 from workbench.providers.llm.base import LLMProvider
@@ -39,6 +44,11 @@ class PipelineEngine:
         triage_expiry_days: int = 7,
         content_generators=None,
         record_drop_decisions: bool = False,
+        include_threshold: int = 70,
+        drop_threshold: int = 30,
+        confidence_threshold: int = 70,
+        batch_relevance: bool = False,
+        max_batch_size: int = 20,
     ):
         self.stores = stores
         self.memory = memory
@@ -48,6 +58,11 @@ class PipelineEngine:
         self.triage_expiry_days = triage_expiry_days
         self.content_generators = content_generators or {}
         self.record_drop_decisions = record_drop_decisions
+        self.include_threshold = include_threshold
+        self.drop_threshold = drop_threshold
+        self.confidence_threshold = confidence_threshold
+        self.batch_relevance = batch_relevance
+        self.max_batch_size = max_batch_size
 
     async def enqueue(
         self,
@@ -109,15 +124,40 @@ class PipelineEngine:
                 job.items_extracted = len(extracted)
                 await self.stores.jobs.update_job(job)
 
-            for ext_item in extracted:
-                ext_item = ExtractedItem(
-                    summary=ext_item.summary,
-                    category=ext_item.category,
-                    source_context=ext_item.source_context,
+            # Rebind each extracted item to this raw_item.
+            items = [
+                ExtractedItem(
+                    summary=e.summary,
+                    category=e.category,
+                    source_context=e.source_context,
                     raw_item=raw_item,
                 )
+                for e in extracted
+            ]
+
+            # Batched relevance scoring (ADR 0048): gather per-item facts/rules
+            # concurrently, score all items in one call, then route each item
+            # through the single-item helper with its precomputed score.
+            precomputed: list[tuple[int, int] | None] = [None] * len(items)
+            if self.batch_relevance and items:
+                contexts = await asyncio.gather(
+                    *(
+                        gather_facts_and_rules(
+                            self.memory, self.stores.filter_rules, it
+                        )
+                        for it in items
+                    )
+                )
+                ctx_for_scoring = [
+                    (it, facts, rules) for it, (facts, rules) in zip(items, contexts)
+                ]
+                precomputed = await self.llm.score_relevance_many(
+                    ctx_for_scoring, max_batch_size=self.max_batch_size
+                )
+
+            for ext_item, score in zip(items, precomputed):
                 try:
-                    await self._process_extracted_item(ext_item, job)
+                    await self._process_extracted_item(ext_item, job, precomputed=score)
                 except Exception as e:
                     logger.error(f"Failed to process extracted item: {e}")
                     if job:
@@ -128,11 +168,33 @@ class PipelineEngine:
             raise
 
     async def _process_extracted_item(
-        self, ext_item: ExtractedItem, job: PipelineJob | None
+        self,
+        ext_item: ExtractedItem,
+        job: PipelineJob | None,
+        precomputed: tuple[int, int] | None = None,
     ) -> None:
-        action, relevance, confidence = await score_and_decide(
-            self.llm, self.memory, self.stores.filter_rules, ext_item
-        )
+        if precomputed is not None:
+            # Batched path: score already computed by score_relevance_many; apply
+            # the same thresholds (sourced from PipelineConfig) without a second
+            # LLM call. Thresholds live in filter.decide_from_score (ADR 0048).
+            relevance, confidence = precomputed
+            action = decide_from_score(
+                relevance,
+                confidence,
+                include_threshold=self.include_threshold,
+                drop_threshold=self.drop_threshold,
+                confidence_threshold=self.confidence_threshold,
+            )
+        else:
+            action, relevance, confidence = await score_and_decide(
+                self.llm,
+                self.memory,
+                self.stores.filter_rules,
+                ext_item,
+                include_threshold=self.include_threshold,
+                drop_threshold=self.drop_threshold,
+                confidence_threshold=self.confidence_threshold,
+            )
 
         if action == "auto_include":
             item = Item(

@@ -221,6 +221,11 @@ async def lifespan(app: FastAPI):
         content_generators=app.state.content_generators,
         triage_expiry_days=config.triage.expiry_days,
         record_drop_decisions=config.pipeline.record_drop_decisions,
+        include_threshold=config.pipeline.include_threshold,
+        drop_threshold=config.pipeline.drop_threshold,
+        confidence_threshold=config.pipeline.confidence_threshold,
+        batch_relevance=config.batching.enabled and config.batching.score_relevance,
+        max_batch_size=config.batching.max_batch_size,
     )
 
     # Ingestion queue worker
