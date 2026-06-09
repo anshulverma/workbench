@@ -73,6 +73,29 @@ describe('Messenger page', () => {
     expect(screen.getByText('healthy')).toBeInTheDocument()
   })
 
+  it('restyle: config values render with the mono token', async () => {
+    server.use(http.get('/api/messenger', () => HttpResponse.json(CONFIGURED)))
+    renderPage()
+    // space_id and timeout_seconds are <Mono> values (font-mono) per spec §2/§12.
+    const spaceId = await screen.findByText('spaces/AAA')
+    expect(spaceId).toHaveClass('font-mono')
+    expect(screen.getByText('5')).toHaveClass('font-mono')
+  })
+
+  it('restyle: degraded info state surfaces the no-messenger notice (role=status)', async () => {
+    server.use(
+      http.get('/api/messenger', () =>
+        HttpResponse.json({ configured: false, type: null, class: null, config: {} }),
+      ),
+      http.get('/api/triage/pending', () => HttpResponse.json([{ id: 'c1' }])),
+    )
+    renderPage()
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent(/no messenger configured/i)
+    // count resolves from the pending query after the info banner mounts
+    await waitFor(() => expect(status).toHaveTextContent(/1/))
+  })
+
   it('never renders the service_account_key_path secret', async () => {
     // Even if a misbehaving backend leaked the secret, the page must not show it.
     server.use(
