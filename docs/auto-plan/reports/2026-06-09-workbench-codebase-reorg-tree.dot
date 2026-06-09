@@ -1,0 +1,26 @@
+digraph reorg {
+  rankdir=LR;
+  node [shape=box, style=filled];
+
+  skeleton [label="Reorg skeleton", fillcolor=lightgray];
+
+  b001 [label="b001 taxonomy", fillcolor=palegreen];
+  b002 [label="b002 models->domain split", fillcolor=lightskyblue];
+  b003 [label="b003 import migration + cross-repo", fillcolor=palegreen];
+  b004 [label="b004 providers cleanup + README + guard", fillcolor=lightskyblue];
+  b005 [label="b005 memory unification", fillcolor=lightgray];
+  b006 [label="b006 runtime + main:app move", fillcolor=lightskyblue];
+  b007 [label="b007 telemetry grouping", fillcolor=palegreen];
+  b008 [label="b008 CONTEXT.md consolidation", fillcolor=lightyellow];
+
+  skeleton -> b001;
+  skeleton -> b002;
+  skeleton -> b003;
+  skeleton -> b004;
+  skeleton -> b005;
+  skeleton -> b008;
+  b001 -> b006;
+  b001 -> b007;
+
+  // legend: palegreen=auto-answered, lightskyblue=user input, lightgray=ADR/glossary, lightyellow=discovered
+}
