@@ -4,7 +4,7 @@ import httpx
 from httpx import ASGITransport
 from unittest.mock import AsyncMock, patch
 
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
 from workbench.domain import TriageCard, TriageOption

@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from workbench.config_writer import write_messenger
 from workbench.redaction import _is_secret_key, redact_secrets
-from workbench.registry import close_provider, create_provider
+from workbench.providers.registry import close_provider, create_provider
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api", tags=["messenger"])

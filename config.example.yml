@@ -141,8 +141,8 @@ enrichment:
 
 # Memory — HttpMemoryLayer (production) or NoopMemoryLayer (no memory service)
 memory:
-  class: workbench.memory.noop.NoopMemoryLayer
+  class: workbench.providers.memory.noop.NoopMemoryLayer
 # With memory service:
 # memory:
-#   class: workbench.memory.http.HttpMemoryLayer
+#   class: workbench.providers.memory.http.HttpMemoryLayer
 #   base_url: http://localhost:8422

@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from workbench.memory.http import HttpMemoryLayer
+from workbench.providers.memory.http import HttpMemoryLayer
 from workbench.domain import (
     EntityKnowledge,
     Item,
@@ -243,11 +243,11 @@ def test_http_memory_layer_default_config():
 
 
 def test_registry_can_create_http_memory_layer():
-    from workbench.registry import create_provider
+    from workbench.providers.registry import create_provider
 
     layer = create_provider(
         {
-            "class": "workbench.memory.http.HttpMemoryLayer",
+            "class": "workbench.providers.memory.http.HttpMemoryLayer",
             "base_url": "http://localhost:8422",
         }
     )

@@ -7,7 +7,7 @@ def test_registry_module_exists():
     """Placeholder — requires pydantic to be installed."""
     import importlib
 
-    spec = importlib.util.find_spec("workbench.registry")
+    spec = importlib.util.find_spec("workbench.providers.registry")
     assert True
 
 
@@ -46,7 +46,7 @@ async def test_fake_connection_lifecycle():
     await conn.close()
 
 
-from workbench.registry import create_provider
+from workbench.providers.registry import create_provider
 from workbench.providers.enrichment.stub import StubEnricher
 
 

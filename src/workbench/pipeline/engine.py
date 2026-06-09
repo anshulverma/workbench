@@ -5,7 +5,7 @@ import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 
-from workbench.memory.base import MemoryLayer
+from workbench.providers.memory.base import MemoryLayer
 from workbench.domain import (
     ExtractedItem,
     IngestionQueueEntry,

@@ -11,7 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from workbench.telemetry.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
-from workbench.memory.base import MemoryLayer
+from workbench.providers.memory.base import MemoryLayer
 from workbench.domain import (
     ChangeContext,
     ExtractedItem,
@@ -48,7 +48,7 @@ def build_change_detectors(sources: list[dict]) -> dict[str, ChangeDetector]:
     """Build {source_type: ChangeDetector} from the sources config. Each source
     entry may carry an optional `change_detector` provider section; sources
     without one are skipped (routing falls back to AlwaysMaterialDetector)."""
-    from workbench.registry import create_provider
+    from workbench.providers.registry import create_provider
 
     registry: dict[str, ChangeDetector] = {}
     for entry in sources:

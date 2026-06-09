@@ -11,7 +11,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
 from workbench.domain import (

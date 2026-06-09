@@ -31,7 +31,7 @@ def build_content_generators(presentation_config) -> dict:
 
     Each entry may carry a `content_generator` class string; entries without one
     fall through to the LLM default in generate_card."""
-    from workbench.registry import create_provider
+    from workbench.providers.registry import create_provider
 
     generators: dict = {}
     for entry in presentation_config.providers:

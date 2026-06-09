@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 from workbench.pipeline.engine import PipelineEngine
 from workbench.pipeline.triage import format_card_for_chat
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.domain import (
     ExtractedItem,
@@ -286,7 +286,7 @@ def test_format_card_without_enrichment():
 async def test_scheduler_poll_sources_enqueues_items(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
     from workbench.domain import RawItem
@@ -333,7 +333,7 @@ async def test_scheduler_poll_sources_enqueues_items(stores, mock_llm):
 async def test_scheduler_poll_sources_tracks_last_polled(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
     from workbench.domain import RawItem
@@ -382,7 +382,7 @@ async def test_scheduler_poll_sources_tracks_last_polled(stores, mock_llm):
 async def test_scheduler_poll_sources_skips_duplicates(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
     from workbench.domain import RawItem
@@ -423,7 +423,7 @@ async def test_scheduler_poll_sources_skips_duplicates(stores, mock_llm):
 async def test_scheduler_poll_sources_handles_adapter_failure(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
     from workbench.pipeline.engine import PipelineEngine
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
     from unittest.mock import AsyncMock, MagicMock
@@ -543,7 +543,7 @@ async def test_e2e_auto_drop(stores, mock_llm):
 @pytest.mark.asyncio
 async def test_scheduler_skips_unhealthy_connection(stores, mock_llm):
     from workbench.pipeline.scheduler import WorkbenchScheduler
-    from workbench.memory.noop import NoopMemoryLayer
+    from workbench.providers.memory.noop import NoopMemoryLayer
     from workbench.providers.enrichment.stub import StubEnricher
     from workbench.config import AppConfig, StorageConfig
     from unittest.mock import AsyncMock, MagicMock

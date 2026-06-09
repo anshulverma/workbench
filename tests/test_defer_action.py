@@ -68,7 +68,7 @@ def test_defer_action_in_scheduler():
         )
 
         from workbench.pipeline.scheduler import WorkbenchScheduler
-        from workbench.memory.noop import NoopMemoryLayer
+        from workbench.providers.memory.noop import NoopMemoryLayer
         from workbench.config import AppConfig
 
         config = AppConfig(

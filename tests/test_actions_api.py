@@ -13,7 +13,7 @@ from workbench.domain import (
     TriageCard,
     TriageOption,
 )
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
 

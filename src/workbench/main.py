@@ -13,12 +13,12 @@ from workbench.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
 from workbench.telemetry.instrumentation import InstrumentedLLMProvider
 from workbench.telemetry.logging import setup_logging
-from workbench.memory.noop import NoopMemoryLayer
+from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.telemetry.privacy import SanitizingProcessor
 from workbench.telemetry.metrics import create_metrics
 from workbench.telemetry.usage_aggregator import UsageAggregator
 from workbench.middleware import CorrelationIdMiddleware
-from workbench.registry import (
+from workbench.providers.registry import (
     close_provider,
     create_provider,
     create_providers_from_list,
@@ -179,7 +179,7 @@ async def lifespan(app: FastAPI):
     from workbench.config_writer import write_source as _yaml_write_source
     from workbench.domain import SourceConfig as _SourceConfig
     from workbench.domain import SourceRelevanceConfig as _SourceRelevanceConfig
-    from workbench.registry import source_id_for as _source_id_for
+    from workbench.providers.registry import source_id_for as _source_id_for
 
     # Per-source relevance/noise thresholds keyed by adapter_type (== the
     # ingested item source_type), loaded from YAML for the PipelineEngine
@@ -261,7 +261,7 @@ async def lifespan(app: FastAPI):
     # DETERMINISTIC ids, and a stable source_id -> live adapter mapping. The
     # scheduler registers one CronTrigger Source Job per enabled source.
     from workbench.domain import SourceConfig
-    from workbench.registry import source_id_for
+    from workbench.providers.registry import source_id_for
 
     db_sources: list[SourceConfig] = []
     source_by_id: dict[str, object] = {}

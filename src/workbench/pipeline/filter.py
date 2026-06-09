@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from workbench.providers.llm.base import LLMProvider
-from workbench.memory.base import MemoryLayer
+from workbench.providers.memory.base import MemoryLayer
 from workbench.storage.base import FilterRuleStore
 from workbench.domain import ExtractedItem, Fact, FilterRule
 

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from workbench.memory.base import MemoryLayer
+from workbench.providers.memory.base import MemoryLayer
 from workbench.domain import (
     TriageCard,
     TriageResponse,
