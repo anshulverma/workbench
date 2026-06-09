@@ -360,6 +360,7 @@ def create_app() -> FastAPI:
         queue,
         sources,
         stats,
+        topology,
         triage,
     )
 
@@ -382,6 +383,7 @@ def create_app() -> FastAPI:
         activity.router,
         messenger.router,
         connections.router,
+        topology.router,
     ]:
         app.include_router(r)
 
