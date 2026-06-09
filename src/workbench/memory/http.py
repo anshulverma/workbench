@@ -7,7 +7,7 @@ import httpx
 from pydantic import BaseModel
 
 from workbench.memory.base import MemoryLayer
-from workbench.models import (
+from workbench.domain import (
     EntityKnowledge,
     Fact,
     Item,

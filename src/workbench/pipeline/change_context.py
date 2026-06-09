@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from workbench.models import ChangeContext, TriageCard
+from workbench.domain import ChangeContext, TriageCard
 from workbench.providers.change_detector.base import ChangeResult
 
 

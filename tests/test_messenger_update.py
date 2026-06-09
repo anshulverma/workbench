@@ -1,5 +1,5 @@
 import pytest
-from workbench.models import CardMessage, CardSection
+from workbench.domain import CardMessage, CardSection
 from workbench.providers.messenger.base import Messenger
 from workbench.providers.messenger.console import ConsoleMessenger
 

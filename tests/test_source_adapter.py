@@ -1,4 +1,4 @@
-from workbench.models import RawItem
+from workbench.domain import RawItem
 from workbench.providers.source.base import SourceAdapter
 from workbench.providers.source.github import GitHubSourceAdapter
 

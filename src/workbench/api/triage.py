@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
-from workbench.models import (
+from workbench.domain import (
     FilterRule,
     InteractionEntry,
     InterpretedResponse,

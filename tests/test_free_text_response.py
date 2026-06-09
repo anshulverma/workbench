@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from workbench.models import (
+from workbench.domain import (
     TriageCard, TriageOption, TriageResponse,
     InterpretedResponse, SystemAction, UserTodo,
     InteractionEntry, Item, ItemCategory, ItemOrigin,

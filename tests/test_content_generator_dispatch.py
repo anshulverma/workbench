@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
-from workbench.models import ExtractedItem, RawItem, ItemCategory, TriageCard
+from workbench.domain import ExtractedItem, RawItem, ItemCategory, TriageCard
 from workbench.pipeline.content_generator import CardContentGenerator
 from workbench.pipeline.triage import generate_card
 

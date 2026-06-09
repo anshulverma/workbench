@@ -4,7 +4,7 @@ import json
 
 import asyncpg
 
-from workbench.models import Plan, PlanFilters, PlanUpdate
+from workbench.domain import Plan, PlanFilters, PlanUpdate
 from workbench.storage.base import PlanStore
 
 

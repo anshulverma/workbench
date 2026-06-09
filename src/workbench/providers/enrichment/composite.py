@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from workbench.providers.enrichment.base import ContextEnricher
 from workbench.providers.enrichment.stub import StubEnricher
-from workbench.models import ExtractedItem, EnrichmentBudget
+from workbench.domain import ExtractedItem, EnrichmentBudget
 
 
 class CompositeEnricher(ContextEnricher):

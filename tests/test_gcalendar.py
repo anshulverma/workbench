@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime, timezone, timedelta
 from workbench.providers.source.gcalendar import GCalendarAdapter
 from workbench.providers.enrichment.gcalendar import GCalendarEnricher
-from workbench.models import ExtractedItem, RawItem, EnrichmentBudget, ItemCategory
+from workbench.domain import ExtractedItem, RawItem, EnrichmentBudget, ItemCategory
 
 
 # --- Helper to run sync functions as async (replaces asyncio.to_thread in tests) ---

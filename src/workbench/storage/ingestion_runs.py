@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from workbench.models import IngestionRun
+from workbench.domain import IngestionRun
 
 
 class IngestionRunStore(ABC):

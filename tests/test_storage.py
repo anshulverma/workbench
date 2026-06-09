@@ -1,5 +1,5 @@
 import pytest
-from workbench.models import (
+from workbench.domain import (
     EnrichmentTrace,
     FilterRule,
     IngestionQueueEntry,

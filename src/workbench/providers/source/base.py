@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from workbench.models import RawItem
+from workbench.domain import RawItem
 
 
 class SourceAdapter(ABC):

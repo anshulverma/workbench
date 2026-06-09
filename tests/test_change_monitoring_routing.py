@@ -5,7 +5,7 @@ import pytest
 
 from workbench.config import AppConfig, ServerConfig, StorageConfig
 from workbench.memory.noop import NoopMemoryLayer
-from workbench.models import (
+from workbench.domain import (
     Item,
     ItemCategory,
     ItemOrigin,

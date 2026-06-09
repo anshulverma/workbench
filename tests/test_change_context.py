@@ -1,4 +1,4 @@
-from workbench.models import ChangeContext, TriageCard
+from workbench.domain import ChangeContext, TriageCard
 from workbench.providers.change_detector.base import ChangeResult
 from workbench.pipeline.change_context import build_change_context
 

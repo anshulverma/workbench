@@ -177,8 +177,8 @@ async def lifespan(app: FastAPI):
     # Sync YAML sources (config.yml is the source of truth) into source_configs
     # so get_sources() reflects the live set. Stable ids are written back to YAML.
     from workbench.config_writer import write_source as _yaml_write_source
-    from workbench.models import SourceConfig as _SourceConfig
-    from workbench.models import SourceRelevanceConfig as _SourceRelevanceConfig
+    from workbench.domain import SourceConfig as _SourceConfig
+    from workbench.domain import SourceRelevanceConfig as _SourceRelevanceConfig
     from workbench.registry import source_id_for as _source_id_for
 
     # Per-source relevance/noise thresholds keyed by adapter_type (== the
@@ -260,7 +260,7 @@ async def lifespan(app: FastAPI):
     # Build per-source SourceConfig rows (YAML is the source of truth) with
     # DETERMINISTIC ids, and a stable source_id -> live adapter mapping. The
     # scheduler registers one CronTrigger Source Job per enabled source.
-    from workbench.models import SourceConfig
+    from workbench.domain import SourceConfig
     from workbench.registry import source_id_for
 
     db_sources: list[SourceConfig] = []

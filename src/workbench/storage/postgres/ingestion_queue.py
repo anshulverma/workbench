@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
-from workbench.models import IngestionQueueEntry, QueueEntryStatus
+from workbench.domain import IngestionQueueEntry, QueueEntryStatus
 from workbench.storage.base import IngestionQueueStore
 
 

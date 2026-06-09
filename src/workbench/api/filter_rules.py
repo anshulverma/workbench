@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request
-from workbench.models import FilterRule
+from workbench.domain import FilterRule
 
 router = APIRouter(prefix="/api", tags=["filter_rules"])
 

@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock
-from workbench.models import TriageCard, TriageOption, TriageResponse
+from workbench.domain import TriageCard, TriageOption, TriageResponse
 
 
 def _mock_stores():

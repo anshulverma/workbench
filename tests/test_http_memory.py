@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from workbench.memory.http import HttpMemoryLayer
-from workbench.models import (
+from workbench.domain import (
     EntityKnowledge,
     Item,
     ItemCategory,

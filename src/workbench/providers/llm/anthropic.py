@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from workbench.providers._plugboard import record_plugboard_call
 from workbench.providers.llm.base import LLMProvider
-from workbench.models import (
+from workbench.domain import (
     ExtractedItem,
     ItemCategory,
     RawItem,

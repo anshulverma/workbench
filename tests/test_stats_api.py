@@ -14,7 +14,7 @@ from httpx import AsyncClient, ASGITransport
 from workbench.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
-from workbench.models import (
+from workbench.domain import (
     Item,
     ItemCategory,
     ItemOrigin,
@@ -463,7 +463,7 @@ async def test_overview_metrics_null_on_empty_denominator(client):
 async def test_overview_signal_velocity_counts_recent_items(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     now = datetime.now(timezone.utc)
@@ -487,7 +487,7 @@ async def test_overview_signal_velocity_counts_recent_items(client, app_with_sta
 
 @pytest.mark.asyncio
 async def test_overview_auto_resolved_pct(client, app_with_state):
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     # one auto-included, one triaged → 50% auto-resolved
@@ -553,7 +553,7 @@ async def test_overview_ingestion_success_rate(client, app_with_state):
 async def test_overview_efficiency_peak_and_throughput(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     now = datetime.now(timezone.utc)
@@ -594,7 +594,7 @@ async def test_timeseries_signal_velocity_zero_filled(client):
 async def test_timeseries_signal_velocity_counts_items(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     # tz-aware created_at so it lands in a real backward bucket (the legacy
@@ -622,7 +622,7 @@ async def test_timeseries_signal_velocity_counts_items(client, app_with_state):
 async def test_timeseries_throughput_counts_completed(client, app_with_state):
     from datetime import datetime, timezone
 
-    from workbench.models import Item
+    from workbench.domain import Item
 
     stores = app_with_state.state.stores
     now = datetime.now(timezone.utc)

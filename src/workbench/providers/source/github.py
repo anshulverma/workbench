@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from workbench.models import RawItem
+from workbench.domain import RawItem
 from workbench.providers.source.base import SourceAdapter
 
 logger = logging.getLogger(__name__)

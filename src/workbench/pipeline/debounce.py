@@ -4,7 +4,7 @@ import asyncio
 
 from pydantic import BaseModel, ConfigDict
 
-from workbench.models import RawItem
+from workbench.domain import RawItem
 from workbench.providers.change_detector.base import ChangeResult
 
 

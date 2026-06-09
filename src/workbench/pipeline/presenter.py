@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import ValidationError
 
-from workbench.models import CardMessage, CardSection, ExtractedItem, TriageCard
+from workbench.domain import CardMessage, CardSection, ExtractedItem, TriageCard
 from workbench.pipeline.triage import format_card_for_chat
 
 logger = logging.getLogger(__name__)

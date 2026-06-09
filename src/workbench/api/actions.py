@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
-from workbench.models import (
+from workbench.domain import (
     InteractionEntry,
     Item,
     ItemCategory,

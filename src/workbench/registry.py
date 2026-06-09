@@ -104,7 +104,7 @@ def create_composite_enricher(
     metrics: Any | None = None,
 ):
     from workbench.providers.enrichment.composite import CompositeEnricher
-    from workbench.models import EnrichmentBudget
+    from workbench.domain import EnrichmentBudget
 
     enrichers = {}
     budgets = {}

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
-from workbench.models import ItemFilters, ItemUpdate
+from workbench.domain import ItemFilters, ItemUpdate
 
 router = APIRouter(prefix="/api", tags=["items"])
 

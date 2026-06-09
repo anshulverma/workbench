@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from workbench.models import TriageCard, TriageOption, CardMessage
+from workbench.domain import TriageCard, TriageOption, CardMessage
 from workbench.pipeline.presenter import PlainCardPresenter
 from workbench.pipeline.scheduler import WorkbenchScheduler
 

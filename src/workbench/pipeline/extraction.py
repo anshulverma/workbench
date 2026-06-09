@@ -1,5 +1,5 @@
 from workbench.providers.llm.base import LLMProvider
-from workbench.models import ExtractedItem
+from workbench.domain import ExtractedItem
 
 async def extract_items(llm: LLMProvider, raw_text: str, source_type: str) -> list[ExtractedItem]:
     if not raw_text or len(raw_text.strip()) < 10:

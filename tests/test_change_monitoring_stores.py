@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from workbench.models import (
+from workbench.domain import (
     Item,
     ItemCategory,
     ItemOrigin,

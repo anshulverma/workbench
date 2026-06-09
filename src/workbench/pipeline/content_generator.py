@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from workbench.models import ChangeContext, ExtractedItem
+from workbench.domain import ChangeContext, ExtractedItem
 
 
 class CardContentGenerator(ABC):

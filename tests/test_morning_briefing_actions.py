@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
-from workbench.models import (
+from workbench.domain import (
     Item, ItemCategory, ItemOrigin, ItemStatus, Priority,
 )
 from workbench.pipeline.scheduler import WorkbenchScheduler

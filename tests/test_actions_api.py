@@ -3,7 +3,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
-from workbench.models import (
+from workbench.domain import (
     Item,
     ItemCategory,
     ItemOrigin,

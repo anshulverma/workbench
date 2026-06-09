@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from workbench.models import JobStatus, RawItem
+from workbench.domain import JobStatus, RawItem
 from workbench.storage.base import Stores
 
 logger = logging.getLogger(__name__)

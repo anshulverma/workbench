@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from workbench.models import RawItem
+from workbench.domain import RawItem
 from workbench.providers.change_detector.base import ChangeResult
 from workbench.pipeline.debounce import DebounceManager
 

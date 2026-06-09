@@ -22,7 +22,7 @@ from pydantic import BaseModel, ValidationError
 
 from workbench.config_writer import delete_source as yaml_delete_source
 from workbench.config_writer import write_source as yaml_write_source
-from workbench.models import JobTrigger, SourceConfig, SourceConfigUpdate
+from workbench.domain import JobTrigger, SourceConfig, SourceConfigUpdate
 from workbench.registry import close_provider
 
 logger = structlog.get_logger(__name__)

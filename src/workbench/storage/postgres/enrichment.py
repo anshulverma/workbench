@@ -4,7 +4,7 @@ import json
 
 import asyncpg
 
-from workbench.models import EnrichmentTrace, TraceFilters
+from workbench.domain import EnrichmentTrace, TraceFilters
 from workbench.storage.base import EnrichmentTraceStore
 
 

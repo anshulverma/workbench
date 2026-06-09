@@ -11,7 +11,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from httpx import AsyncClient, ASGITransport
 
-from workbench.models import (
+from workbench.domain import (
     ExtractedItem,
     ItemCategory,
     RawItem,
@@ -119,7 +119,7 @@ async def test_health(client):
 
 @pytest.mark.asyncio
 async def test_health_uses_queue_depth_and_count(client, app_with_state):
-    from workbench.models import IngestionQueueEntry, QueueEntryStatus
+    from workbench.domain import IngestionQueueEntry, QueueEntryStatus
 
     stores = app_with_state.state.stores
 

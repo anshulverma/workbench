@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from workbench.providers.enrichment.base import ContextEnricher
-from workbench.models import ExtractedItem, EnrichmentBudget
+from workbench.domain import ExtractedItem, EnrichmentBudget
 
 
 class StubEnricher(ContextEnricher):

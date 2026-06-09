@@ -4,7 +4,7 @@ import json
 
 import asyncpg
 
-from workbench.models import Item, ItemFilters, ItemStatus, ItemUpdate, RawItem
+from workbench.domain import Item, ItemFilters, ItemStatus, ItemUpdate, RawItem
 from workbench.storage.base import ItemStore
 
 

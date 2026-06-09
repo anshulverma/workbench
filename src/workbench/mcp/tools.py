@@ -1,6 +1,6 @@
 from workbench.storage.base import Stores
 from workbench.pipeline.engine import PipelineEngine
-from workbench.models import ItemFilters, JobTrigger
+from workbench.domain import ItemFilters, JobTrigger
 
 
 class WorkbenchMCPTools:

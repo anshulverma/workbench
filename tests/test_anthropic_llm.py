@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from workbench.providers.llm.anthropic import AnthropicLLM
-from workbench.models import ExtractedItem, ItemCategory, RawItem, FilterRule, Fact
+from workbench.domain import ExtractedItem, ItemCategory, RawItem, FilterRule, Fact
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from workbench.storage.ingestion_runs import IngestionRunStore
-from workbench.models import (
+from workbench.domain import (
     EnrichmentTrace,
     FilterRule,
     IngestionQueueEntry,

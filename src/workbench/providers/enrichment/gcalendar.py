@@ -6,7 +6,7 @@ import time
 
 from pydantic import BaseModel
 
-from workbench.models import ExtractedItem, EnrichmentBudget
+from workbench.domain import ExtractedItem, EnrichmentBudget
 from workbench.providers.enrichment.base import ContextEnricher
 
 logger = logging.getLogger(__name__)

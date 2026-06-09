@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from workbench.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.memory.base import MemoryLayer
-from workbench.models import (
+from workbench.domain import (
     ChangeContext,
     ExtractedItem,
     FilterRule,
@@ -310,7 +310,7 @@ class WorkbenchScheduler:
     def _ext_item_for(self, card):
         """Reconstruct a minimal ExtractedItem for presenter routing from a
         stored card (the presenter only needs raw_item.source_type and id)."""
-        from workbench.models import ExtractedItem, RawItem, ItemCategory
+        from workbench.domain import ExtractedItem, RawItem, ItemCategory
 
         source_type = card.card_content.get("source_type", "unknown")
         raw = RawItem(
@@ -963,7 +963,7 @@ class WorkbenchScheduler:
             logger.error("Morning briefing failed", exc_info=True)
 
     async def _morning_briefing_inner(self):
-        from workbench.models import ItemFilters
+        from workbench.domain import ItemFilters
 
         items = await self.stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE))
         pending = await self.stores.triage.get_pending()

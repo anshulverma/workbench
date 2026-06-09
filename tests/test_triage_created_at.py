@@ -18,7 +18,7 @@ from httpx import AsyncClient, ASGITransport
 from workbench.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.pipeline.engine import PipelineEngine
-from workbench.models import TriageCard, TriageOption
+from workbench.domain import TriageCard, TriageOption
 
 
 # --------------------------------------------------------------------------- #
