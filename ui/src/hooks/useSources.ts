@@ -8,7 +8,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
-import { useSourcesRollup, type SourceRollup } from '@/hooks/useStats'
+import {
+  useSourcesRollup,
+  type SourceRelevance,
+  type SourceRollup,
+} from '@/hooks/useStats'
+
+// Global relevance defaults (PipelineConfig). Shown as "inherited" placeholders
+// in the Config Drawer when a source has no per-source `relevance` set.
+export const RELEVANCE_DEFAULTS: SourceRelevance = {
+  auto_include_threshold: 70,
+  triage_threshold: 30,
+  drop_below: 30,
+}
 
 // Per-adapter introspection from GET /api/sources/adapter-types. The backend
 // returns the Pydantic `json_schema` (model_json_schema) per allowlisted type.
@@ -109,6 +121,21 @@ export function useToggleSource() {
       toast.error(`Toggle failed: ${errMessage(err)}`)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['stats', 'sources'] }),
+  })
+}
+
+// Per-source relevance/noise thresholds (ADR0044). Pessimistic: await the
+// server (so inline 422s surface in the drawer), then invalidate the rollup so
+// the card reflects the hot-reloaded thresholds. The success/error toast is the
+// caller's concern (it owns the inline 422 mapping).
+export function useUpdateRelevance() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, relevance }: { id: string; relevance: SourceRelevance }) =>
+      apiPatch(`/api/sources/${id}`, { relevance }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stats', 'sources'] })
+    },
   })
 }
 

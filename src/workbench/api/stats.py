@@ -227,6 +227,13 @@ async def sources(request: Request):
                 "raw_enqueued": raw_by_source.get(s.adapter_type, 0),
                 "in_flight": raw_by_source.get(s.adapter_type, 0),
                 "health_status": health,
+                "config": s.config,
+                # Per-source relevance/noise thresholds (ADR0044). None means
+                # "inherit the global defaults" — the UI renders 70/30/30 as
+                # inherited placeholders in that case.
+                "relevance": (
+                    s.relevance.model_dump() if s.relevance is not None else None
+                ),
             }
         )
     return result

@@ -149,6 +149,14 @@ export function useMessenger() {
 
 // --- Ingestion page hooks (spec Design Section 2.4) ---
 
+// Per-source relevance/noise thresholds (ADR0044). Integers 0..100. `null` on
+// a SourceRollup means "inherit the global defaults" (rendered as 70/30/30).
+export interface SourceRelevance {
+  auto_include_threshold: number
+  triage_threshold: number
+  drop_below: number
+}
+
 export interface SourceRollup {
   id: string
   adapter_type: string
@@ -160,6 +168,7 @@ export interface SourceRollup {
   in_flight: number
   health_status: string
   config?: Record<string, unknown>
+  relevance?: SourceRelevance | null
 }
 
 export interface ActivityItem {

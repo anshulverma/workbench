@@ -52,6 +52,7 @@ const ROW = {
   in_flight: 0,
   health_status: 'healthy',
   config: { repos: ['meta/workbench'] },
+  relevance: null,
 }
 
 function baseHandlers(rows: unknown[] = []) {
@@ -125,14 +126,64 @@ describe('Sources page', () => {
     )
   })
 
-  it('renders the table from /api/stats/sources', async () => {
+  it('renders a card grid of real adapters from /api/stats/sources', async () => {
     server.use(...baseHandlers([ROW]))
     renderSources()
     expect(await screen.findByText('github')).toBeInTheDocument()
     expect(screen.getByText('s1')).toBeInTheDocument()
     expect(screen.getByText('healthy')).toBeInTheDocument()
-    // human-readable schedule + cron tooltip
+    // human-readable schedule
     expect(screen.getByText('Every 15 minutes')).toBeInTheDocument()
+  })
+
+  it('never fabricates mockup integrations (Jira/Slack/PagerDuty/Linear)', async () => {
+    server.use(...baseHandlers([ROW]))
+    renderSources()
+    await screen.findByText('github')
+    expect(screen.queryByText(/jira/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/slack/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/pagerduty/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/linear/i)).not.toBeInTheDocument()
+  })
+
+  it('top stat cards compute active pipes / volume / errors', async () => {
+    const rows = [
+      { ...ROW, id: 's1', enabled: true, items_stored: 10, health_status: 'healthy' },
+      {
+        ...ROW,
+        id: 's2',
+        adapter_type: 'email',
+        enabled: false,
+        items_stored: 5,
+        health_status: 'disabled',
+      },
+      {
+        ...ROW,
+        id: 's3',
+        adapter_type: 'calendar',
+        enabled: true,
+        items_stored: 7,
+        health_status: 'erroring',
+      },
+    ]
+    server.use(...baseHandlers(rows))
+    renderSources()
+    // Active Pipes = enabled count (s1, s3) = 2
+    const active = await screen.findByTestId('stat-active-pipes')
+    expect(active).toHaveTextContent('2')
+    // Ingestion Volume = 10 + 5 + 7 = 22
+    expect(screen.getByTestId('stat-volume')).toHaveTextContent('22')
+    // Errors = erroring-source count = 1
+    expect(screen.getByTestId('stat-errors')).toHaveTextContent('1')
+  })
+
+  it('Connect New Source card opens the two-step wizard', async () => {
+    server.use(...baseHandlers([ROW]))
+    renderSources()
+    await userEvent.click(
+      await screen.findByRole('button', { name: /connect new source/i }),
+    )
+    expect(await screen.findByText(/pick an adapter type/i)).toBeInTheDocument()
   })
 
   it('two-step add form: step1 pick github -> step2 renders type-specific fields', async () => {
@@ -320,5 +371,117 @@ describe('Sources page', () => {
         screen.getByRole('button', { name: /actions for s1/i }),
       ).toBeInTheDocument(),
     )
+  })
+
+  // --- Config Drawer: per-source relevance/noise thresholds (ADR0044) ---
+
+  it('kebab Configure opens the drawer with inherited defaults when relevance is null', async () => {
+    server.use(...baseHandlers([{ ...ROW, relevance: null }]))
+    renderSources()
+    await userEvent.click(
+      await screen.findByRole('button', { name: /actions for s1/i }),
+    )
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: /configure/i }),
+    )
+    // null relevance => inherited global defaults 70 / 30 / 30
+    const auto = await screen.findByRole('slider', {
+      name: /auto.?include threshold/i,
+    })
+    const triage = screen.getByRole('slider', { name: /triage threshold/i })
+    const drop = screen.getByRole('slider', { name: /drop below/i })
+    expect(auto).toHaveValue('70')
+    expect(triage).toHaveValue('30')
+    expect(drop).toHaveValue('30')
+    expect(screen.getByText(/inherited/i)).toBeInTheDocument()
+  })
+
+  it('drawer shows the source current relevance values when set', async () => {
+    server.use(
+      ...baseHandlers([
+        {
+          ...ROW,
+          relevance: {
+            auto_include_threshold: 80,
+            triage_threshold: 40,
+            drop_below: 20,
+          },
+        },
+      ]),
+    )
+    renderSources()
+    await userEvent.click(
+      await screen.findByRole('button', { name: /actions for s1/i }),
+    )
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: /configure/i }),
+    )
+    expect(
+      await screen.findByRole('slider', { name: /auto.?include threshold/i }),
+    ).toHaveValue('80')
+    expect(
+      screen.getByRole('slider', { name: /triage threshold/i }),
+    ).toHaveValue('40')
+    expect(screen.getByRole('slider', { name: /drop below/i })).toHaveValue('20')
+  })
+
+  it('Save PATCHes /api/sources/{id} with the integer relevance object', async () => {
+    let patched: Record<string, unknown> | null = null
+    server.use(
+      ...baseHandlers([{ ...ROW, relevance: null }]),
+      http.patch('/api/sources/s1', async ({ request }) => {
+        patched = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ id: 's1' })
+      }),
+    )
+    renderSources()
+    await userEvent.click(
+      await screen.findByRole('button', { name: /actions for s1/i }),
+    )
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: /configure/i }),
+    )
+    await screen.findByRole('slider', { name: /auto.?include threshold/i })
+    await userEvent.click(screen.getByRole('button', { name: /save/i }))
+    await waitFor(() =>
+      expect(patched).toEqual({
+        relevance: {
+          auto_include_threshold: 70,
+          triage_threshold: 30,
+          drop_below: 30,
+        },
+      }),
+    )
+  })
+
+  it('surfaces an inverted-threshold 422 inline in the drawer', async () => {
+    server.use(
+      ...baseHandlers([{ ...ROW, relevance: null }]),
+      http.patch('/api/sources/s1', () =>
+        HttpResponse.json(
+          {
+            detail: [
+              {
+                loc: ['body', 'relevance'],
+                msg: 'drop_below must be <= auto_include_threshold',
+              },
+            ],
+          },
+          { status: 422 },
+        ),
+      ),
+    )
+    renderSources()
+    await userEvent.click(
+      await screen.findByRole('button', { name: /actions for s1/i }),
+    )
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: /configure/i }),
+    )
+    await screen.findByRole('slider', { name: /auto.?include threshold/i })
+    await userEvent.click(screen.getByRole('button', { name: /save/i }))
+    expect(
+      await screen.findByText(/drop_below must be <= auto_include_threshold/i),
+    ).toBeInTheDocument()
   })
 })
