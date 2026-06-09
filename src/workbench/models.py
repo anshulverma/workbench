@@ -191,6 +191,7 @@ class TriageCard(BaseModel):
     relevance_score: int = 50
     confidence_score: int = 50
     status: str = "queued"  # queued, sent, responded, expired
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     bot_message_id: str | None = None
     thread_name: str | None = None
     daily_sequence: int | None = None
