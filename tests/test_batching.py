@@ -93,3 +93,81 @@ def test_decide_from_score_thresholds():
     assert decide_from_score(10, 90) == "auto_drop"
     assert decide_from_score(50, 90) == "triage"
     assert decide_from_score(80, 50) == "triage"  # low confidence -> triage
+
+
+# --- S5: batch score_urgency ---
+
+def _scorer():
+    from workbench.providers.queue_scorer.llm import LLMQueueScorer
+
+    return LLMQueueScorer(LLMQueueScorer.ProviderConfig(api_key="k"))
+
+
+@pytest.mark.asyncio
+async def test_score_urgency_many_parses_indexed(monkeypatch):
+    from types import SimpleNamespace
+
+    s = _scorer()
+
+    async def fake_create(**kwargs):
+        return SimpleNamespace(
+            usage=None,
+            content=[
+                SimpleNamespace(
+                    text='[{"index":0,"urgency":70},{"index":1,"urgency":10}]'
+                )
+            ],
+        )
+
+    monkeypatch.setattr(s.client.messages, "create", fake_create)
+    out = await s.score_urgency_many([("t1", {"a": 1}), ("t2", {})])
+    assert out == [70, 10]
+
+
+@pytest.mark.asyncio
+async def test_score_urgency_many_falls_back_on_missing(monkeypatch):
+    from types import SimpleNamespace
+
+    s = _scorer()
+
+    async def fake_create(**kwargs):
+        return SimpleNamespace(
+            usage=None,
+            content=[SimpleNamespace(text='[{"index":0,"urgency":70}]')],
+        )
+
+    monkeypatch.setattr(s.client.messages, "create", fake_create)
+    s.score_urgency = AsyncMock(return_value=33)
+    out = await s.score_urgency_many([("t1", {"a": 1}), ("t2", {"b": 2})])
+    assert out[0] == 70
+    assert out[1] == 33  # per-item fallback for missing index
+    s.score_urgency.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_score_urgency_many_max_tokens_scales(monkeypatch):
+    from types import SimpleNamespace
+
+    s = _scorer()
+    seen = {}
+
+    async def fake_create(**kwargs):
+        seen["max_tokens"] = kwargs["max_tokens"]
+        import json
+
+        n = len(json.loads(kwargs["messages"][0]["content"].split("Items:\n")[1]))
+        return SimpleNamespace(
+            usage=None,
+            content=[
+                SimpleNamespace(
+                    text=json.dumps(
+                        [{"index": i, "urgency": 50} for i in range(n)]
+                    )
+                )
+            ],
+        )
+
+    monkeypatch.setattr(s.client.messages, "create", fake_create)
+    out = await s.score_urgency_many([("t", {"a": 1})] * 3)
+    assert out == [50, 50, 50]
+    assert seen["max_tokens"] == min(4096, 40 * 3 + 100)  # scales with batch

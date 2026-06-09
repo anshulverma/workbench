@@ -71,7 +71,11 @@ class PipelineEngine:
         source_id: str | None = None,
         urgency_signals: dict | None = None,
         trigger: JobTrigger = JobTrigger.MANUAL,
+        urgency_score: int | None = None,
     ) -> PipelineJob:
+        """Enqueue a raw item. When ``urgency_score`` is provided (e.g. the
+        scheduler pre-scored a batch via ``score_urgency_many``), the per-item
+        scorer call is skipped (ADR 0048)."""
         if source_id:
             if await self.stores.processed.is_processed(source_type, source_id):
                 job = PipelineJob(
@@ -89,14 +93,15 @@ class PipelineEngine:
         )
         await self.stores.jobs.save_job(job)
 
-        urgency_score = 50
-        if self.queue_scorer and urgency_signals:
-            try:
-                urgency_score = await self.queue_scorer.score_urgency(
-                    raw_text, urgency_signals
-                )
-            except Exception as e:
-                logger.warning(f"Queue scorer failed, using default: {e}")
+        if urgency_score is None:
+            urgency_score = 50
+            if self.queue_scorer and urgency_signals:
+                try:
+                    urgency_score = await self.queue_scorer.score_urgency(
+                        raw_text, urgency_signals
+                    )
+                except Exception as e:
+                    logger.warning(f"Queue scorer failed, using default: {e}")
 
         entry = IngestionQueueEntry(
             raw_content=raw_text,
