@@ -56,6 +56,24 @@ describe('accessibility', () => {
     expect(overview).toHaveFocus()
   })
 
+  it('rail links are icon-only with accessible names (aria-label)', () => {
+    renderWithRouter(<AppSidebar />)
+    // The 64px icon rail shows lucide icons; accessible names come from
+    // aria-label, not visible text. All eight routes must remain named.
+    for (const name of [
+      'Overview',
+      'Triage',
+      'Action Items',
+      'Ingestion',
+      'Sources',
+      'Knowledge',
+      'Messenger',
+      'Settings',
+    ]) {
+      expect(screen.getByRole('link', { name })).toBeInTheDocument()
+    }
+  })
+
   it('marks the active nav link with aria-current="page"', () => {
     renderWithRouter(<AppSidebar />, '/triage')
     const active = screen.getByRole('link', { name: 'Triage' })
