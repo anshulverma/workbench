@@ -17,6 +17,18 @@ export interface ItemsBreakdown {
   total: number
 }
 
+// Derived-metrics block (ADR0039/0040, spec §6). Any zero-denominator or
+// degraded source is serialized as `null` and rendered "n/a" (never fabricated).
+export interface OverviewMetrics {
+  signal_velocity: number
+  throughput: number
+  efficiency_peak: number | null
+  auto_resolved_pct: number | null
+  avg_triage_seconds: number | null
+  growth_velocity: number | null
+  ingestion_success_rate: number | null
+}
+
 export interface StatsOverview {
   pending_triage: number
   in_flight: number
@@ -26,6 +38,14 @@ export interface StatsOverview {
   sources_total: number
   items: ItemsBreakdown
   queue: { in_flight: number; dead_letters: number }
+  metrics?: OverviewMetrics
+}
+
+// Generic derived timeseries point (GET /api/stats/timeseries). Zero-filled
+// full bucket axis; `bucket` is an ISO timestamp.
+export interface MetricPoint {
+  bucket: string
+  count: number
 }
 
 export interface IngestionPoint {
@@ -83,6 +103,19 @@ export function useIngestionTimeseries(days = 14, bucket = 'day') {
     queryFn: () =>
       apiGet<IngestionPoint[]>(
         `/api/stats/ingestion-timeseries?days=${days}&bucket=${bucket}`,
+      ),
+    refetchInterval: pollWhenVisible(60_000),
+  })
+}
+
+// Generic derived metric timeseries (signal_velocity | throughput), used for
+// the Overview Signal Velocity sparkline (spec §8). 422s on an unknown metric.
+export function useMetricsTimeseries(metric: string, window = 24, bucket = 'hour') {
+  return useQuery({
+    queryKey: ['stats', 'timeseries', { metric, window, bucket }],
+    queryFn: () =>
+      apiGet<MetricPoint[]>(
+        `/api/stats/timeseries?metric=${encodeURIComponent(metric)}&window=${window}&bucket=${bucket}`,
       ),
     refetchInterval: pollWhenVisible(60_000),
   })

@@ -21,7 +21,17 @@ import {
 } from 'recharts'
 import { StatCard } from '@/components/StatCard'
 import { ChartCard } from '@/components/ChartCard'
-import { CHART_COLORS, CHART_PALETTE } from '@/lib/chart-theme'
+import { Sparkline } from '@/components/Sparkline'
+import { Mono } from '@/components/Mono'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Topology } from '@/components/Topology'
+import {
+  CHART_COLORS,
+  CHART_DEFAULTS,
+  CHART_PALETTE,
+  TOOLTIP_CONTENT_STYLE,
+} from '@/lib/chart-theme'
 import { DataTable, type Column } from '@/components/DataTable'
 import { EmptyState } from '@/components/EmptyState'
 import { HealthBadge } from '@/components/HealthBadge'
@@ -33,12 +43,27 @@ import {
   useIngestionTimeseries,
   useJobs,
   useMessenger,
+  useMetricsTimeseries,
   useStatsOverview,
   type Job,
 } from '@/hooks/useStats'
+import { useHotFeed, type Item } from '@/hooks/useItems'
+import { useTopology } from '@/hooks/useTopology'
 
 const PRIORITY_ORDER = ['P0', 'P1', 'P2', 'P3']
 const CATEGORY_ORDER = ['action_item', 'meeting', 'plan_seed', 'informational']
+
+const PRIORITY_VARIANT: Record<string, 'p0' | 'p1' | 'p2' | 'p3'> = {
+  P0: 'p0',
+  P1: 'p1',
+  P2: 'p2',
+  P3: 'p3',
+}
+
+/** Render a 0..1 ratio metric as a whole-number percent, or "n/a" when null. */
+function pct(value: number | null | undefined): string {
+  return value == null ? 'n/a' : `${Math.round(value * 100)}%`
+}
 
 function isUnauthorized(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401
@@ -55,6 +80,97 @@ const jobColumns: Column<Job>[] = [
   { key: 'items_extracted', header: 'Items', render: (j) => j.items_extracted },
   { key: 'created_at', header: 'Created', render: (j) => relativeTime(j.created_at) },
 ]
+
+// --- Hero widgets (spec §8). Each fails soft inline: it renders its own
+// loading / empty / error state and never blocks the page-level gates. ---
+
+function HotFeed() {
+  const feed = useHotFeed()
+  return (
+    <Card data-testid="hot-feed" className="flex flex-col">
+      <CardHeader className="pb-2">
+        <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Hot Feed
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex-1 space-y-2">
+        {feed.isPending ? (
+          <Skeleton className="h-24" />
+        ) : feed.isError ? (
+          <p className="text-sm text-destructive">Feed unavailable</p>
+        ) : feed.items.length === 0 ? (
+          <p className="font-mono text-xs text-muted-foreground">
+            // No high-priority signals pending
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {feed.items.map((it: Item) => (
+              <li
+                key={it.id}
+                className="flex items-start gap-2 border-b border-border pb-2 last:border-b-0"
+              >
+                <Badge variant={PRIORITY_VARIANT[it.priority] ?? 'p3'}>
+                  {it.priority}
+                </Badge>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{it.summary}</p>
+                  <p className="font-mono text-xs text-muted-foreground">
+                    {it.source_type} · {relativeTime(it.created_at)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function TopologyPanel() {
+  const topology = useTopology()
+  return (
+    <Card data-testid="topology-panel">
+      <CardHeader className="pb-2">
+        <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Infrastructure
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {topology.isPending ? (
+          <Skeleton className="h-48" />
+        ) : topology.isError ? (
+          <p className="text-sm text-destructive">Topology unavailable</p>
+        ) : (topology.data?.nodes.length ?? 0) === 0 ? (
+          <p className="font-mono text-xs text-muted-foreground">
+            // No components discovered
+          </p>
+        ) : (
+          <Topology data={topology.data!} />
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function SignalVelocityTile() {
+  const series = useMetricsTimeseries('signal_velocity', 24, 'hour')
+  return (
+    <StatCard
+      label="Signal Velocity (24h)"
+      value={
+        series.isError ? 'n/a' : <Mono>{series.data?.reduce((s, p) => s + p.count, 0) ?? '—'}</Mono>
+      }
+      sub={
+        series.isPending ? (
+          <Skeleton className="h-8" />
+        ) : series.isError ? null : (
+          <Sparkline data={series.data ?? []} />
+        )
+      }
+    />
+  )
+}
 
 export function Overview() {
   const navigate = useNavigate()
@@ -156,9 +272,61 @@ export function Overview() {
   }))
   const series = timeseries.data ?? []
 
+  const metrics = data.metrics
+  const p0Active = data.items.by_priority.P0 ?? 0
+  const ingestionRate = metrics?.ingestion_success_rate
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Overview</h1>
+
+      {/* --- Hero region (spec §8): attention header, HOT FEED, INITIATE
+          TRIAGE CTA, ingestion-success-rate tile, signal velocity, topology.
+          Each widget fails soft; the page-level gates above still apply. --- */}
+      <section aria-label="Mission control hero" className="space-y-4">
+        <div
+          data-testid="attention-header"
+          className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-border bg-card p-4"
+        >
+          <span className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+            Attention Required
+          </span>
+          <span className="flex items-center gap-2">
+            <Badge variant="p0">P0</Badge>
+            <Mono className="text-lg font-bold">{p0Active}</Mono>
+            <span className="text-sm text-muted-foreground">active</span>
+          </span>
+          <span className="flex items-center gap-2">
+            <Mono className="text-lg font-bold">{data.pending_triage}</Mono>
+            <span className="text-sm text-muted-foreground">pending triage</span>
+          </span>
+          <a
+            data-testid="initiate-triage"
+            href="/triage"
+            onClick={(e) => {
+              e.preventDefault()
+              navigate('/triage')
+            }}
+            className="ml-auto rounded bg-primary px-3 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-primary-foreground"
+          >
+            Initiate Triage ({data.pending_triage})
+          </a>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <HotFeed />
+          <TopologyPanel />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <div data-testid="ingestion-success-tile">
+              <StatCard
+                label="Ingestion Success Rate (7d)"
+                value={<Mono>{pct(ingestionRate)}</Mono>}
+              />
+            </div>
+            <SignalVelocityTile />
+          </div>
+        </div>
+      </section>
 
       {data.dead_letters > 0 && (
         <div
@@ -177,7 +345,7 @@ export function Overview() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+      <div data-testid="stat-grid" className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Pending Triage" value={data.pending_triage} />
         <StatCard label="Ingestion Queue" value={data.in_flight} />
         <StatCard label="Dead Letters" value={data.dead_letters} danger={data.dead_letters > 0} />
@@ -203,10 +371,10 @@ export function Overview() {
         <ChartCard title="Ingestion (14 days)" empty={series.length === 0}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={series}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" tickFormatter={(d) => relativeTime(d)} />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
+              <CartesianGrid stroke={CHART_DEFAULTS.grid.stroke} strokeDasharray={CHART_DEFAULTS.grid.strokeDasharray} />
+              <XAxis dataKey="date" tickFormatter={(d) => relativeTime(d)} stroke={CHART_DEFAULTS.axis.stroke} fontSize={CHART_DEFAULTS.axis.fontSize} />
+              <YAxis allowDecimals={false} stroke={CHART_DEFAULTS.axis.stroke} fontSize={CHART_DEFAULTS.axis.fontSize} />
+              <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
               <Area
                 type="monotone"
                 dataKey="count"
@@ -224,10 +392,10 @@ export function Overview() {
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={priorityData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
+              <CartesianGrid stroke={CHART_DEFAULTS.grid.stroke} strokeDasharray={CHART_DEFAULTS.grid.strokeDasharray} />
+              <XAxis dataKey="name" stroke={CHART_DEFAULTS.axis.stroke} fontSize={CHART_DEFAULTS.axis.fontSize} />
+              <YAxis allowDecimals={false} stroke={CHART_DEFAULTS.axis.stroke} fontSize={CHART_DEFAULTS.axis.fontSize} />
+              <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} cursor={{ fill: 'transparent' }} />
               <Bar dataKey="value" fill={CHART_COLORS.primary} />
             </BarChart>
           </ResponsiveContainer>
@@ -247,7 +415,7 @@ export function Overview() {
                   <Cell key={i} fill={CHART_PALETTE[i % CHART_PALETTE.length]} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
             </PieChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -258,10 +426,10 @@ export function Overview() {
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={categoryData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" allowDecimals={false} />
-              <YAxis type="category" dataKey="name" width={110} />
-              <Tooltip />
+              <CartesianGrid stroke={CHART_DEFAULTS.grid.stroke} strokeDasharray={CHART_DEFAULTS.grid.strokeDasharray} />
+              <XAxis type="number" allowDecimals={false} stroke={CHART_DEFAULTS.axis.stroke} fontSize={CHART_DEFAULTS.axis.fontSize} />
+              <YAxis type="category" dataKey="name" width={110} stroke={CHART_DEFAULTS.axis.stroke} fontSize={CHART_DEFAULTS.axis.fontSize} />
+              <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} cursor={{ fill: 'transparent' }} />
               <Bar dataKey="value" fill={CHART_COLORS.tertiary} />
             </BarChart>
           </ResponsiveContainer>
