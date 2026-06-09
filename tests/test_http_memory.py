@@ -154,6 +154,42 @@ async def test_delete_fact_calls_delete_endpoint(layer, mock_http_client):
 
 
 @pytest.mark.asyncio
+async def test_add_fact_posts_manual_fact(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.status_code = 201
+    mock_response.json.return_value = {
+        "id": "m1",
+        "content": "I prefer P1 diffs",
+        "source": "manual",
+        "timestamp": "2026-06-09T00:00:00+00:00",
+    }
+    mock_response.raise_for_status = MagicMock()
+    mock_http_client.post.return_value = mock_response
+
+    fact = await layer.add_fact("I prefer P1 diffs", "manual")
+
+    mock_http_client.post.assert_awaited_once()
+    call = mock_http_client.post.call_args
+    assert "/facts" in call[0][0]
+    # Manual origin marker is sent to the memory service (ADR0045).
+    assert call[1]["json"] == {"content": "I prefer P1 diffs", "source": "manual"}
+    assert fact.id == "m1"
+    assert fact.content == "I prefer P1 diffs"
+    assert fact.source == "manual"
+    assert fact.timestamp is not None
+
+
+@pytest.mark.asyncio
+async def test_add_fact_raises_on_failure(layer, mock_http_client):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock(side_effect=Exception("500"))
+    mock_http_client.post.return_value = mock_response
+
+    with pytest.raises(Exception):
+        await layer.add_fact("anything", "manual")
+
+
+@pytest.mark.asyncio
 async def test_update_fact_calls_patch_endpoint(layer, mock_http_client):
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
