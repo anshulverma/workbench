@@ -1,0 +1,9 @@
+# ADR 0043: Triage Is a Three-Column Layout — Variant-A Shell With Variant-B Keyboard Cards
+
+**Status:** Accepted — 2026-06-08
+
+**Context.** Two design variants exist for Triage: variant A (a three-column shell with filter and analytics rails) and variant B (keyboard-driven cards). The existing interaction model is numbered text replies (ADR 0027) over the messenger, with client-side filters.
+
+**Decision.** Combine the two: a **variant-A three-column shell** (left filter rail with Sources/Priority/Time-Window **client-side** filters over fetched pending cards; right analytics column with Signal Velocity, Automation Stats, and an LLM Insight panel) wrapping the **variant-B keyboard card feed** in the center (ID + relevance, `[1][2][3]` numbered options, free-text reply, J/K nav). The **ADR 0027 text-reply model is preserved** (numbered/free-text replies, destructive-action confirm, priority/relevance left-border). The LLM Insight panel renders only when backed by real per-option `suggestion_reason`/`confidence`. Two distinct empty states: "Inbox zero" (no cards) vs "No cards match filters" (filtered).
+
+**Consequences / Alternatives.** Filters are client-side over already-fetched cards (no new query params for filtering), keeping the server contract stable; the only schema/payload addition is a real per-card `created_at` timestamp — a new `triage_cards.created_at` column (migration `007`) surfaced on `/api/triage/pending` — to power the time-window filter. (There is no `queued_at` column: the queue lifecycle is `queued → sent → responded/expired`, so a card's "queued" age is its `created_at`. See ADR 0047.) We rejected picking one variant outright — A's information density and B's keyboard speed are both wanted. This builds on ADR 0027 (interaction stays text replies) rather than introducing interactive buttons.

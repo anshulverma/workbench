@@ -1,0 +1,9 @@
+# ADR 0033: Theme Tokens Are Raw Hex Material Surface Tiers Layered Under shadcn Semantic Vars
+
+**Status:** Accepted — 2026-06-08
+
+**Context.** The Mission Control redesign needs to match the real design HTML exactly while keeping the shadcn/Tailwind v4 component layer intact. The design uses a brand orange that drifts badly when expressed in OKLCH, a tonal depth system (no drop shadows), and a hairline border the design itself renders inconsistently (`#5a4138` brown drift).
+
+**Decision.** Author tokens as **raw hex**, not OKLCH, to pin the orange exactly. Define an extended Material **surface ladder** — `surface-container-lowest #0e0e11` < `background/surface #131316` < `surface-container-low #1b1b1e` < `surface-container #1f1f22` < `surface-container-high #2a2a2d` < `surface-container-highest #353438` — and a **two-orange system**: `primary-container #ff6a2b` (CTAs / active bar / chart-primary / focus ring) and `primary #ffb59a` (headings, icons, AA-safe orange text on dark), with `on-primary-container #0e0e11` near-black on orange fills. These extra `--surface-*` / `--brand` tokens are exposed via `@theme inline` and the shadcn semantic vars (`--background`, `--card`, `--primary`, `--border`, `--ring`, …) are mapped onto them, so components keep speaking shadcn while dense UI uses the tonal tiers directly. The hairline border is **normalized to `#26262C`** (the design's brown drift is ignored).
+
+**Consequences / Alternatives.** Components stay portable (they reference semantic vars, not hex). We rejected OKLCH (orange gamut drift off the design) and rejected collapsing to only shadcn's default token set (too few tiers for the design's tonal depth). Raw hex means no automatic perceptual lightness math; the ladder is hand-tuned and frozen as the contract (see ADR 0046 on contrast).
