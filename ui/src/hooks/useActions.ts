@@ -40,6 +40,28 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Unknown error'
 }
 
+export interface CreateActionBody {
+  summary: string
+  priority?: string
+  action_category?: string | null
+}
+
+// Manual Action Item creation (FAB). Hits POST /api/actions (B3), invalidates
+// ['actions'] so the grouped sections refetch, and toasts on success. 422 (blank
+// summary) is surfaced to the caller via onError so the form can render it
+// inline; we intentionally do NOT toast a 422 (it is a field-level message).
+export function useCreateAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateActionBody) =>
+      apiPost<Action>('/api/actions', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['actions'] })
+      toast.success('Action created')
+    },
+  })
+}
+
 export function useMarkDone() {
   const qc = useQueryClient()
   return useMutation({
