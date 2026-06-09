@@ -9,7 +9,8 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      'rounded-xl border bg-card text-card-foreground shadow',
+      // 6px radius (rounded-lg → --radius), hairline border, subtle drop shadow.
+      'rounded-lg border border-border bg-card text-card-foreground shadow-sm',
       className,
     )}
     {...props}
@@ -19,11 +20,16 @@ Card.displayName = 'Card'
 
 const CardHeader = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
+  React.HTMLAttributes<HTMLDivElement> & { divided?: boolean }
+>(({ className, divided, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn('flex flex-col space-y-1.5 p-6', className)}
+    className={cn(
+      'flex flex-col space-y-1.5 p-6',
+      // Optional divided header: a token-colored hairline under the header.
+      divided && 'border-b border-border pb-4',
+      className,
+    )}
     {...props}
   />
 ))

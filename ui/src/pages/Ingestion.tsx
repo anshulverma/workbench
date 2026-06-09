@@ -33,6 +33,7 @@ import { DataTable, type Column } from '@/components/DataTable'
 import { EmptyState } from '@/components/EmptyState'
 import { HealthBadge } from '@/components/HealthBadge'
 import { ChartCard } from '@/components/ChartCard'
+import { CHART_COLORS } from '@/lib/chart-theme'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
@@ -450,7 +451,7 @@ export function Ingestion() {
                   <XAxis dataKey="name" />
                   <YAxis allowDecimals={false} />
                   <Tooltip />
-                  <Bar dataKey="value" fill="var(--chart-1, #6366f1)" />
+                  <Bar dataKey="value" fill={CHART_COLORS.primary} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>

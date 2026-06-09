@@ -21,6 +21,7 @@ import {
 } from 'recharts'
 import { StatCard } from '@/components/StatCard'
 import { ChartCard } from '@/components/ChartCard'
+import { CHART_COLORS, CHART_PALETTE } from '@/lib/chart-theme'
 import { DataTable, type Column } from '@/components/DataTable'
 import { EmptyState } from '@/components/EmptyState'
 import { HealthBadge } from '@/components/HealthBadge'
@@ -38,13 +39,6 @@ import {
 
 const PRIORITY_ORDER = ['P0', 'P1', 'P2', 'P3']
 const CATEGORY_ORDER = ['action_item', 'meeting', 'plan_seed', 'informational']
-const DONUT_COLORS = [
-  'var(--chart-1, #6366f1)',
-  'var(--chart-2, #22c55e)',
-  'var(--chart-3, #f59e0b)',
-  'var(--chart-4, #ef4444)',
-  'var(--chart-5, #06b6d4)',
-]
 
 function isUnauthorized(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401
@@ -216,8 +210,8 @@ export function Overview() {
               <Area
                 type="monotone"
                 dataKey="count"
-                stroke={DONUT_COLORS[0]}
-                fill={DONUT_COLORS[0]}
+                stroke={CHART_COLORS.primary}
+                fill={CHART_COLORS.primary}
                 fillOpacity={0.2}
               />
             </AreaChart>
@@ -234,7 +228,7 @@ export function Overview() {
               <XAxis dataKey="name" />
               <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="value" fill={DONUT_COLORS[0]} />
+              <Bar dataKey="value" fill={CHART_COLORS.primary} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -250,7 +244,7 @@ export function Overview() {
                 outerRadius="80%"
               >
                 {sourceData.map((_, i) => (
-                  <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                  <Cell key={i} fill={CHART_PALETTE[i % CHART_PALETTE.length]} />
                 ))}
               </Pie>
               <Tooltip />
@@ -268,7 +262,7 @@ export function Overview() {
               <XAxis type="number" allowDecimals={false} />
               <YAxis type="category" dataKey="name" width={110} />
               <Tooltip />
-              <Bar dataKey="value" fill={DONUT_COLORS[1]} />
+              <Bar dataKey="value" fill={CHART_COLORS.tertiary} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
