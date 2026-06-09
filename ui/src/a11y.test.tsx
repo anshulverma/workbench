@@ -19,6 +19,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { AppSidebar } from '@/components/AppSidebar'
 import { FactRow } from '@/components/FactRow'
+import { CommandPalette } from '@/components/CommandPalette'
 
 function renderWithRouter(ui: React.ReactNode, initialEntry = '/') {
   return render(<MemoryRouter initialEntries={[initialEntry]}>{ui}</MemoryRouter>)
@@ -120,5 +121,13 @@ describe('accessibility', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.activeElement).not.toBe(dialog)
+  })
+
+  it('command palette exposes combobox + listbox roles', async () => {
+    renderWithClient(<CommandPalette open onOpenChange={() => {}} />)
+    // cmdk renders the input as role=combobox and the results list as
+    // role=listbox; both must be present for AT keyboard navigation.
+    expect(await screen.findByRole('combobox')).toBeInTheDocument()
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
   })
 })

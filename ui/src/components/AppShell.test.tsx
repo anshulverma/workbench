@@ -57,8 +57,22 @@ describe('AppShell', () => {
     renderShell()
     const trigger = screen.getByRole('button', { name: /command palette/i })
     expect(trigger).toBeInTheDocument()
-    // Placeholder for S1: no palette renders yet on click.
     expect(trigger).toHaveAttribute('data-command-trigger', 'true')
+  })
+
+  it('opens the command palette when the ⌘K trigger is clicked', async () => {
+    const user = userEvent.setup()
+    renderShell()
+    await user.click(screen.getByRole('button', { name: /command palette/i }))
+    // cmdk exposes the palette input as a combobox once open.
+    expect(await screen.findByRole('combobox')).toBeInTheDocument()
+  })
+
+  it('opens the command palette on the global ⌘K / Ctrl+K shortcut', async () => {
+    const user = userEvent.setup()
+    renderShell()
+    await user.keyboard('{Control>}k{/Control}')
+    expect(await screen.findByRole('combobox')).toBeInTheDocument()
   })
 
   it('exposes a theme toggle with an aria-label reflecting state', () => {
