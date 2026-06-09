@@ -3,56 +3,113 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+  Mission Control theme tokens (ADR 0033 / 0034 / 0046, design spec §1 + §13).
+
+  Tokens are authored as RAW HEX (not OKLCH) to pin the brand orange exactly and
+  avoid gamut drift across the two-orange system (ADR 0033). The dark palette is
+  the visual baseline; the :root light palette is grounded in
+  stitch-design-light.html. next-themes toggles `.dark` on <html> and the OS
+  preference drives `system` (ADR 0034) — there is no hardcoded class in
+  index.html anymore.
+
+  Two-orange system (do NOT collapse to one orange):
+    primary-container    #ff6a2b  CTAs / active rail bar / chart-primary / focus ring  → --primary
+    primary              #ffb59a  headings, icons, AA-safe orange text on dark         → --brand
+    on-primary-container #0e0e11  near-black text on orange fills                      → --primary-foreground
+
+  Contrast contract (ADR 0046): #ff6a2b passes AA as small text only on surfaces
+  ≤ #2a2a2d; on orange fills the foreground is near-black #0e0e11; on elevated /
+  popover / tooltip surfaces use body text or the lighter #ffb59a — never #ff6a2b
+  as text there.
+*/
+
+/* ---- Light palette (default :root, grounded in stitch-design-light.html) ---- */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --radius: 0.375rem;
+
+  --background: #fff8f6;
+  --foreground: #261813;
+  --card: #fff1ec;
+  --card-foreground: #261813;
+  --popover: #ffe9e3;
+  --popover-foreground: #261813;
+  /* Brand orange is identical across themes (ADR 0034). */
+  --primary: #ff6a2b;
+  --primary-foreground: #0e0e11;
+  --secondary: #ffe9e3;
+  --secondary-foreground: #261813;
+  --muted: #fff1ec;
+  --muted-foreground: #5f5e61;
+  /* neutral hover surface, NOT brand orange (ADR 0046 / spec §1) */
+  --accent: #fde3da;
+  --accent-foreground: #261813;
+  --destructive: #93000a;
+  --destructive-foreground: #ffffff;
+  --border: #e2bfb3;
+  --input: #ffffff;
+  --ring: #ff6a2b;
+
+  /* Extra surface ladder (light) — see ADR 0033. */
+  --surface-lowest: #ffffff;
+  --surface-low: #fff1ec;
+  --surface-container: #ffe9e3;
+  --surface-high: #fde3da;
+  --surface-highest: #f7ddd5;
+
+  /* Two-orange + functional accents. */
+  --brand: #a83900; /* AA-safe orange text on light surfaces */
+  --brand-fg: #ffffff;
+  --tertiary: #006686; /* info / links / healthy */
+  --error-text: #ba1a1a;
+  --error-fill: #93000a;
 }
 
+/* ---- Dark palette (visual baseline) ---- */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: #131316;
+  --foreground: #e4e1e6;
+  --card: #1b1b1e;
+  --card-foreground: #e4e1e6;
+  --popover: #1f1f22;
+  --popover-foreground: #e4e1e6;
+  --primary: #ff6a2b;
+  --primary-foreground: #0e0e11;
+  --secondary: #1f1f22;
+  --secondary-foreground: #e4e1e6;
+  --muted: #1b1b1e;
+  --muted-foreground: #a98a7f;
+  /* neutral hover surface, NOT brand orange (ADR 0046 / spec §1) */
+  --accent: #2a2a2d;
+  --accent-foreground: #e4e1e6;
+  --destructive: #93000a;
+  --destructive-foreground: #ffb4ab;
+  --border: #26262C;
+  --input: #0e0e11;
+  --ring: #ff6a2b;
+
+  /* Extra surface ladder (dark) — corrected from the real HTML, depth via tonal
+     tiers, NO drop shadows on in-page surfaces (ADR 0033). */
+  --surface-lowest: #0e0e11; /* inputs / log + config block bg / deepest panel */
+  --surface-low: #1b1b1e; /* → --card */
+  --surface-container: #1f1f22; /* → --popover */
+  --surface-high: #2a2a2d; /* raised header / active nav bg → --accent */
+  --surface-highest: #353438; /* highest / pills (== surface-variant) */
+
+  /* Two-orange + functional accents. */
+  --brand: #ffb59a; /* headings, icons, AA-safe orange text on dark */
+  --brand-fg: #0e0e11;
+  --tertiary: #71d2ff; /* info / links / healthy-cyan */
+  --error-text: #ffb4ab;
+  --error-fill: #93000a;
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
+  --radius-sm: calc(var(--radius) - 2px); /* chips ~2px */
+  --radius-md: calc(var(--radius) - 1px); /* buttons / inputs ~4px */
+  --radius-lg: var(--radius); /* cards ~6px */
   --radius-xl: calc(var(--radius) + 4px);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -72,6 +129,18 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  /* Extra tonal surface utilities (bg-surface-lowest, text-brand, …). */
+  --color-surface-lowest: var(--surface-lowest);
+  --color-surface-low: var(--surface-low);
+  --color-surface-container: var(--surface-container);
+  --color-surface-high: var(--surface-high);
+  --color-surface-highest: var(--surface-highest);
+  --color-brand: var(--brand);
+  --color-brand-fg: var(--brand-fg);
+  --color-tertiary: var(--tertiary);
+  --color-error-text: var(--error-text);
+  --color-error-fill: var(--error-fill);
 }
 
 @layer base {
@@ -86,9 +155,10 @@
 
   /* Visible focus rings on all interactive elements. The Tailwind reset and
      `focus-visible:outline-none` on some primitives can otherwise strip the
-     keyboard focus indicator (spec 11.3). Components that draw their own ring
-     (e.g. shadcn Button via focus-visible:ring-2) still get one; this is the
-     baseline for native controls and any element lacking an explicit ring. */
+     keyboard focus indicator (spec §13, ADR 0046). Components that draw their
+     own ring (e.g. shadcn Button via focus-visible:ring-2) still get one; this
+     is the baseline for native controls and any element lacking an explicit
+     ring. The ring is orange (--ring = #ff6a2b), 2px outline + 2px offset. */
   a,
   button,
   select,
@@ -112,21 +182,22 @@
 }
 
 /* Priority badge tokens (P0–P3) with WCAG AA contrast in both light and dark
-   modes (spec 11.3). Foreground/background pairs are chosen so the text meets
-   AA against the badge fill regardless of the page background. */
+   modes (spec §13). Foreground/background pairs are chosen so the text meets AA
+   against the badge fill regardless of the page background; hues are retuned to
+   harmonize with the two-orange palette while keeping the AA contrast ratios. */
 .prio-P0 {
-  background-color: oklch(0.55 0.22 25);
-  color: oklch(1 0 0);
+  background-color: #93000a; /* error fill */
+  color: #ffffff; /* white on #93000a ≈ 8.9:1 */
 }
 .prio-P1 {
-  background-color: oklch(0.72 0.16 65);
-  color: oklch(0.15 0 0);
+  background-color: #ff6a2b; /* brand orange */
+  color: #0e0e11; /* near-black on orange (contrast contract) ≈ 6.7:1 */
 }
 .prio-P2 {
-  background-color: oklch(0.7 0.13 250);
-  color: oklch(0.15 0 0);
+  background-color: #71d2ff; /* tertiary cyan */
+  color: #0e0e11; /* near-black on cyan ≈ 11:1 */
 }
 .prio-P3 {
-  background-color: oklch(0.6 0 0);
-  color: oklch(1 0 0);
+  background-color: #353438; /* surface-highest */
+  color: #e4e1e6; /* on-surface ≈ 9.5:1 */
 }
