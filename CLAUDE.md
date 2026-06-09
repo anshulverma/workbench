@@ -49,20 +49,37 @@ make serve
 ```
 src/workbench/           -- Python package (importable as `workbench`)
 src/workbench/__init__.py -- app version (__version__ = "0.1.0")
-src/workbench/main.py    -- FastAPI app entrypoint
-src/workbench/config.py  -- YAML config loader (OmegaConf + pydantic validation)
-src/workbench/models.py  -- Pydantic domain models
-src/workbench/storage/   -- repository interfaces + PostgreSQL implementation
-src/workbench/pipeline/  -- processing pipeline (extraction, filter, enrichment, triage, scheduler)
-src/workbench/memory/    -- memory layer interface + implementations
-src/workbench/providers/ -- pluggable providers (llm/, queue_scorer/, doc_reader/, messenger/, source/, enrichment/)
+src/workbench/__main__.py -- `python -m workbench` entry (imports runtime.app)
+src/workbench/domain/    -- entity vocabulary: pydantic models + enums (was models.py)
+src/workbench/config/    -- config models, OmegaConf loader, ruamel write-back (was config.py/config_writer.py)
+src/workbench/runtime/   -- ASGI app factory + app-level middleware (auth, correlation id); entrypoint runtime.app:app
+src/workbench/telemetry/ -- emitted operational signals: metrics, logging, instrumentation, usage aggregation, alerting, log sanitizing
+src/workbench/providers/ -- pluggable providers behind base interfaces + registry.py (Provider Registry);
+                            subfolders llm/ (incl. plugboard.py), source/, messenger/, queue_scorer/,
+                            enrichment/, connection/, change_detector/, doc_reader/, memory/ (MemoryLayer)
+src/workbench/pipeline/  -- processing pipeline (extraction, filter, enrichment, triage, scheduler, worker, engine, presenter)
+src/workbench/storage/   -- repository interfaces + PostgreSQL implementation (postgres/)
+src/workbench/api/       -- REST API route modules + redaction.py (API-output Redaction Rule)
 src/workbench/mcp/       -- MCP server and tool definitions
-src/workbench/api/       -- REST API route modules
 src/workbench/migrations/-- Alembic database migrations
 plugin/                  -- Claude Code plugin (thin HTTP client with slash commands)
 tests/                   -- test suite
 config.example.yml       -- example YAML config (template)
 ```
+
+The loose root modules and `models.py` are gone: every module now lives under a
+layered subpackage (`domain/`, `config/`, `runtime/`, `telemetry/`, `providers/`,
+`pipeline/`, `storage/`, `api/`, `mcp/`, `migrations/`). Only `__init__.py` and
+`__main__.py` remain at the `src/workbench/` root.
+
+### Per-package README convention
+
+Every package directory under `src/workbench/` carries a `README.md` describing
+its purpose and placement rule. When you add a new kind of code to a folder (a
+new provider interface, a new cross-cutting concern), update that folder's
+`README.md`. `tests/test_folder_docs.py` enforces presence (every package dir
+except `__pycache__` and the Alembic-generated `migrations/versions/` must have a
+non-empty README).
 
 ## Design Decisions
 
