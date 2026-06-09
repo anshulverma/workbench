@@ -24,6 +24,15 @@ async def get_pending(request: Request):
     return await stores.triage.get_pending()
 
 
+@router.get("/triage/cards/{card_id}")
+async def get_triage_card(card_id: str, request: Request):
+    stores = request.app.state.stores
+    card = await stores.triage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Triage card not found")
+    return card
+
+
 @router.post("/triage/respond")
 async def respond_to_triage(response: TriageResponse, request: Request):
     stores = request.app.state.stores

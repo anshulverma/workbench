@@ -121,6 +121,68 @@ class TriageOption(BaseModel):
     suggestion_reason: str | None = None
 
 
+class DiffMetadata(BaseModel):
+    author: str
+    team: str | None = None
+    status: str
+
+
+class DiffRisk(BaseModel):
+    factors: list[str] = Field(default_factory=list)
+    watch_outs: list[str] = Field(default_factory=list)
+
+
+class DiffHunkSection(BaseModel):
+    file: str
+    header: str
+    code: str
+    annotation: str = ""
+    expandable: bool = True
+    rank: int = 0
+
+
+class DiffCardContent(BaseModel):
+    metadata: DiffMetadata
+    summary: str
+    risk: DiffRisk
+    why_care: str
+    hunks: list[DiffHunkSection] = Field(default_factory=list)
+
+
+class CardLink(BaseModel):
+    label: str
+    url: str
+
+
+class CardSection(BaseModel):
+    title: str
+    body: str
+    monospace: bool = False
+
+
+class ThreadHunk(BaseModel):
+    file: str
+    header: str
+    code: str
+    rank: int = 0
+
+
+class CardMessage(BaseModel):
+    header: str
+    sections: list[CardSection] = Field(default_factory=list)
+    links: list[CardLink] = Field(default_factory=list)
+    options: list[TriageOption] = Field(default_factory=list)
+    thread_hunks: list[ThreadHunk] = Field(default_factory=list)
+
+
+class ChangeContext(BaseModel):
+    change_type: str
+    changed_fields: dict[str, dict[str, str]] = Field(default_factory=dict)
+    change_summary: str
+    previous_triage_action: str | None = None
+    previous_priority: str | None = None
+
+
 class TriageCard(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     item_id: str | None = None
@@ -130,6 +192,7 @@ class TriageCard(BaseModel):
     confidence_score: int = 50
     status: str = "queued"  # queued, sent, responded, expired
     bot_message_id: str | None = None
+    thread_name: str | None = None
     daily_sequence: int | None = None
     expires_at: datetime | None = None
     sent_at: datetime | None = None

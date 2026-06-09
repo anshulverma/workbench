@@ -4,7 +4,7 @@ import json
 
 import asyncpg
 
-from workbench.models import Item, ItemFilters, ItemStatus, ItemUpdate
+from workbench.models import Item, ItemFilters, ItemStatus, ItemUpdate, RawItem
 from workbench.storage.base import ItemStore
 
 
@@ -101,6 +101,34 @@ class PgItemStore(ItemStore):
             source_type,
         )
         return [self._row_to_item(r) for r in rows]
+
+    async def get_item_by_source_id(
+        self, source_type: str, source_id: str
+    ) -> Item | None:
+        row = await self.pool.fetchrow(
+            "SELECT * FROM items WHERE source_type = $1 AND source_id = $2 "
+            "AND status NOT IN ('archived', 'done') "
+            "ORDER BY created_at DESC LIMIT 1",
+            source_type,
+            source_id,
+        )
+        return self._row_to_item(row) if row else None
+
+    async def get_active_by_source(self, source_type: str) -> list[Item]:
+        rows = await self.pool.fetch(
+            "SELECT * FROM items WHERE source_type = $1 "
+            "AND status NOT IN ('archived', 'done') "
+            "ORDER BY created_at DESC",
+            source_type,
+        )
+        return [self._row_to_item(r) for r in rows]
+
+    async def update_raw_data(self, item_id: str, raw_item: RawItem) -> None:
+        await self.pool.execute(
+            "UPDATE items SET raw_data = $2::jsonb, updated_at = NOW() WHERE id = $1",
+            item_id,
+            json.dumps(raw_item.model_dump()),
+        )
 
     async def delete_older_than(self, status: str, days: int) -> int:
         result = await self.pool.execute(

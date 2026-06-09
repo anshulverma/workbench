@@ -85,6 +85,20 @@ class PgTriageStore(TriageStore):
         )
         return self._row_to_card(row) if row else None
 
+    async def get_card_by_item_id(self, item_id: str) -> TriageCard | None:
+        row = await self.pool.fetchrow(
+            "SELECT * FROM triage_cards WHERE item_id = $1 AND status != 'expired' "
+            "ORDER BY sent_at DESC NULLS LAST LIMIT 1",
+            item_id,
+        )
+        return self._row_to_card(row) if row else None
+
+    async def clear_deferral(self, card_id: str) -> None:
+        await self.pool.execute(
+            "UPDATE triage_cards SET deferred_until = NULL WHERE id = $1",
+            card_id,
+        )
+
     async def expire_old_cards(self, expiry_days: int) -> int:
         result = await self.pool.execute(
             "UPDATE triage_cards SET status = 'expired' "
@@ -95,8 +109,7 @@ class PgTriageStore(TriageStore):
 
     async def count_sent_today(self) -> int:
         row = await self.pool.fetchrow(
-            "SELECT COUNT(*) AS cnt FROM triage_cards "
-            "WHERE sent_at >= CURRENT_DATE"
+            "SELECT COUNT(*) AS cnt FROM triage_cards " "WHERE sent_at >= CURRENT_DATE"
         )
         return row["cnt"]  # type: ignore[index]
 
@@ -120,7 +133,8 @@ class PgTriageStore(TriageStore):
         result = await self.pool.execute(
             "DELETE FROM triage_cards WHERE status = $1 AND "
             "COALESCE(responded_at, sent_at, expires_at) < NOW() - INTERVAL '1 day' * $2",
-            status, days,
+            status,
+            days,
         )
         return int(result.split()[-1])
 

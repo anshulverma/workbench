@@ -1,0 +1,54 @@
+{
+  "topic": "mission-control-ui-redesign",
+  "domains": ["frontend", "design-system", "backend", "data-viz"],
+  "iteration": 1,
+  "phase": "complete",
+  "confidence_threshold": "medium",
+  "user_model_brief": "Power-user SWE building Workbench (single-user personal intelligence feed). Picks maximal/ambitious options but wants HONEST data (no faked metrics). Design prefs: dark + orange Mission Control; Space Grotesk + Hanken Grotesk + JetBrains Mono (mono for all data); dense; tonal depth no shadows; 64px icon rail. Constraints: workbench public OSS (nothing in workbench-meta); preserve data wiring + a11y (AA) + five-state taxonomy; HashRouter; offline (no CDN); Make dev interface; real adapters only.",
+  "settled_decisions": [
+    "Fidelity: faithful + wire new backend CASE-BY-CASE where the widget carries real signal; drop vanity/hollow widgets (active_sessions, unread pings, blocked tasks, kernel/arch/memory/network-latency); honest derivations (uptime->ingestion success rate, avg triage time from triage_cards).",
+    "Coverage: foundation + all 8 pages.",
+    "Navigation: 64px icon rail + top app bar + working CmdK palette (server /api/search, cmdk).",
+    "Theme: dark default + KEEP light + theme toggle with auto/system mode (light ref = stitch-design-light.html).",
+    "Triage: combine variant-A 3-col shell + variant-B keyboard cards (preserves ADR0027).",
+    "Noise filter: build per-source relevance/noise thresholds for real (config + hot-reload).",
+    "Write paths: build Add-Action FAB (POST /api/actions) AND Add-Fact (manual fact distinct origin).",
+    "Work Mode: client-only localStorage visual focus (faithful to design JS); no notification muting.",
+    "Design source of truth: stitch-design.html (dark) + stitch-design-light.html (light), both gitignored; DESIGN-REFERENCE.md.",
+    "Two-orange system (#ff6a2b CTAs + #ffb59a text/icons); corrected surface ladder; hairline #26262C."
+  ],
+  "branches": [
+    {"id": "b001", "topic": "Theme tokens & dark/light architecture", "confidence": "uncertain", "status": "resolved"},
+    {"id": "b002", "topic": "Typography & font delivery", "confidence": "likely", "status": "resolved"},
+    {"id": "b003", "topic": "App shell: icon rail + top app bar", "confidence": "uncertain", "status": "resolved"},
+    {"id": "b004", "topic": "CmdK command palette & global search", "confidence": "uncertain", "status": "resolved"},
+    {"id": "b005", "topic": "Shared components + charts restyle", "confidence": "uncertain", "status": "resolved"},
+    {"id": "b006", "topic": "New backend - derived metrics", "confidence": "uncertain", "status": "resolved"},
+    {"id": "b007", "topic": "New backend - infra/topology + work-mode", "confidence": "uncertain", "status": "resolved"},
+    {"id": "b008", "topic": "Pages: Overview + Triage", "confidence": "uncertain", "status": "resolved"},
+    {"id": "b009", "topic": "Pages: Action Items + Ingestion + Sources", "confidence": "likely", "status": "resolved"},
+    {"id": "b010", "topic": "Pages: Knowledge + Messenger + Settings", "confidence": "likely", "status": "resolved"},
+    {"id": "b011", "topic": "Accessibility, testing & build/migration", "confidence": "uncertain", "status": "resolved"}
+  ],
+  "unresolved": [],
+  "preference_updates": ["preference-workbench-ui-redesign"],
+  "artifacts": {
+    "decisions": "docs/auto-plan/reports/2026-06-08-mission-control-ui-redesign-decisions.md",
+    "spec": "docs/auto-plan/specs/2026-06-08-mission-control-ui-redesign-design.md",
+    "adrs": ["docs/adr/0033..0047 (15 ADRs)"],
+    "plan": "docs/auto-plan/plans/2026-06-08-mission-control-ui-redesign.md"
+  },
+  "harden": {
+    "enabled": true,
+    "max_passes": 10,
+    "current_pass": 3,
+    "convergence_status": "converged",
+    "snapshots_dir": "docs/auto-plan/reports/snapshots",
+    "passes": [
+      {"pass": 1, "status": "complete", "judge_verdict": "baseline (Snapshot-0 = Phase 0-4 artifacts; spec PASS, plan PASS)", "metrics": {"material_changes": 0, "instability_score": 0}},
+      {"pass": 2, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Applied 7 material fixes: triage_cards.created_at migration + ADR0047, app.py->main.py, ItemOrigin.MANUAL, growth_velocity scalar, efficiency_peak float, errors-24h out-of-scope, removed no-op drop-tabs.", "metrics": {"material_changes": 7, "minor_changes": 5, "open_gaps": 0, "instability_score": 7}},
+      {"pass": 3, "status": "complete", "judge_verdict": "CONVERGED", "judge_rationale": "Fixed migration-number collision (real head is 006; triage migration renumbered to 007/down_revision 006) across spec/plan/decision-log/ADR0043/ADR0047. All cross-refs resolve; 0 remaining material; final-review checklist clean.", "metrics": {"material_changes": 1, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 1}},
+      {"pass": 4, "status": "complete", "judge_verdict": "CONVERGED (orchestrator read-only verification)", "judge_rationale": "Confirmed migration 007/down 006 consistent; no TBD/TODO/UNRESOLVED/app.py/manual-equivalent in live artifacts.", "metrics": {"material_changes": 0, "open_gaps": 0, "instability_score": 0}}
+    ]
+  }
+}

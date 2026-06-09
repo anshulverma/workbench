@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -12,6 +13,8 @@ from workbench.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.memory.base import MemoryLayer
 from workbench.models import (
+    ChangeContext,
+    ExtractedItem,
     FilterRule,
     InteractionEntry,
     InterpretedResponse,
@@ -22,18 +25,39 @@ from workbench.models import (
     ItemUpdate,
     JobTrigger,
     Priority,
+    RawItem,
     SystemAction,
     TriageResponse,
     UserTodo,
 )
-from workbench.pipeline.engine import PipelineEngine
-from workbench.pipeline.triage import format_card_for_chat
+from workbench.pipeline.debounce import DebounceManager
+from workbench.providers.change_detector.base import ChangeDetector
+from workbench.providers.change_detector.fallback import AlwaysMaterialDetector
+from workbench.pipeline.change_context import build_change_context
+from workbench.pipeline.engine import PipelineEngine, enrich_item
+from workbench.pipeline.triage import format_card_for_chat, generate_card
 from workbench.pipeline.worker import DB_UNAVAILABLE
 from workbench.providers.llm.base import LLMProvider
 from workbench.providers.messenger.base import Messenger
 from workbench.storage.base import Stores
 
 logger = logging.getLogger(__name__)
+
+
+def build_change_detectors(sources: list[dict]) -> dict[str, ChangeDetector]:
+    """Build {source_type: ChangeDetector} from the sources config. Each source
+    entry may carry an optional `change_detector` provider section; sources
+    without one are skipped (routing falls back to AlwaysMaterialDetector)."""
+    from workbench.registry import create_provider
+
+    registry: dict[str, ChangeDetector] = {}
+    for entry in sources:
+        cd_section = entry.get("change_detector")
+        if not cd_section:
+            continue
+        detector = create_provider(dict(cd_section))
+        registry[detector.source_type()] = detector
+    return registry
 
 
 class WorkbenchScheduler:
@@ -67,6 +91,15 @@ class WorkbenchScheduler:
         self._source_by_id: dict[str, object] = {}
         # Stable DB source configs the scheduler manages (set at startup).
         self._db_sources: list = []
+        # Change-monitoring: per-source-type ChangeDetector registry (filled at
+        # startup, T16) + in-memory debounce of re-triage requests (T14 fire).
+        self._change_detectors: dict[str, ChangeDetector] = {}
+        self._debounce = DebounceManager(self._fire_retriage)
+        # Card presenter (CardMessage builder). main.py swaps in the
+        # CompositeCardPresenter built from presentation config; default Plain.
+        from workbench.pipeline.presenter import PlainCardPresenter
+
+        self.presenter = PlainCardPresenter()
 
     def start(self):
         jobs = [
@@ -141,6 +174,8 @@ class WorkbenchScheduler:
         (e.g. triage queue management) become no-ops, then stops APScheduler
         without waiting on in-flight jobs."""
         self._shutting_down = True
+        # Cancel any pending re-triage debounce timers before tearing down.
+        self._debounce.cancel_all()
         try:
             self.scheduler.shutdown(wait=False)
         except Exception:
@@ -239,24 +274,38 @@ class WorkbenchScheduler:
             try:
                 since = await self._read_watermark(source_id, adapter_type)
                 raw_items = await adapter.poll(since=since)
-                enqueued = 0
-                for raw_item in raw_items:
-                    try:
-                        await self.pipeline.enqueue(
-                            raw_item.raw_text,
-                            raw_item.source_type,
-                            source_id=raw_item.id,
-                            urgency_signals=raw_item.urgency_signals,
-                            trigger=trigger,
-                        )
-                        enqueued += 1
-                    except Exception as e:
-                        logger.error(
-                            "Failed to enqueue item %s from %s: %s",
-                            raw_item.id,
-                            source_id,
-                            e,
-                        )
+                # Duck-typed adapters (e.g. test fakes) may lack the monitoring
+                # method; default to non-monitoring so the legacy path runs. Only
+                # an explicit True routes to change-monitoring.
+                supports_monitoring = getattr(
+                    adapter, "supports_monitoring", lambda: False
+                )
+                if supports_monitoring() is True:
+                    detector = self._change_detectors.get(
+                        adapter_type
+                    ) or AlwaysMaterialDetector(adapter_type)
+                    enqueued = await self._route_poll_results(
+                        source_id, adapter, detector, raw_items, trigger
+                    )
+                else:
+                    enqueued = 0
+                    for raw_item in raw_items:
+                        try:
+                            await self.pipeline.enqueue(
+                                raw_item.raw_text,
+                                raw_item.source_type,
+                                source_id=raw_item.id,
+                                urgency_signals=raw_item.urgency_signals,
+                                trigger=trigger,
+                            )
+                            enqueued += 1
+                        except Exception as e:
+                            logger.error(
+                                "Failed to enqueue item %s from %s: %s",
+                                raw_item.id,
+                                source_id,
+                                e,
+                            )
                 await self.stores.config.set(
                     f"source_last_polled:{source_id}",
                     datetime.now(timezone.utc).isoformat(),
@@ -272,6 +321,210 @@ class WorkbenchScheduler:
             except Exception as e:
                 await self.stores.ingestion_runs.error_run(run_id, str(e))
                 logger.error("Source %s poll failed: %s", source_id, e)
+
+    def _ext_item_for(self, card):
+        """Reconstruct a minimal ExtractedItem for presenter routing from a
+        stored card (the presenter only needs raw_item.source_type and id)."""
+        from workbench.models import ExtractedItem, RawItem, ItemCategory
+
+        source_type = card.card_content.get("source_type", "unknown")
+        raw = RawItem(
+            id=card.item_id or card.id,
+            source_type=source_type,
+            source_label="",
+            raw_text="",
+        )
+        return ExtractedItem(
+            summary=card.card_content.get("summary", ""),
+            category=ItemCategory.INFORMATIONAL,
+            source_context="",
+            raw_item=raw,
+        )
+
+    @staticmethod
+    def _parse_raw(raw_data: dict) -> dict:
+        """Extract the source JSON from Item.raw_data for comparison."""
+        raw_text = raw_data.get("raw_text", "{}")
+        return json.loads(raw_text) if isinstance(raw_text, str) else raw_text
+
+    async def _route_poll_results(
+        self, source_id, adapter, detector, raw_items, trigger
+    ) -> int:
+        """Route poll results for a monitoring-capable source: new items ->
+        enqueue, existing items -> change detection. Returns count enqueued
+        (new ingestion only)."""
+        enqueued = 0
+        seen_ids: set[str] = set()
+
+        for raw_item in raw_items:
+            sid = adapter.stable_id(raw_item)
+            seen_ids.add(sid)
+
+            existing = await self.stores.items.get_item_by_source_id(
+                adapter.adapter_type(), sid
+            )
+
+            if existing is None:
+                try:
+                    await self.pipeline.enqueue(
+                        raw_item.raw_text,
+                        raw_item.source_type,
+                        source_id=sid,
+                        urgency_signals=raw_item.urgency_signals,
+                        trigger=trigger,
+                    )
+                    enqueued += 1
+                except Exception as e:
+                    logger.error("Failed to enqueue %s: %s", sid, e)
+                continue
+
+            old_raw = self._parse_raw(existing.raw_data)
+            new_raw = json.loads(raw_item.raw_text)
+            result = detector.detect(old_raw, new_raw)
+
+            if result.is_terminal:
+                await self._archive_terminal(existing)
+                continue
+
+            # Always update raw_data to the latest snapshot.
+            await self.stores.items.update_raw_data(existing.id, raw_item)
+
+            if result.is_material:
+                self._debounce.schedule(existing.id, result, raw_item, old_raw)
+
+        # Disappearance detection only when poll returns a complete snapshot;
+        # watermark-filtered adapters return partial sets and must not archive
+        # items that simply haven't changed since the watermark.
+        if adapter.supports_monitoring() and adapter.poll_returns_complete_set():
+            await self._detect_disappeared(adapter.adapter_type(), seen_ids)
+
+        return enqueued
+
+    async def _detect_disappeared(self, source_type: str, seen_ids: set[str]) -> None:
+        """Items in DB but absent from the latest complete poll -> terminal."""
+        active_items = await self.stores.items.get_active_by_source(source_type)
+        for item in active_items:
+            if item.source_id not in seen_ids:
+                logger.info(
+                    "Item %s disappeared from %s; archiving",
+                    item.source_id,
+                    source_type,
+                )
+                await self._archive_terminal(item)
+
+    async def _archive_terminal(self, item: Item) -> None:
+        """Archive an item and expire its pending triage card (no cooldown)."""
+        await self.stores.items.update_item(
+            item.id, ItemUpdate(status=ItemStatus.ARCHIVED)
+        )
+        card = await self.stores.triage.get_card_by_item_id(item.id)
+        if card and card.status in ("queued", "sent"):
+            card.status = "expired"
+            await self.stores.triage.update_card(card)
+
+    _LIGHT_CHANGE_TYPES = {"status_changed", "ci_changed", "comment_added"}
+
+    async def _fire_retriage(
+        self, item_id: str, result, raw_item: RawItem, old_raw: dict
+    ) -> None:
+        """Debounce callback. Presenter-driven re-triage (ADR 0030,0031,0032).
+        old_raw is the pre-update snapshot stashed at detection time."""
+        item = await self.stores.items.get_item(item_id)
+        if item is None or item.status == ItemStatus.ARCHIVED:
+            return
+
+        # Daily cap BEFORE any LLM work; critical bypasses (ADR 0032).
+        if not result.is_critical:
+            sent_today = await self.stores.triage.count_sent_today()
+            if sent_today >= self.config.triage.daily_cap:
+                logger.info("Daily cap reached; skipping re-triage for %s", item.id)
+                return
+
+        new_raw = json.loads(raw_item.raw_text)
+        existing_card = await self.stores.triage.get_card_by_item_id(item.id)
+        change_ctx = build_change_context(result, old_raw, new_raw, existing_card)
+
+        ext_item = ExtractedItem(
+            summary=item.summary,
+            category=item.category,
+            source_context=raw_item.source_label,
+            raw_item=raw_item,
+        )
+
+        # Two-tier regen depth keyed on change_type (ADR 0032).
+        if result.change_type == "code_updated":
+            # MUST pass depth="deep": DiffEnricher only re-fetches the diff
+            # (and regenerates curated hunks) in deep mode; the default
+            # "shallow" would silently skip the fetch and defeat ADR 0032.
+            enrichment = await enrich_item(
+                self.pipeline.enricher, ext_item, "deep", memory=self.memory
+            )
+        else:
+            # Light path: reuse stored curated hunks; no diff re-fetch.
+            stored_sections = (
+                existing_card.card_content.get("sections", {}) if existing_card else {}
+            )
+            enrichment = {
+                "context": {
+                    "curated_hunks": stored_sections.get("hunks", []),
+                    "metadata": stored_sections.get("metadata", {}),
+                    "revision_id": stored_sections.get("revision_id", ""),
+                }
+            }
+
+        new_card = await generate_card(
+            self.llm,
+            ext_item,
+            enrichment,
+            raw_item.source_type,
+            memory=self.memory,
+            content_generators=self.content_generators,
+            change_context=change_ctx,
+        )
+        new_card.item_id = item.id
+
+        if existing_card is None:
+            new_card.expires_at = datetime.now(timezone.utc) + timedelta(
+                days=self.pipeline.triage_expiry_days
+            )
+            await self.stores.triage.save_card(new_card)
+            return
+
+        # Re-read status (race mitigation).
+        existing_card = await self.stores.triage.get_card(existing_card.id)
+        if existing_card.deferred_until is not None:
+            await self.stores.triage.clear_deferral(existing_card.id)
+
+        if existing_card.status == "queued":
+            self._copy_card_content(existing_card, new_card)
+            await self.stores.triage.update_card(existing_card)
+
+        elif existing_card.status == "sent":
+            self._copy_card_content(existing_card, new_card)
+            await self.stores.triage.update_card(existing_card)
+            if self.messenger:
+                message = self.presenter.render(existing_card, ext_item)
+                message.header = f"[Updated] {message.header}"
+                ok = await self.messenger.update_message(
+                    existing_card.bot_message_id, message
+                )
+                if not ok:
+                    new_id = await self.messenger.send_card(message)
+                    existing_card.bot_message_id = new_id
+                    await self.stores.triage.update_card(existing_card)
+
+        else:  # responded / expired -> new card
+            new_card.expires_at = datetime.now(timezone.utc) + timedelta(
+                days=self.pipeline.triage_expiry_days
+            )
+            await self.stores.triage.save_card(new_card)
+
+    @staticmethod
+    def _copy_card_content(dst, src) -> None:
+        dst.card_content = src.card_content
+        dst.options = src.options
+        dst.relevance_score = src.relevance_score
+        dst.confidence_score = src.confidence_score
 
     async def _alert_check(self):
         """Build health dict and run alert checks."""
@@ -411,8 +664,9 @@ class WorkbenchScheduler:
         if not card:
             return
 
-        text = format_card_for_chat(card, position=1, total=len(pending))
-        msg_id = await self.messenger.send_card(text)
+        ext_item = self._ext_item_for(card)
+        message = self.presenter.render(card, ext_item)
+        msg_id = await self.messenger.send_card(message)
         card.status = "sent"
         card.sent_at = datetime.now(timezone.utc)
         card.bot_message_id = msg_id

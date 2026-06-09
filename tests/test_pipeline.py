@@ -301,6 +301,7 @@ async def test_scheduler_poll_sources_enqueues_items(stores, mock_llm):
 
     mock_source = AsyncMock()
     mock_source.adapter_type = MagicMock(return_value="github")
+    mock_source.supports_monitoring = MagicMock(return_value=False)
     mock_source.poll.return_value = [
         RawItem(
             id="gh-pr-1",
@@ -347,6 +348,7 @@ async def test_scheduler_poll_sources_tracks_last_polled(stores, mock_llm):
 
     mock_source = AsyncMock()
     mock_source.adapter_type = MagicMock(return_value="github")
+    mock_source.supports_monitoring = MagicMock(return_value=False)
     mock_source.poll.return_value = [
         RawItem(
             id="gh-pr-1",
@@ -395,6 +397,7 @@ async def test_scheduler_poll_sources_skips_duplicates(stores, mock_llm):
 
     mock_source = AsyncMock()
     mock_source.adapter_type = MagicMock(return_value="github")
+    mock_source.supports_monitoring = MagicMock(return_value=False)
     mock_source.poll.return_value = [
         RawItem(
             id="gh-pr-1",

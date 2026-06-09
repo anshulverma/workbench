@@ -13,6 +13,7 @@ from workbench.models import (
     ItemFilters,
     ItemUpdate,
     PipelineJob,
+    RawItem,
     Plan,
     PlanFilters,
     PlanUpdate,
@@ -37,6 +38,14 @@ class ItemStore(ABC):
     async def archive_item(self, item_id: str) -> None: ...
     @abstractmethod
     async def get_items_by_source(self, source_type: str) -> list[Item]: ...
+    @abstractmethod
+    async def get_item_by_source_id(
+        self, source_type: str, source_id: str
+    ) -> Item | None: ...
+    @abstractmethod
+    async def get_active_by_source(self, source_type: str) -> list[Item]: ...
+    @abstractmethod
+    async def update_raw_data(self, item_id: str, raw_item: RawItem) -> None: ...
     @abstractmethod
     async def delete_older_than(self, status: str, days: int) -> int:
         """Delete items with given status older than days. Returns count deleted."""
@@ -81,6 +90,10 @@ class TriageStore(ABC):
     async def record_response(self, card_id: str, response: TriageResponse) -> None: ...
     @abstractmethod
     async def get_card(self, card_id: str) -> TriageCard | None: ...
+    @abstractmethod
+    async def get_card_by_item_id(self, item_id: str) -> TriageCard | None: ...
+    @abstractmethod
+    async def clear_deferral(self, card_id: str) -> None: ...
     @abstractmethod
     async def expire_old_cards(self, expiry_days: int) -> int: ...
     @abstractmethod

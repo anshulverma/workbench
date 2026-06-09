@@ -120,8 +120,12 @@ class EnrichmentConfig(BaseModel):
     )
 
 
+class PresentationConfig(BaseModel):
+    providers: list[dict] = Field(default_factory=list)
+
+
 class AppConfig(BaseModel):
-    version: str = "0.3.0"
+    version: str = "0.4.0"
     server: ServerConfig = Field(default_factory=ServerConfig)
     storage: StorageConfig
     llm: dict
@@ -133,6 +137,7 @@ class AppConfig(BaseModel):
     messenger: dict | None = None
     sources: list[dict] = Field(default_factory=list)
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
+    presentation: PresentationConfig = Field(default_factory=PresentationConfig)
     memory: dict | None = None
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     debug: DebugConfig = Field(default_factory=DebugConfig)

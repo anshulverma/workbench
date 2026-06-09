@@ -1,0 +1,54 @@
+{
+  "topic": "plugboard-call-reduction-and-observability",
+  "domains": ["backend", "observability", "devops", "data-ml"],
+  "iteration": 1,
+  "phase": "harden",
+  "confidence_threshold": "medium",
+  "user_model_brief": "Workbench: Meta-internal single-user low-volume intelligence feed. Plugboard = Meta LLM gateway; 3 clients (main_llm Sonnet, queue_scorer Haiku, memory/Graphiti Haiku separate process). Goal: reduce plugboard calls + observability via Prometheus + periodic batched logs (Grafana later). Prefs: YAML config source of truth + hot-reload (ruamel), structlog JSON, do-it-right/avoid-future-migrations, extend existing patterns, foundational vs Meta-overlay doc split.",
+  "branches": [
+    {"id": "b001", "topic": "auto_drop config gate", "confidence": "likely", "depth": 1, "parent": null, "status": "resolved"},
+    {"id": "b002", "topic": "unit-of-work batching", "confidence": "uncertain", "depth": 1, "parent": null, "status": "resolved"},
+    {"id": "b003", "topic": "main-app LLM instrumentation (tokens/model/client)", "confidence": "uncertain", "depth": 1, "parent": null, "status": "resolved"},
+    {"id": "b004", "topic": "memory-service metrics + Graphiti client instrumentation", "confidence": "uncertain", "depth": 1, "parent": null, "status": "resolved"},
+    {"id": "b005", "topic": "periodic batched structured log summary", "confidence": "likely", "depth": 1, "parent": null, "status": "resolved"},
+    {"id": "b006", "topic": "ops wiring (prometheus/grafana/compose/config/docs)", "confidence": "likely", "depth": 1, "parent": null, "status": "resolved"}
+  ],
+  "decisions": [
+    {"id": "d001", "question": "auto_drop recording", "answer": "config-gated pipeline.record_drop_decisions=False; gate engine.py auto_drop record call; job counter outside gate; auto_include unchanged; also wire triage_expiry_days", "confidence": "high", "source": "user + griller G4", "branch": "b001", "depends_on": []},
+    {"id": "d002", "question": "batching mechanism", "answer": "unit-of-work (score_relevance_many per raw item; score_urgency_many per poll), NOT time-window; JSON indexed multi-item prompt; per-item fallback; preserve 3x retry; don't batch extract/generate_card/interpret", "confidence": "high", "source": "user + griller G1, ADR 0048", "branch": "b002", "depends_on": []},
+    {"id": "d003", "question": "score_urgency max_tokens blocker", "answer": "raise max_tokens proportional to batch size in score_urgency_many", "confidence": "high", "source": "griller G1", "branch": "b002", "depends_on": ["d002"]},
+    {"id": "d004", "question": "instrumentation layer for tokens/model/client", "answer": "call-site shim workbench/providers/_plugboard.py wrapping messages.create; PlugboardCallRecord to injected sink (on_plugboard_call), providers don't import metrics; coexist with method-view decorator", "confidence": "high", "source": "griller G2, ADR 0049", "branch": "b003", "depends_on": []},
+    {"id": "d005", "question": "metric schema", "answer": "new plugboard_* family {client,model}: calls/call_seconds(buckets to 60s)/tokens{direction}/errors{error_type}/items; client in {main_llm,queue_scorer,memory}; existing llm_*{method} untouched", "confidence": "high", "source": "griller G2+G3, ADR 0049/0050", "branch": "b003", "depends_on": ["d004"]},
+    {"id": "d006", "question": "memory service instrumentation", "answer": "InstrumentedAnthropicClient subclass wired in create_llm_client (covers OSS+Meta); calls/latency/errors authoritative, tokens best-effort; same plugboard_* family client=memory + memory_episodes_ingested_total; add prometheus-client + /metrics + MetricsConfig; edit src/memory/memory not build", "confidence": "high", "source": "griller G3, ADR 0050", "branch": "b004", "depends_on": ["d005"]},
+    {"id": "d007", "question": "periodic log source", "answer": "in-process UsageAggregator fed by same sink; drain() per interval; llm_usage_summary structlog event; skip empty; metrics.summary_log + summary_interval_seconds=30; both processes", "confidence": "high", "source": "griller G4 (reconciled with G2)", "branch": "b005", "depends_on": ["d004"]},
+    {"id": "d008", "question": "/metrics auth", "answer": "unauthenticated both services, ADR 0051, loopback + SSH tunnel", "confidence": "high", "source": "user + griller G2/G4, ADR 0051", "branch": "b006", "depends_on": []},
+    {"id": "d009", "question": "ops wiring", "answer": "prometheus.yml at repo root foundational; prometheus+grafana in foundational docker-compose network_mode:host localhost:8421/8422; datasource provisioned, dashboards deferred; example configs updated; docs", "confidence": "high", "source": "griller G4", "branch": "b006", "depends_on": ["d005"]},
+    {"id": "d010", "question": "config gating semantics", "answer": "metrics.enabled gates emission+endpoint; summary_log gates summary task; DebugConfig.llm_token_usage gates verbose per-call logging only; counters unconditional when enabled", "confidence": "high", "source": "griller G2/G4", "branch": "b003", "depends_on": []}
+  ],
+  "unresolved": [],
+  "out_of_scope": [
+    "Meta read-only config mount (:ro) vs hot-reload write-back conflict",
+    "curated Grafana dashboards (deferred)",
+    "Anthropic Message Batches async API"
+  ],
+  "preference_updates": [],
+  "artifacts": {
+    "context_md": "CONTEXT.md (appended)",
+    "spec": "docs/auto-plan/specs/2026-06-08-plugboard-call-reduction-and-observability-design.md",
+    "adrs": ["docs/adr/0048-batch-llm-calls-within-unit-of-work.md", "docs/adr/0049-two-layer-llm-instrumentation-with-sink-injection.md", "docs/adr/0050-memory-service-graphiti-client-instrumentation.md", "docs/adr/0051-unauthenticated-metrics-endpoints.md"],
+    "plan": "docs/auto-plan/plans/2026-06-08-plugboard-call-reduction-and-observability.md"
+  },
+  "harden": {
+    "enabled": true,
+    "max_passes": 10,
+    "current_pass": 5,
+    "convergence_status": "converged",
+    "snapshots_dir": "docs/auto-plan/reports/snapshots",
+    "passes": [
+      {"pass": 5, "status": "complete", "snapshot_path": "docs/auto-plan/reports/snapshots/pass-4", "judge_verdict": "CONVERGED", "judge_rationale": "Fresh-context cross-check of all 6 artifacts + CONTEXT against real code found zero material gaps: every spec decision §3.1-3.9 maps to a plan task; metric names/labels/interfaces consistent; code facts verified (scorer max_tokens=100, /metrics already auth-exempt, ports 8421/8422, record_entity bypasses worker, _call_with_retry returns str); no UNRESOLVED markers. Zero edits.", "fingerprint": [], "gaps_filled": [], "questions_bubbled_up": [], "decisions_delta": {"added": [], "modified": [], "invalidated": []}, "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}},
+      {"pass": 4, "status": "complete", "snapshot_path": "docs/auto-plan/reports/snapshots/pass-3", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Single targeted fix of Pass-3 gap: decide_from_score signature reconciled (defaulted keyword params) across spec §3.2 + plan T5; dead PipelineConfig thresholds wired through PipelineEngine.__init__ from config.pipeline.*. Judge: 2 material changes, ZERO open gaps — artifact set now internally consistent and gap-free; next pass positioned for zero-edit convergence.", "fingerprint": ["spec3.2:decide_from_score-defaults", "plan-t5:pipelineconfig-thresholds-wired"], "gaps_filled": ["decide_from_score signature mismatch", "dead PipelineConfig threshold wiring"], "questions_bubbled_up": [], "decisions_delta": {"added": ["PipelineEngine threshold params from config"], "modified": ["d002"], "invalidated": []}, "metrics": {"material_changes": 2, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 2}},
+      {"pass": 3, "status": "complete", "snapshot_path": "docs/auto-plan/reports/snapshots/pass-2", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Fixed all 3 Pass-2 gaps (decide_from_score module ownership; §6 path-dependent criterion; plan T7 record_entity handler for type=entity). Judge caught one new gap: decide_from_score signature mismatch spec(required params)/plan(defaults) + threshold-sourcing inconsistency (PipelineConfig vs filter.py defaults).", "fingerprint": ["spec3.2:decide_from_score", "spec6:path-dependent", "plan-t7:record_entity-handler", "adr0050:entity-enum"], "gaps_filled": ["G1 helper ownership", "G2 success criterion", "G3 entity episode handler"], "questions_bubbled_up": [], "decisions_delta": {"added": ["decide_from_score helper in filter.py"], "modified": ["d002", "d006"], "invalidated": []}, "metrics": {"material_changes": 5, "minor_changes": 0, "open_gaps": 1, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 6}},
+      {"pass": 2, "status": "complete", "snapshot_path": "docs/auto-plan/reports/snapshots/pass-1", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Three corrected code-reference errors (score_urgency in enqueue not scheduler; entity-episode needs record_entity handler; memory binds 0.0.0.0 not loopback), enqueue_prescored contract added, max_tokens formula pinned. Judge surfaced plan T7 not updated for record_entity instrumentation.", "fingerprint": ["adr0048:enqueue_prescored", "adr0051:0.0.0.0-binding", "spec3.5:entity-handler", "spec3.2:max_tokens-formula", "plan-t5:_process_extracted_item-retained"], "gaps_filled": ["urgency call-site mislocation", "entity episode metric site", "memory /metrics security rationale", "relevance-batch threshold/routing preservation"], "questions_bubbled_up": [], "decisions_delta": {"added": ["enqueue_prescored contract", "_route_poll_results pre-pass"], "modified": ["d002", "d006", "d008"], "invalidated": []}, "metrics": {"material_changes": 15, "minor_changes": 2, "open_gaps": 3, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 18}}
+    ]
+  }
+}

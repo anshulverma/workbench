@@ -1,5 +1,5 @@
 # config.example.yml — copy to config.yml and edit
-version: "0.3.0"
+version: "0.4.0"
 
 server:
   port: 8421
@@ -84,6 +84,19 @@ sources: []
 #     exclude_spaces: []
 #     track: "participating"
 #     user_id: "users/user-me"
+
+# Presentation — CompositeCardPresenter routes by source_type (restart-only, ADR 0029)
+presentation:
+  providers: []
+# Example (Meta diff cards):
+#   - source_type: diff
+#     class: workbench_meta.providers.presentation.diff_presenter.DiffCardPresenter
+#     content_generator: workbench_meta.providers.content.diff_generator.DiffCardContentGenerator
+#     config:
+#       enabled: true
+#       max_hunks: 15           # UI cap; chat always slices top 3
+#       sections: [metadata, summary, risk, why_care, hunks]
+#       expand_default: [risk, why_care]
 
 # Enrichment — CompositeEnricher routes by source_type
 enrichment:

@@ -9,7 +9,7 @@ Personal intelligence feed. Ingests from configurable sources, filters noise ada
 **Item**: A single actionable thing stored in the `items` table — an action item, meeting to schedule, or informational note. One raw input (email, meeting notes) produces multiple independent items via LLM extraction. Created eagerly when the pipeline decides to triage — status starts as `pending_triage`. Status lifecycle: `pending_triage → active` (user accepted or auto-expired), `pending_triage → archived` (user skipped), `active → done`, `active → archived`.
 _Avoid_: "ticket", "entry"
 
-**Triage Card**: A structured, source-type-specific presentation of an item awaiting user decision. LLM-generated card body explains *why* the item matters using entity knowledge, relationships, and preference facts (all sent to the LLM without caps). Memory context is stored on the card at generation time for use by the response interpreter. Sent via the configured messenger one at a time with numbered options (including a final "Other" option) and a free-text hint. The user responds by typing a number, or by typing free text which is interpreted by the LLM. All response handling (numbered, free-text, defer, confirmation) goes through a shared `execute_triage_response()` function. Status lifecycle: `queued → sent → responded / expired`, with additional states `awaiting_followup` (waiting for free-text after "Other") and `awaiting_confirmation` (waiting for confirmation of destructive action). Timeout on `awaiting_*` states reverts to `queued` (card re-sent with fresh options). Cards can be deferred (snoozed) via the `defer` action, setting `deferred_until` — on snooze expiry, the card is re-scored via LLM and auto-skipped if below drop threshold.
+**Triage Card**: A structured, source-type-specific presentation of an item awaiting user decision. LLM-generated card body explains *why* the item matters using entity knowledge, relationships, and preference facts (entity facts cap 5, preference facts cap 20, relationships cap 10; i.e. entity 5 / preference 20 / relationship 10). Memory context is stored on the card at generation time for use by the response interpreter. Sent via the configured messenger one at a time with numbered options (including a final "Other" option) and a free-text hint. The user responds by typing a number, or by typing free text which is interpreted by the LLM. All response handling (numbered, free-text, defer, confirmation) goes through a shared `execute_triage_response()` function. Status lifecycle: `queued → sent → responded / expired`, with additional states `awaiting_followup` (waiting for free-text after "Other") and `awaiting_confirmation` (waiting for confirmation of destructive action). Timeout on `awaiting_*` states reverts to `queued` (card re-sent with fresh options). Cards can be deferred (snoozed) via the `defer` action, setting `deferred_until` — on snooze expiry, the card is re-scored via LLM and auto-skipped if below drop threshold.
 _Avoid_: "notification" (triage cards are interactive, not just alerts), "message"
 
 **Triage Response**: A user's decision on a triage card. Can be a numbered option selection, "Other" (triggers follow-up), or free text (interpreted by LLM into system actions + user todos). Submitted via messenger reply (primary) or API/CLI.
@@ -119,6 +119,38 @@ _Avoid_: "context" alone (too generic), "lookup"
 
 **Morning Briefing**: Daily automated messenger notification summarizing seven sections: (1) P0 — Today, (2) P1 — This Week, (3) new items since yesterday by source type, (4) pending triage count + oldest card age, (5) pending actions — user action items grouped by category (only if non-zero), (6) queue health — ingestion queue depth and failed/stuck items (only if non-zero), (7) auto-decisions overnight — cards that expired and were auto-included at P3 (only if non-zero). Sent by the scheduler at a configurable time.
 _Avoid_: "daily digest" (could be confused with preference digest), "summary"
+
+### Card Presentation & Change Monitoring
+
+**Card Presenter**: A pure, deterministic renderer (no LLM, no memory) that turns a `TriageCard` plus its `ExtractedItem` into a transport-neutral `CardMessage`. The `CardPresenter` ABC lives in `src/workbench/pipeline/presenter.py`; `CompositeCardPresenter` routes by `source_type` against delegates built from the `presentation.providers` config and falls back to `PlainCardPresenter` (which wraps `format_card_for_chat`) on unknown source type, missing/invalid sections, or any delegate exception (logged `presenter_failure`/`presenter_fallback`/`presenter_content_invalid`). Restart-only (ADR 0029); not on the hot-reload path.
+
+**Card Content Schema**: A typed pydantic shape persisted under the existing untyped `TriageCard.card_content` dict (no Alembic migration). `card_content['content_schema']="diff.v1"` is the discriminator and `card_content['sections']` holds the serialized `DiffCardContent{metadata, summary, risk, why_care, hunks}`; legacy `card_body`/`summary` keys remain for the plain fallback (ADR 0022).
+
+**Card Content Generator**: A registered `CardContentGenerator` selected by `source_type` (dynamic import like enrichers). `generate_card` dispatches to it without naming "diff"; the default when none is registered is `llm.generate_triage_card`. The Meta `DiffCardContentGenerator` makes a single Opus 4.8 (`claude-opus-4-8`) `json_schema` call (`max_tokens=8000`) producing all five sections, citing only changes present in the curated hunks (ADR 0025).
+
+**CardMessage**: The transport-neutral message object (`header`, `sections`, `links`, `options`, `thread_hunks`) emitted by a Card Presenter and consumed by `Messenger.send_card(CardMessage) -> message_id`. The base `Messenger.render_to_text(CardMessage)` flattens it for console/non-rich transports; `GoogleChatMessenger` overrides `send_card` to translate it to cardsV2 with threaded monospace hunk replies (ADR 0026).
+
+**Diff Enricher**: The Meta `DiffEnricher` registered for `source_type="diff"`. In deep mode it lazily fetches the diff (`meta phabricator.diff get`, `asyncio.create_subprocess_exec`, 30s timeout), applies a cheap Path Pre-skip (lockfiles/`__generated__`/vendored, recorded in `skipped_files`), enforces budget caps (40 files / ~200KB / `truncated`), and emits `{metadata, entity_refs, curated_hunks, skipped_files, truncated, revision_id, diff_url}` as enrichment context — never written to `raw_text`. Degrades to shallow (metadata + entity_refs) on fetch failure and never raises (ADR 0024).
+
+**ChangeDetector**: Pluggable, synchronous, no-LLM comparator of old vs new raw source dicts, returning a `ChangeResult`. Registered per source via `change_detector:` config; missing → `AlwaysMaterialDetector` fallback. Gated by `SourceAdapter.supports_monitoring()` so it never runs for email/calendar.
+
+**ChangeResult**: Value object `{is_material, is_terminal, is_critical, changed_fields, change_type, reason}` produced by a `ChangeDetector`. `change_type` keys regeneration depth (ADR 0032).
+
+**material change**: A source-type-specific field-set change (e.g. diff status/CI/comments, new diff version) that warrants re-triage. Defined per detector, not by LLM.
+
+**terminal state**: Source state needing no further monitoring (diff landed/abandoned, task resolved). Detected by `ChangeDetector.is_terminal` or by disappearance from a complete-set poll; archives the item and expires its card.
+
+**stable source_id**: An identifier surviving updates (`D12345`, `T67890`) via `SourceAdapter.stable_id()`, replacing the legacy compound `{number}_{updated}`. The item match key for change detection.
+
+**re-triage**: Regenerating a new/updated `TriageCard` for an existing `Item` after a material change, via `_fire_retriage` — the SINGLE diff-card regeneration path (ADR 0030). Renders through `CompositeCardPresenter → CardMessage` and sends via `send_card`/`update_message` (ADR 0031).
+
+**ChangeContext**: Structured `{change_type, changed_fields, change_summary, previous_triage_action, previous_priority}` built from a `ChangeResult` + old/new raw + previous card, threaded into `generate_card`/`CardContentGenerator` for change-aware copy and re-triage options.
+
+**DebounceManager**: In-memory 2-minute trailing-edge timer per `item_id` collapsing rapid changes into one re-triage; merges `ChangeResult`s with heaviest-`change_type` wins (ADR 0032). Lost on restart; re-detected next poll.
+
+**diff_version**: The active code-diff version id captured by Phabricator `poll()` into `Item.raw_data` (opaque, equality-compared). A change makes `PhabricatorChangeDetector` emit `change_type="code_updated"` (ADR 0032). Field name confirmed by the schema verification task; fallback proxy = files-changed/line-count.
+
+**code_updated**: The heaviest `change_type`; triggers the FULL re-triage path (`_fire_retriage` re-runs `DiffEnricher` to re-fetch the diff and `DiffCardContentGenerator` to regenerate hunks). All other change types take the LIGHT path (reuse stored hunks, regenerate only copy + options) (ADR 0032).
 
 ## Relationships
 

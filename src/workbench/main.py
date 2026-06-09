@@ -137,12 +137,21 @@ async def lifespan(app: FastAPI):
 
     from workbench.pipeline.engine import PipelineEngine
 
+    # Presentation layer: CompositeCardPresenter + per-source content generators
+    # built from the `presentation` config (ADR 0023/0024/0029).
+    from workbench.pipeline.presenter import build_composite_presenter
+    from workbench.pipeline.content_generator import build_content_generators
+
+    app.state.presenter = build_composite_presenter(config.presentation)
+    app.state.content_generators = build_content_generators(config.presentation)
+
     app.state.pipeline = PipelineEngine(
         app.state.stores,
         app.state.memory,
         app.state.llm,
         app.state.enricher,
         queue_scorer=app.state.queue_scorer,
+        content_generators=app.state.content_generators,
     )
 
     # Ingestion queue worker
@@ -187,7 +196,10 @@ async def lifespan(app: FastAPI):
         source_by_id[sid] = adapter
 
     # Scheduler
-    from workbench.pipeline.scheduler import WorkbenchScheduler
+    from workbench.pipeline.scheduler import (
+        WorkbenchScheduler,
+        build_change_detectors,
+    )
 
     app.state.scheduler = WorkbenchScheduler(
         app.state.stores,
@@ -200,6 +212,9 @@ async def lifespan(app: FastAPI):
     )
     app.state.scheduler._db_sources = db_sources
     app.state.scheduler._source_by_id = source_by_id
+    app.state.scheduler.presenter = app.state.presenter
+    # Change-monitoring: register per-source-type ChangeDetectors from config.
+    app.state.scheduler._change_detectors = build_change_detectors(config.sources)
     app.state.scheduler.start()
     logger.info("Workbench %s ready on port %d", __version__, config.server.port)
 

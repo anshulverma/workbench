@@ -1,0 +1,225 @@
+{
+  "topic": "combined-diff-cards-and-change-monitoring",
+  "domains": [
+    "backend",
+    "api-design",
+    "frontend",
+    "data-ml-llm",
+    "provider-architecture"
+  ],
+  "iteration": 1,
+  "phase": "complete",
+  "kind": "integration-merge",
+  "merges": [
+    "docs/auto-plan/specs/2026-06-08-review-grade-diff-triage-cards-design.md + plans/2026-06-08-review-grade-diff-triage-cards.md (Feature A)",
+    "docs/auto-plan/specs/2026-06-08-change-monitoring-retriage-design.md + plans/2026-06-08-change-monitoring-retriage.md (Feature B)"
+  ],
+  "note": "Feature A and B internal decisions are SETTLED (A: 46 decisions/ADRs 0022-0029; B: 21 decisions D1-D21). This run only resolves the INTEGRATION seams and produces ONE combined executable plan + integration ADRs 0030-0032.",
+  "branches": [
+    {
+      "id": "ib1",
+      "topic": "merged generate_card + re-triage rich cards",
+      "confidence": "uncertain",
+      "status": "resolved"
+    },
+    {
+      "id": "ib2",
+      "topic": "messenger interface reconciliation (send_card/update_message CardMessage)",
+      "confidence": "uncertain",
+      "status": "resolved"
+    },
+    {
+      "id": "ib3",
+      "topic": "diff code-change detection (diff_version) + regen depth",
+      "confidence": "uncertain",
+      "status": "resolved"
+    },
+    {
+      "id": "ib4",
+      "topic": "unified task ordering + combined config/version",
+      "confidence": "likely",
+      "status": "resolved"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "i1",
+      "q": "merged generate_card signature",
+      "a": "generate_card(llm, item, enrichment_context, source_type, *, memory=None, change_context: ChangeContext|None=None); CardContentGenerator.generate(item, enrichment_context, *, memory_context=None, change_context=None); default generator (llm.generate_triage_card) accepts-and-ignores change_context",
+      "confidence": "high",
+      "branch": "ib1"
+    },
+    {
+      "id": "i2",
+      "q": "_fire_retriage send path",
+      "a": "_fire_retriage holds CompositeCardPresenter ref; sequence: re-read item+card -> build ChangeContext -> daily-cap (critical bypass) -> enrich_item (re-runs DiffEnricher) -> generate_card(change_context) -> presenter.render -> CardMessage -> send/update via CardMessage messenger iface; replaces format_card_for_chat plain text",
+      "confidence": "high",
+      "branch": "ib1"
+    },
+    {
+      "id": "i3",
+      "q": "d46 vs detector reconciliation",
+      "a": "drop A's standalone revision_id polling; regeneration only via _fire_retriage; enricher keeps revision_id/diff_version for display+detection",
+      "confidence": "high",
+      "branch": "ib1",
+      "adr": "0030"
+    },
+    {
+      "id": "i4",
+      "q": "two-tier regen cost gate",
+      "a": "code_updated -> full re-fetch+regen hunks; status/ci/comment -> reuse stored card_content.sections.hunks, regen copy/options only",
+      "confidence": "medium",
+      "branch": "ib1",
+      "adr": "0032"
+    },
+    {
+      "id": "i5",
+      "q": "where change context surfaces",
+      "a": "dedicated 'change' element in diff.v1 sections ('What changed since last triage'); cardsV2 header chip + UI callout; may bias risk copy",
+      "confidence": "medium",
+      "branch": "ib1"
+    },
+    {
+      "id": "i6",
+      "q": "re-triage options for diffs",
+      "a": "DiffCardContentGenerator produces change-aware options in the same Opus call (gated on change_context); generic 'Other' append stays in generate_card",
+      "confidence": "high",
+      "branch": "ib1"
+    },
+    {
+      "id": "i7",
+      "q": "update_message signature",
+      "a": "update_message(message_id: str, card: CardMessage) -> bool; base default False; console prints render_to_text(card); symmetric with send_card(CardMessage)",
+      "confidence": "high",
+      "branch": "ib2",
+      "adr": "0031"
+    },
+    {
+      "id": "i8",
+      "q": "hunk replies on update",
+      "a": "v1 patches parent cardsV2 only, leaves thread hunks stale; '[Updated]' in CardMessage.header (not text prefix)",
+      "confidence": "medium",
+      "branch": "ib2",
+      "adr": "0031"
+    },
+    {
+      "id": "i9",
+      "q": "message id field",
+      "a": "reuse existing TriageCard.bot_message_id (parent message resource name) for send+update+poll; add optional thread_name field; drop B's separate field",
+      "confidence": "high",
+      "branch": "ib2",
+      "adr": "0031"
+    },
+    {
+      "id": "i10",
+      "q": "update False fallback",
+      "a": "update_message False -> send_card(card) -> MUST re-persist new bot_message_id (+thread_name) else poll anchors on dead message",
+      "confidence": "high",
+      "branch": "ib2",
+      "adr": "0031"
+    },
+    {
+      "id": "i11",
+      "q": "console rich send+update",
+      "a": "render_to_text(CardMessage) handles both; no rich path needed",
+      "confidence": "high",
+      "branch": "ib2"
+    },
+    {
+      "id": "i12",
+      "q": "poll after patch",
+      "a": "spaces.messages.patch preserves message/thread identity; poll_responses(bot_message_id) still works",
+      "confidence": "high",
+      "branch": "ib2"
+    },
+    {
+      "id": "i13",
+      "q": "code-change signal",
+      "a": "add diff_version to poll() capture (active code-diff version id, opaque equality compare); detector material field diff_version change -> change_type 'code_updated'; NOT updated timestamp, NOT revision_id",
+      "confidence": "medium",
+      "branch": "ib3",
+      "adr": "0032"
+    },
+    {
+      "id": "i14",
+      "q": "change_type taxonomy",
+      "a": "code_updated, status_changed, ci_changed, comment_added, terminal; code_updated heavy, others light",
+      "confidence": "high",
+      "branch": "ib3",
+      "adr": "0032"
+    },
+    {
+      "id": "i15",
+      "q": "detector comparison source",
+      "a": "detector compares old vs new from Item.raw_data; poll() must persist diff_version into raw_data",
+      "confidence": "high",
+      "branch": "ib3"
+    },
+    {
+      "id": "i16",
+      "q": "regen depth policy",
+      "a": "code_updated -> DiffEnricher full re-fetch + regen hunks; status/ci/comment -> reuse hunks at card_content.sections.hunks, regen copy",
+      "confidence": "medium",
+      "branch": "ib3",
+      "adr": "0032"
+    },
+    {
+      "id": "i17",
+      "q": "CI-failure re-triage",
+      "a": "reuse stored hunks + add CI-failure watch-out; critical bypass cap; fast/cheap",
+      "confidence": "high",
+      "branch": "ib3"
+    },
+    {
+      "id": "i18",
+      "q": "debounce merge precedence",
+      "a": "merged window with code+non-code -> change_type resolves to heaviest (code_updated)",
+      "confidence": "high",
+      "branch": "ib3"
+    },
+    {
+      "id": "i19",
+      "q": "gchat cardsV2 patch helper",
+      "a": "add update_card_message(message_name, text, cards_v2, as_bot) to workbench_meta/lib/google_api.py (existing update_message only does text updateMask)",
+      "confidence": "high",
+      "branch": "ib2"
+    },
+    {
+      "id": "i20",
+      "q": "combined config + version",
+      "a": "config gains both presentation: (Feature A) and per-source change_detector: (Feature B); single minor version bump covering both (0.3.0 -> 0.4.0)",
+      "confidence": "high",
+      "branch": "ib4"
+    },
+    {
+      "id": "i21",
+      "q": "unified ordering",
+      "a": "Phase 1 shared foundational (models, messenger ABC, stores+migration, source-adapter base) -> Phase 2 presentation layer (A) -> Phase 3 change-monitoring engine (B) incl merged generate_card + _fire_retriage-with-presenter + two-tier gate -> Phase 4 meta overlay (both) -> Phase 5 UI (A) -> Phase 6 config+CONTEXT.md+verification",
+      "confidence": "high",
+      "branch": "ib4"
+    }
+  ],
+  "unresolved": [
+    {
+      "q": "exact diff_version field in meta phabricator.diff list/get",
+      "recommended": "verify in cert container; fallback proxy line-count/files-changed",
+      "status": "merged into impl verification task"
+    },
+    {
+      "q": "two-tier regen gate complexity",
+      "recommended": "include as a distinct task; can ship B always-regen baseline first then add gate",
+      "status": "included-as-optional-task"
+    }
+  ],
+  "artifacts": {
+    "spec_refs": [
+      "Feature A + Feature B specs unchanged; integration captured in combined plan + ADRs 0030-0032"
+    ],
+    "adrs": [
+      "0030 single-diff-regeneration-via-retriage",
+      "0031 symmetric-cardmessage-send-and-update",
+      "0032 diff-version-change-detection-and-regen-depth"
+    ],
+    "plan": "docs/auto-plan/plans/2026-06-08-combined-diff-cards-and-change-monitoring.md"
+  }
+}

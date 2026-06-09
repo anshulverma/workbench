@@ -1,0 +1,221 @@
+import json
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from workbench.config import AppConfig, ServerConfig, StorageConfig
+from workbench.memory.noop import NoopMemoryLayer
+from workbench.models import (
+    Item,
+    ItemCategory,
+    ItemOrigin,
+    ItemStatus,
+    Priority,
+    RawItem,
+    TriageCard,
+    JobTrigger,
+)
+from workbench.providers.source.base import SourceAdapter
+from workbench.providers.change_detector.base import ChangeDetector, ChangeResult
+from workbench.pipeline.scheduler import WorkbenchScheduler
+
+
+class _Adapter(SourceAdapter):
+    def __init__(self, monitoring=True, complete=True):
+        self._m = monitoring
+        self._c = complete
+
+    async def poll(self, since=None):
+        return []
+
+    def adapter_type(self) -> str:
+        return "diff"
+
+    def supports_monitoring(self) -> bool:
+        return self._m
+
+    def poll_returns_complete_set(self) -> bool:
+        return self._c
+
+    def stable_id(self, raw_item: RawItem) -> str:
+        return raw_item.id.split("_")[0]
+
+
+class _Detector(ChangeDetector):
+    def __init__(self, result: ChangeResult):
+        self._r = result
+
+    def detect(self, old_raw: dict, new_raw: dict) -> ChangeResult:
+        return self._r
+
+    def source_type(self) -> str:
+        return "diff"
+
+
+def _raw(rid, **payload):
+    return RawItem(
+        id=rid,
+        source_type="diff",
+        source_label=rid,
+        raw_text=json.dumps(payload or {"status": "needs_review"}),
+    )
+
+
+def _result(material=False, terminal=False, ctype="status_changed"):
+    return ChangeResult(
+        is_material=material,
+        is_terminal=terminal,
+        changed_fields=["status"],
+        change_type=ctype,
+        reason="r",
+    )
+
+
+async def _save_item(stores, source_id, status=ItemStatus.ACTIVE, **raw):
+    item = Item(
+        source_type="diff",
+        source_id=source_id,
+        summary="s",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
+        status=status,
+        raw_data={"raw_text": json.dumps(raw or {"status": "needs_review"})},
+    )
+    return await stores.items.save_item(item)
+
+
+@pytest.fixture
+def sched(stores):
+    config = AppConfig(
+        storage=StorageConfig(postgres_dsn="postgres://x/y"),
+        llm={"class": "workbench.providers.llm.anthropic.AnthropicLLM", "api_key": "k"},
+        server=ServerConfig(api_token="t"),
+    )
+    s = WorkbenchScheduler(
+        stores,
+        NoopMemoryLayer(),
+        AsyncMock(),
+        None,
+        config,
+        sources=[],
+        llm=AsyncMock(),
+    )
+    s._debounce = MagicMock()
+    return s
+
+
+@pytest.mark.asyncio
+async def test_new_item_enqueued_with_stable_id(sched):
+    n = await sched._route_poll_results(
+        "src", _Adapter(), _Detector(_result()), [_raw("D1_999")], JobTrigger.POLL
+    )
+    assert n == 1
+    sched.pipeline.enqueue.assert_awaited_once()
+    _, kwargs = sched.pipeline.enqueue.call_args
+    assert kwargs["source_id"] == "D1"
+
+
+@pytest.mark.asyncio
+async def test_existing_material_change_updates_and_debounces(sched, stores):
+    await _save_item(stores, "D1", status="needs_review" and ItemStatus.ACTIVE)
+    await sched._route_poll_results(
+        "src",
+        _Adapter(),
+        _Detector(_result(material=True)),
+        [_raw("D1_999", status="accepted")],
+        JobTrigger.POLL,
+    )
+    sched._debounce.schedule.assert_called_once()
+    item = await stores.items.get_item_by_source_id("diff", "D1")
+    assert json.loads(item.raw_data["raw_text"])["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_existing_non_material_updates_silently(sched, stores):
+    await _save_item(stores, "D1")
+    await sched._route_poll_results(
+        "src",
+        _Adapter(),
+        _Detector(_result(material=False)),
+        [_raw("D1_999", status="accepted")],
+        JobTrigger.POLL,
+    )
+    sched._debounce.schedule.assert_not_called()
+    item = await stores.items.get_item_by_source_id("diff", "D1")
+    assert json.loads(item.raw_data["raw_text"])["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_terminal_archives_item_and_expires_card(sched, stores):
+    item = await _save_item(stores, "D1")
+    card = TriageCard(item_id=item.id, card_content={"summary": "x"}, status="queued")
+    await stores.triage.save_card(card)
+    await sched._route_poll_results(
+        "src",
+        _Adapter(),
+        _Detector(_result(terminal=True)),
+        [_raw("D1_999")],
+        JobTrigger.POLL,
+    )
+    assert (await stores.items.get_item(item.id)).status == ItemStatus.ARCHIVED
+    assert (await stores.triage.get_card(card.id)).status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_disappeared_item_archived_when_complete_set(sched, stores):
+    item = await _save_item(stores, "D2")
+    card = TriageCard(item_id=item.id, card_content={"summary": "x"}, status="sent")
+    await stores.triage.save_card(card)
+    # poll returns a different item; D2 is absent -> disappeared
+    await sched._route_poll_results(
+        "src",
+        _Adapter(complete=True),
+        _Detector(_result()),
+        [_raw("D9_1")],
+        JobTrigger.POLL,
+    )
+    assert (await stores.items.get_item(item.id)).status == ItemStatus.ARCHIVED
+    assert (await stores.triage.get_card(card.id)).status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_disappeared_item_responded_card_untouched(sched, stores):
+    item = await _save_item(stores, "D2")
+    card = TriageCard(
+        item_id=item.id, card_content={"summary": "x"}, status="responded"
+    )
+    await stores.triage.save_card(card)
+    await sched._route_poll_results(
+        "src",
+        _Adapter(complete=True),
+        _Detector(_result()),
+        [_raw("D9_1")],
+        JobTrigger.POLL,
+    )
+    assert (await stores.items.get_item(item.id)).status == ItemStatus.ARCHIVED
+    assert (await stores.triage.get_card(card.id)).status == "responded"
+
+
+@pytest.mark.asyncio
+async def test_stable_id_migration_treats_old_compound_as_new(sched, stores):
+    # Existing item stored under the OLD compound id; new stable id won't match.
+    await _save_item(stores, "D3_111")
+    n = await sched._route_poll_results(
+        "src", _Adapter(), _Detector(_result()), [_raw("D3_222")], JobTrigger.POLL
+    )
+    assert n == 1  # treated as new ingestion
+    sched.pipeline.enqueue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_partial_set_does_not_archive_absent_items(sched, stores):
+    item = await _save_item(stores, "D4")
+    await sched._route_poll_results(
+        "src",
+        _Adapter(complete=False),
+        _Detector(_result()),
+        [_raw("D9_1")],
+        JobTrigger.POLL,
+    )
+    assert (await stores.items.get_item(item.id)).status == ItemStatus.ACTIVE
