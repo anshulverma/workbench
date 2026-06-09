@@ -40,6 +40,26 @@ pipeline:
   include_threshold: 70
   drop_threshold: 30
   confidence_threshold: 70
+  # Record auto_drop decisions to the memory layer? Default false avoids needless
+  # Graphiti episode fan-out for dropped noise (ADR 0048). auto_include is always
+  # recorded.
+  record_drop_decisions: false
+
+# Unit-of-work batching of non-interactive LLM calls (ADR 0048): collapse the
+# per-item score_relevance / per-poll score_urgency fan-outs into one call each.
+batching:
+  enabled: true
+  score_relevance: true
+  score_urgency: true
+  max_batch_size: 20
+
+# Prometheus metrics + periodic llm_usage_summary log (ADR 0049, 0051).
+# /metrics is unauthenticated (like /health); reach it over the SSH tunnel.
+metrics:
+  enabled: true
+  endpoint: /metrics
+  summary_log: true
+  summary_interval_seconds: 30
 
 scheduler:
   poll_interval_minutes: 15

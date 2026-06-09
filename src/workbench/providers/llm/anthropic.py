@@ -6,6 +6,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
+from workbench.providers._plugboard import record_plugboard_call
 from workbench.providers.llm.base import LLMProvider
 from workbench.models import (
     ExtractedItem,
@@ -53,6 +54,10 @@ class AnthropicLLM(LLMProvider):
         base_url: str = "https://api.anthropic.com"
         model: str = "claude-sonnet-4-20250514"
         http_client: Any = None
+        # Optional sink (PlugboardSink) receiving a PlugboardCallRecord per
+        # messages.create. Injected post-construction in lifespan; providers
+        # never import workbench.metrics. See ADR 0049.
+        on_plugboard_call: Any = None
 
         class Config:
             arbitrary_types_allowed = True
@@ -65,6 +70,7 @@ class AnthropicLLM(LLMProvider):
             http_client=self._http_client,
         )
         self.model = config.model
+        self._sink = config.on_plugboard_call
 
     async def close(self) -> None:
         if self._http_client is not None:
@@ -119,6 +125,71 @@ class AnthropicLLM(LLMProvider):
         except (json.JSONDecodeError, KeyError):
             logger.warning("Failed to parse score response, using default (50, 30)")
             return 50, 30
+
+    async def score_relevance_many(
+        self,
+        contexts: list[tuple[ExtractedItem, list[Fact], list[FilterRule]]],
+        *,
+        max_batch_size: int = 20,
+    ) -> list[tuple[int, int]]:
+        """Score N items in batched calls (one call per <=max_batch_size chunk).
+
+        Each context is (item, facts, rules). Items whose result is missing or
+        malformed fall back to the per-item score_relevance (correctness floor).
+        See ADR 0048 / spec 3.2.
+        """
+        results: list[tuple[int, int] | None] = [None] * len(contexts)
+        for start in range(0, len(contexts), max_batch_size):
+            chunk = contexts[start : start + max_batch_size]
+            await self._score_relevance_chunk(chunk, results, start)
+        return [r if r is not None else (50, 30) for r in results]
+
+    async def _score_relevance_chunk(self, chunk, results, offset) -> None:
+        payload = []
+        for i, (item, facts, rules) in enumerate(chunk):
+            prefs_text = "; ".join(f.content for f in facts) if facts else "none"
+            rules_text = (
+                "; ".join(f"{r.pattern} -> {r.action}" for r in rules)
+                if rules
+                else "none"
+            )
+            payload.append(
+                {
+                    "index": i,
+                    "summary": item.summary,
+                    "source_type": item.raw_item.source_type,
+                    "preferences": prefs_text,
+                    "rules": rules_text,
+                }
+            )
+        prompt = (
+            "Score each item for relevance and confidence (0-100 each).\n"
+            "Return ONLY a JSON array, one object per input item, echoing its "
+            'integer "index": '
+            '[{"index": <int>, "relevance": <0-100>, "confidence": <0-100>}].\n\n'
+            f"Items:\n{json.dumps(payload, indent=2)}"
+        )
+        parsed: dict[int, tuple[int, int]] = {}
+        try:
+            data = json.loads(
+                self._extract_json(
+                    await self._call_with_retry(prompt, item_count=len(chunk))
+                )
+            )
+            for d in data:
+                idx = int(d["index"])
+                parsed[idx] = (int(d["relevance"]), int(d["confidence"]))
+        except Exception:
+            logger.warning("Batch relevance parse failed; falling back per-item")
+
+        for i, (item, facts, rules) in enumerate(chunk):
+            if i in parsed:
+                results[offset + i] = parsed[i]
+            else:
+                try:
+                    results[offset + i] = await self.score_relevance(item, facts, rules)
+                except Exception:
+                    results[offset + i] = (50, 30)
 
     async def generate_triage_card(
         self,
@@ -313,12 +384,17 @@ Return ONLY the card body text, no JSON wrapping."""
         ]
 
         try:
-            response = await self.client.messages.create(
+            response = await record_plugboard_call(
+                client="main_llm",
                 model=self.model,
-                max_tokens=1000,
-                tools=tools,
-                tool_choice={"type": "tool", "name": "interpret_response"},
-                messages=messages,
+                sink=self._sink,
+                do_call=lambda: self.client.messages.create(
+                    model=self.model,
+                    max_tokens=1000,
+                    tools=tools,
+                    tool_choice={"type": "tool", "name": "interpret_response"},
+                    messages=messages,
+                ),
             )
 
             # Extract tool use result
@@ -359,13 +435,21 @@ Return ONLY the card body text, no JSON wrapping."""
                 explanation=f"LLM interpretation failed, defaulting to P2 todo: {raw_text}",
             )
 
-    async def _call_with_retry(self, prompt: str, max_retries: int = 3) -> str:
+    async def _call_with_retry(
+        self, prompt: str, max_retries: int = 3, *, item_count: int = 1
+    ) -> str:
         for attempt in range(max_retries):
             try:
-                response = await self.client.messages.create(
+                response = await record_plugboard_call(
+                    client="main_llm",
                     model=self.model,
-                    max_tokens=2000,
-                    messages=[{"role": "user", "content": prompt}],
+                    sink=self._sink,
+                    item_count=item_count,
+                    do_call=lambda: self.client.messages.create(
+                        model=self.model,
+                        max_tokens=2000,
+                        messages=[{"role": "user", "content": prompt}],
+                    ),
                 )
                 return response.content[0].text
             except Exception:

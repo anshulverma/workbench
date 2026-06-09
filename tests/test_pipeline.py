@@ -575,3 +575,55 @@ async def test_scheduler_skips_unhealthy_connection(stores, mock_llm):
     await scheduler._poll_one_source("src-email")
 
     adapter.poll.assert_not_called()
+
+
+# --- S1: auto_drop recording config gate (plan Task 1) ---
+
+@pytest.mark.asyncio
+async def test_auto_drop_not_recorded_when_flag_false(monkeypatch):
+    from unittest.mock import AsyncMock
+    from workbench.pipeline.engine import PipelineEngine
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.models import ExtractedItem, ItemCategory, RawItem
+    import workbench.pipeline.engine as eng
+
+    mem = AsyncMock()
+    engine = PipelineEngine(
+        AsyncMock(), mem, AsyncMock(), StubEnricher(), record_drop_decisions=False
+    )
+    ext = ExtractedItem(
+        summary="noise", category=ItemCategory.INFORMATIONAL, source_context="",
+        raw_item=RawItem(id="X1", source_type="email", source_label="", raw_text="x"),
+    )
+
+    async def fake(*a, **k):
+        return ("auto_drop", 10, 95)
+
+    monkeypatch.setattr(eng, "score_and_decide", fake)
+    await engine._process_extracted_item(ext, job=None)
+    mem.record_pipeline_decision.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_drop_recorded_when_flag_true(monkeypatch):
+    from unittest.mock import AsyncMock
+    from workbench.pipeline.engine import PipelineEngine
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.models import ExtractedItem, ItemCategory, RawItem
+    import workbench.pipeline.engine as eng
+
+    mem = AsyncMock()
+    engine = PipelineEngine(
+        AsyncMock(), mem, AsyncMock(), StubEnricher(), record_drop_decisions=True
+    )
+    ext = ExtractedItem(
+        summary="noise", category=ItemCategory.INFORMATIONAL, source_context="",
+        raw_item=RawItem(id="X2", source_type="email", source_label="", raw_text="x"),
+    )
+
+    async def fake(*a, **k):
+        return ("auto_drop", 10, 95)
+
+    monkeypatch.setattr(eng, "score_and_decide", fake)
+    await engine._process_extracted_item(ext, job=None)
+    mem.record_pipeline_decision.assert_called_once()

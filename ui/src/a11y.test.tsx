@@ -19,6 +19,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { AppSidebar } from '@/components/AppSidebar'
 import { FactRow } from '@/components/FactRow'
+import { CommandPalette } from '@/components/CommandPalette'
 
 function renderWithRouter(ui: React.ReactNode, initialEntry = '/') {
   return render(<MemoryRouter initialEntries={[initialEntry]}>{ui}</MemoryRouter>)
@@ -54,6 +55,24 @@ describe('accessibility', () => {
     // Tab moves focus to the first nav link (keyboard reachable, in order).
     await userEvent.tab()
     expect(overview).toHaveFocus()
+  })
+
+  it('rail links are icon-only with accessible names (aria-label)', () => {
+    renderWithRouter(<AppSidebar />)
+    // The 64px icon rail shows lucide icons; accessible names come from
+    // aria-label, not visible text. All eight routes must remain named.
+    for (const name of [
+      'Overview',
+      'Triage',
+      'Action Items',
+      'Ingestion',
+      'Sources',
+      'Knowledge',
+      'Messenger',
+      'Settings',
+    ]) {
+      expect(screen.getByRole('link', { name })).toBeInTheDocument()
+    }
   })
 
   it('marks the active nav link with aria-current="page"', () => {
@@ -102,5 +121,13 @@ describe('accessibility', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.activeElement).not.toBe(dialog)
+  })
+
+  it('command palette exposes combobox + listbox roles', async () => {
+    renderWithClient(<CommandPalette open onOpenChange={() => {}} />)
+    // cmdk renders the input as role=combobox and the results list as
+    // role=listbox; both must be present for AT keyboard navigation.
+    expect(await screen.findByRole('combobox')).toBeInTheDocument()
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
   })
 })

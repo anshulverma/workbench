@@ -144,7 +144,7 @@ async def respond_to_triage(response: TriageResponse, request: Request):
         source_type=card.card_content.get("source_type", "unknown"),
         item_id=card.item_id,
         item_summary=card.card_content.get("summary", ""),
-        triage_card_full=card.model_dump(),
+        triage_card_full=card.model_dump(mode="json"),
         options_presented=[o.model_dump() for o in card.options],
         option_chosen=option.label,
         choice_index=response.choice,

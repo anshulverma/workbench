@@ -288,24 +288,9 @@ class WorkbenchScheduler:
                         source_id, adapter, detector, raw_items, trigger
                     )
                 else:
-                    enqueued = 0
-                    for raw_item in raw_items:
-                        try:
-                            await self.pipeline.enqueue(
-                                raw_item.raw_text,
-                                raw_item.source_type,
-                                source_id=raw_item.id,
-                                urgency_signals=raw_item.urgency_signals,
-                                trigger=trigger,
-                            )
-                            enqueued += 1
-                        except Exception as e:
-                            logger.error(
-                                "Failed to enqueue item %s from %s: %s",
-                                raw_item.id,
-                                source_id,
-                                e,
-                            )
+                    enqueued = await self._enqueue_with_urgency(
+                        [(ri, ri.id) for ri in raw_items], trigger
+                    )
                 await self.stores.config.set(
                     f"source_last_polled:{source_id}",
                     datetime.now(timezone.utc).isoformat(),
@@ -347,14 +332,52 @@ class WorkbenchScheduler:
         raw_text = raw_data.get("raw_text", "{}")
         return json.loads(raw_text) if isinstance(raw_text, str) else raw_text
 
+    async def _enqueue_with_urgency(self, items, trigger) -> int:
+        """Enqueue ``items`` (list of (raw_item, source_id)), pre-scoring urgency
+        for the signalled subset in ONE batched call when batching is enabled
+        (ADR 0048). Falls back to per-item scoring inside enqueue otherwise.
+        """
+        if not items:
+            return 0
+        batching = self.config.batching
+        scorer = getattr(self.pipeline, "queue_scorer", None)
+        prescored: dict[int, int] = {}
+        if batching.enabled and batching.score_urgency and scorer is not None:
+            signalled = [(ri, sid) for (ri, sid) in items if ri.urgency_signals]
+            if signalled:
+                try:
+                    scores = await scorer.score_urgency_many(
+                        [(ri.raw_text, ri.urgency_signals) for ri, _ in signalled],
+                        max_batch_size=batching.max_batch_size,
+                    )
+                    for (ri, _), s in zip(signalled, scores):
+                        prescored[id(ri)] = s
+                except Exception as e:
+                    logger.error("Batch urgency scoring failed: %s", e)
+        enqueued = 0
+        for ri, sid in items:
+            try:
+                await self.pipeline.enqueue(
+                    ri.raw_text,
+                    ri.source_type,
+                    source_id=sid,
+                    urgency_signals=ri.urgency_signals,
+                    trigger=trigger,
+                    urgency_score=prescored.get(id(ri)),
+                )
+                enqueued += 1
+            except Exception as e:
+                logger.error("Failed to enqueue item %s: %s", sid, e)
+        return enqueued
+
     async def _route_poll_results(
         self, source_id, adapter, detector, raw_items, trigger
     ) -> int:
         """Route poll results for a monitoring-capable source: new items ->
         enqueue, existing items -> change detection. Returns count enqueued
         (new ingestion only)."""
-        enqueued = 0
         seen_ids: set[str] = set()
+        new_items: list = []  # (raw_item, sid) -- enqueued in one pre-scored batch
 
         for raw_item in raw_items:
             sid = adapter.stable_id(raw_item)
@@ -365,17 +388,7 @@ class WorkbenchScheduler:
             )
 
             if existing is None:
-                try:
-                    await self.pipeline.enqueue(
-                        raw_item.raw_text,
-                        raw_item.source_type,
-                        source_id=sid,
-                        urgency_signals=raw_item.urgency_signals,
-                        trigger=trigger,
-                    )
-                    enqueued += 1
-                except Exception as e:
-                    logger.error("Failed to enqueue %s: %s", sid, e)
+                new_items.append((raw_item, sid))
                 continue
 
             old_raw = self._parse_raw(existing.raw_data)
@@ -391,6 +404,9 @@ class WorkbenchScheduler:
 
             if result.is_material:
                 self._debounce.schedule(existing.id, result, raw_item, old_raw)
+
+        # New items: enqueue in one urgency-pre-scored batch (ADR 0048).
+        enqueued = await self._enqueue_with_urgency(new_items, trigger)
 
         # Disappearance detection only when poll returns a complete snapshot;
         # watermark-filtered adapters return partial sets and must not archive

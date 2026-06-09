@@ -12,6 +12,8 @@ export interface Column<T> {
   key: string
   header: string
   render: (row: T) => ReactNode
+  /** Opt-in: render this column's cells in mono + tabular-nums (spec §5). */
+  mono?: boolean
 }
 
 export function DataTable<T>({
@@ -34,9 +36,14 @@ export function DataTable<T>({
       </TableHeader>
       <TableBody>
         {rows.map((row) => (
-          <TableRow key={rowKey(row)}>
+          <TableRow key={rowKey(row)} className="border-b border-border">
             {columns.map((c) => (
-              <TableCell key={c.key}>{c.render(row)}</TableCell>
+              <TableCell
+                key={c.key}
+                className={c.mono ? 'font-mono tabular-nums' : undefined}
+              >
+                {c.render(row)}
+              </TableCell>
             ))}
           </TableRow>
         ))}

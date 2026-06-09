@@ -147,3 +147,52 @@ async def test_patch_fact_success(client, app_with_state):
     r = await client.patch("/api/memory/facts/f1", json={"content": "edited"})
     assert r.status_code == 200
     mem.update_fact.assert_awaited_once_with("f1", "edited")
+
+
+# --------------------------------------------------------------------------- #
+# POST /api/memory/facts — manual fact create (Task B5, ADR0045)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_create_fact_501_under_noop(client, app_with_state):
+    r = await client.post("/api/memory/facts", json={"content": "I prefer P1s"})
+    assert r.status_code == 501
+    assert r.json()["detail"] == "memory layer not configured"
+
+
+@pytest.mark.asyncio
+async def test_create_fact_returns_manual_fact(client, app_with_state):
+    mem = AsyncMock()
+    mem.add_fact.return_value = Fact(
+        id="m1",
+        content="I prefer reviewing P1 diffs first",
+        source="manual",
+        timestamp=datetime(2026, 6, 9, tzinfo=timezone.utc),
+    )
+    app_with_state.state.memory = mem
+    r = await client.post(
+        "/api/memory/facts",
+        json={"content": "I prefer reviewing P1 diffs first"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["id"] == "m1"
+    assert data["content"] == "I prefer reviewing P1 diffs first"
+    # Manual origin marker distinguishes authored facts from learned ones (ADR0045)
+    assert data["source"] == "manual"
+    # The layer is asked to create a fact with the manual origin marker.
+    mem.add_fact.assert_awaited_once_with("I prefer reviewing P1 diffs first", "manual")
+
+
+@pytest.mark.asyncio
+async def test_create_fact_empty_content_rejected(client, app_with_state):
+    mem = AsyncMock()
+    app_with_state.state.memory = mem
+    r = await client.post("/api/memory/facts", json={"content": "   "})
+    assert r.status_code == 422
+    mem.add_fact.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_fact_missing_content_rejected(client, app_with_state):
+    r = await client.post("/api/memory/facts", json={})
+    assert r.status_code == 422

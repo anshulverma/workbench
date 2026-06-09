@@ -72,6 +72,30 @@ class ItemStore(ABC):
         ...
 
     @abstractmethod
+    async def count_created_since(self, hours: int) -> int:
+        """Count items with created_at within the last ``hours`` hours."""
+        ...
+
+    @abstractmethod
+    async def auto_resolved_counts(self, hours: int) -> tuple[int, int]:
+        """(auto_included, total) item counts created within the window."""
+        ...
+
+    @abstractmethod
+    async def created_timeseries(
+        self, window: int, bucket: str
+    ) -> list[tuple[datetime, int]]:
+        """Items created per bucket over the window (date_trunc grouped)."""
+        ...
+
+    @abstractmethod
+    async def completed_timeseries(
+        self, window: int, bucket: str
+    ) -> list[tuple[datetime, int]]:
+        """Items completed (completed_at) per bucket over the window."""
+        ...
+
+    @abstractmethod
     async def items_recent(self, limit: int) -> list[Item]:
         """Most recently created items, ORDER BY created_at DESC."""
         ...
@@ -105,6 +129,11 @@ class TriageStore(ABC):
     @abstractmethod
     async def delete_older_than(self, status: str, days: int) -> int:
         """Delete triage cards with given status older than days. Returns count deleted."""
+        ...
+
+    @abstractmethod
+    async def avg_triage_seconds(self) -> float | None:
+        """Average responded_at - sent_at over responded cards, or None."""
         ...
 
 

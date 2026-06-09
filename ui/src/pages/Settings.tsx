@@ -1,15 +1,25 @@
-// Settings page (spec Design Section 2.8) — read-only system info, no writes.
+// Settings page (spec Design Section 2.8 / §12) — read-only system info, no
+// writes.
 //
-// Renders the app + config versions (from /health and the redacted config),
-// storage + connection component health (HealthBadge per component), and a
-// read-only view of the redacted pipeline/scheduler/retention/alerting config
-// sections from GET /api/debug/config (secret-redacted server-side). A 503 from
-// /health (storage down) drives the degraded banner; a config-fetch failure
-// drives the error state with the X-Request-ID. Config text is rendered as React
-// text nodes via JSON.stringify (no dangerouslySetInnerHTML).
+// Renders App Version (`health.version`) + Config Version (`config.version`,
+// "—" fallback), the Subsystem Health badges (storage + connections), and the
+// redacted pipeline/scheduler/retention/alerting config sections from GET
+// /api/debug/config (secret-redacted server-side, ADR0017) through the pure
+// <JsonHighlight> tokenizer (no dangerouslySetInnerHTML). A locked
+// CONFIG_SECRETS_VAULT panel makes the no-secrets posture explicit (values are
+// never fetched/rendered). DOWNLOAD BACKUP performs a client-side Blob download
+// of the already-redacted config. The vanity Runtime Metadata block
+// (kernel/arch/memory/network-latency) is dropped — there is no real data
+// source and we never fabricate.
+//
+// A 503 from /health (storage down) drives the degraded banner; a config-fetch
+// failure drives the error state with the X-Request-ID.
 
+import { Download, Lock } from 'lucide-react'
 import { useHealth, useDebugConfig } from '@/hooks/useSettings'
 import { HealthBadge } from '@/components/HealthBadge'
+import { JsonHighlight } from '@/components/JsonHighlight'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api'
 
@@ -17,6 +27,22 @@ const SECTIONS = ['pipeline', 'scheduler', 'retention', 'alerting']
 
 function badgeStatus(status: string | undefined): string {
   return status === 'healthy' ? 'healthy' : 'erroring'
+}
+
+// Client-side download of the already-redacted config as a JSON file. Uses an
+// anchor + URL.createObjectURL (no server round-trip, no secret exposure).
+function downloadBackup(config: Record<string, unknown>) {
+  const blob = new Blob([JSON.stringify(config, null, 2)], {
+    type: 'application/json',
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'workbench-config.json'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 export function Settings() {
@@ -73,7 +99,17 @@ export function Settings() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Settings</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Settings</h1>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => downloadBackup(config)}
+        >
+          <Download aria-hidden="true" />
+          Download Backup
+        </Button>
+      </div>
 
       {degraded && (
         <div
@@ -116,11 +152,24 @@ export function Settings() {
       {SECTIONS.map((s) => (
         <section key={s} className="rounded border border-border p-3">
           <h2 className="mb-2 font-semibold">{s}</h2>
-          <pre className="whitespace-pre-wrap text-xs">
-            {JSON.stringify(config[s] ?? {}, null, 2)}
-          </pre>
+          <JsonHighlight json={JSON.stringify(config[s] ?? {}, null, 2)} />
         </section>
       ))}
+
+      {/* Secrets vault: a locked placeholder. Secret values are NEVER fetched
+          or rendered (ADR0017); the redaction is server-side. */}
+      <section
+        data-testid="secrets-vault"
+        className="rounded border border-border p-3"
+      >
+        <h2 className="mb-2 flex items-center gap-2 font-semibold">
+          <Lock aria-hidden="true" className="size-4 text-muted-foreground" />
+          Secrets Vault
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Locked — secrets are not exposed to the dashboard.
+        </p>
+      </section>
     </div>
   )
 }

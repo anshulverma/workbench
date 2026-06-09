@@ -17,6 +17,18 @@ export interface ItemsBreakdown {
   total: number
 }
 
+// Derived-metrics block (ADR0039/0040, spec §6). Any zero-denominator or
+// degraded source is serialized as `null` and rendered "n/a" (never fabricated).
+export interface OverviewMetrics {
+  signal_velocity: number
+  throughput: number
+  efficiency_peak: number | null
+  auto_resolved_pct: number | null
+  avg_triage_seconds: number | null
+  growth_velocity: number | null
+  ingestion_success_rate: number | null
+}
+
 export interface StatsOverview {
   pending_triage: number
   in_flight: number
@@ -26,6 +38,14 @@ export interface StatsOverview {
   sources_total: number
   items: ItemsBreakdown
   queue: { in_flight: number; dead_letters: number }
+  metrics?: OverviewMetrics
+}
+
+// Generic derived timeseries point (GET /api/stats/timeseries). Zero-filled
+// full bucket axis; `bucket` is an ISO timestamp.
+export interface MetricPoint {
+  bucket: string
+  count: number
 }
 
 export interface IngestionPoint {
@@ -88,6 +108,19 @@ export function useIngestionTimeseries(days = 14, bucket = 'day') {
   })
 }
 
+// Generic derived metric timeseries (signal_velocity | throughput), used for
+// the Overview Signal Velocity sparkline (spec §8). 422s on an unknown metric.
+export function useMetricsTimeseries(metric: string, window = 24, bucket = 'hour') {
+  return useQuery({
+    queryKey: ['stats', 'timeseries', { metric, window, bucket }],
+    queryFn: () =>
+      apiGet<MetricPoint[]>(
+        `/api/stats/timeseries?metric=${encodeURIComponent(metric)}&window=${window}&bucket=${bucket}`,
+      ),
+    refetchInterval: pollWhenVisible(60_000),
+  })
+}
+
 export function useHealth() {
   return useQuery({
     queryKey: ['health'],
@@ -116,6 +149,14 @@ export function useMessenger() {
 
 // --- Ingestion page hooks (spec Design Section 2.4) ---
 
+// Per-source relevance/noise thresholds (ADR0044). Integers 0..100. `null` on
+// a SourceRollup means "inherit the global defaults" (rendered as 70/30/30).
+export interface SourceRelevance {
+  auto_include_threshold: number
+  triage_threshold: number
+  drop_below: number
+}
+
 export interface SourceRollup {
   id: string
   adapter_type: string
@@ -127,6 +168,7 @@ export interface SourceRollup {
   in_flight: number
   health_status: string
   config?: Record<string, unknown>
+  relevance?: SourceRelevance | null
 }
 
 export interface ActivityItem {

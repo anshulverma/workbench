@@ -45,9 +45,10 @@ class PgItemStore(ItemStore):
             """INSERT INTO items
                (id, source_type, source_id, summary, category, origin,
                 priority, status, raw_data, created_at, updated_at,
-                parent_item_id, action_source, action_category)
+                parent_item_id, action_source, action_category,
+                snoozed_until, completed_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11,
-                       $12, $13, $14)""",
+                       $12, $13, $14, $15, $16)""",
             item.id,
             item.source_type,
             item.source_id,
@@ -62,6 +63,8 @@ class PgItemStore(ItemStore):
             item.parent_item_id,
             item.action_source,
             item.action_category,
+            item.snoozed_until,
+            item.completed_at,
         )
         return item
 
@@ -162,6 +165,42 @@ class PgItemStore(ItemStore):
             limit,
         )
         return [self._row_to_item(r) for r in rows]
+
+    async def count_created_since(self, hours: int) -> int:
+        row = await self.pool.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM items "
+            "WHERE created_at >= NOW() - INTERVAL '1 hour' * $1",
+            hours,
+        )
+        return int(row["cnt"])
+
+    async def auto_resolved_counts(self, hours: int) -> tuple[int, int]:
+        row = await self.pool.fetchrow(
+            "SELECT COUNT(*) FILTER (WHERE origin = 'auto_included') AS auto, "
+            "COUNT(*) AS total FROM items "
+            "WHERE created_at >= NOW() - INTERVAL '1 hour' * $1",
+            hours,
+        )
+        return int(row["auto"]), int(row["total"])
+
+    async def _timeseries(self, column: str, window: int, bucket: str) -> list[tuple]:
+        if bucket not in ("hour", "day"):
+            bucket = "hour"
+        interval = "1 hour" if bucket == "hour" else "1 day"
+        rows = await self.pool.fetch(
+            f"SELECT date_trunc('{bucket}', {column}, 'UTC') AS ts, COUNT(*) AS cnt "
+            f"FROM items WHERE {column} IS NOT NULL "
+            f"AND {column} >= NOW() - INTERVAL '{interval}' * $1 "
+            "GROUP BY ts ORDER BY ts",
+            window,
+        )
+        return [(r["ts"], int(r["cnt"])) for r in rows]
+
+    async def created_timeseries(self, window: int, bucket: str):
+        return await self._timeseries("created_at", window, bucket)
+
+    async def completed_timeseries(self, window: int, bucket: str):
+        return await self._timeseries("completed_at", window, bucket)
 
     @staticmethod
     def _row_to_item(row: asyncpg.Record) -> Item:

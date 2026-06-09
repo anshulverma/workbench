@@ -43,6 +43,9 @@ class NoopMemoryLayer(MemoryLayer):
     async def list_facts(self):
         return []
 
+    async def add_fact(self, content, source="manual"):
+        raise NotImplementedError("memory layer not configured")
+
     async def delete_fact(self, fact_id):
         raise NotImplementedError("memory layer not configured")
 

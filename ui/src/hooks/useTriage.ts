@@ -37,11 +37,19 @@ export interface TriageOption {
 export interface TriageCard {
   id: string
   item_id?: string | null
-  card_content: { summary?: string; source_type?: string; [k: string]: unknown }
+  card_content: {
+    summary?: string
+    source_type?: string
+    priority?: string
+    [k: string]: unknown
+  }
   options: TriageOption[]
   relevance_score?: number
   confidence_score?: number
   status?: string
+  // Row-birth timestamp (migration 007); powers the client Time-Window filter
+  // (ADR0043). ISO-8601 string when serialized by /api/triage/pending.
+  created_at?: string
 }
 
 // Server reply to POST /api/triage/respond. Numbered/non-destructive responses

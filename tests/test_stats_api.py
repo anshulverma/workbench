@@ -426,3 +426,246 @@ async def test_activity_requires_auth(app_with_state):
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         r = await c.get("/api/activity")
         assert r.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# B1 — Derived metrics block (Task 16, ADR0039/0040, spec §6)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_overview_metrics_block_present(client):
+    body = (await client.get("/api/stats/overview")).json()
+    assert "metrics" in body
+    for k in [
+        "signal_velocity",
+        "throughput",
+        "efficiency_peak",
+        "auto_resolved_pct",
+        "avg_triage_seconds",
+        "growth_velocity",
+        "ingestion_success_rate",
+    ]:
+        assert k in body["metrics"], k
+
+
+@pytest.mark.asyncio
+async def test_overview_metrics_null_on_empty_denominator(client):
+    # no triage cards, no runs, no items, noop memory → n/a fields are None,
+    # never fabricated.
+    m = (await client.get("/api/stats/overview")).json()["metrics"]
+    assert m["avg_triage_seconds"] is None
+    assert m["ingestion_success_rate"] is None
+    assert m["growth_velocity"] is None  # NoopMemoryLayer
+    assert m["auto_resolved_pct"] is None  # zero items in window
+    assert m["efficiency_peak"] is None  # no created items in any bucket
+
+
+@pytest.mark.asyncio
+async def test_overview_signal_velocity_counts_recent_items(client, app_with_state):
+    from datetime import datetime, timezone
+
+    from workbench.models import Item
+
+    stores = app_with_state.state.stores
+    now = datetime.now(timezone.utc)
+    for sid, src in (("sv1", "github"), ("sv2", "email")):
+        await stores.items.save_item(
+            Item(
+                source_type=src,
+                source_id=sid,
+                summary="s",
+                category=ItemCategory.ACTION_ITEM,
+                origin=ItemOrigin.TRIAGED,
+                priority=Priority.P1,
+                status=ItemStatus.ACTIVE,
+                created_at=now,
+            )
+        )
+    m = (await client.get("/api/stats/overview")).json()["metrics"]
+    # both items created "just now" → within the 24h signal-velocity window
+    assert m["signal_velocity"] == 2
+
+
+@pytest.mark.asyncio
+async def test_overview_auto_resolved_pct(client, app_with_state):
+    from workbench.models import Item
+
+    stores = app_with_state.state.stores
+    # one auto-included, one triaged → 50% auto-resolved
+    auto = Item(
+        source_type="github",
+        source_id="a",
+        summary="s",
+        category=ItemCategory.INFORMATIONAL,
+        origin=ItemOrigin.AUTO_INCLUDED,
+        priority=Priority.P2,
+        status=ItemStatus.ACTIVE,
+    )
+    triaged = Item(
+        source_type="github",
+        source_id="b",
+        summary="s",
+        category=ItemCategory.INFORMATIONAL,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
+        status=ItemStatus.ACTIVE,
+    )
+    await stores.items.save_item(auto)
+    await stores.items.save_item(triaged)
+    m = (await client.get("/api/stats/overview")).json()["metrics"]
+    assert m["auto_resolved_pct"] == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_overview_avg_triage_seconds_from_triage_cards(client, app_with_state):
+    from datetime import datetime, timedelta, timezone
+
+    stores = app_with_state.state.stores
+    sent = datetime.now(timezone.utc) - timedelta(minutes=5)
+    responded = sent + timedelta(seconds=120)
+    card = TriageCard(
+        card_content={"summary": "x"},
+        options=[TriageOption(label="Skip", action="skip")],
+        status="responded",
+        sent_at=sent,
+        responded_at=responded,
+    )
+    await stores.triage.save_card(card)
+    m = (await client.get("/api/stats/overview")).json()["metrics"]
+    # avg of a single 120s span; comes from triage_cards, not items
+    assert m["avg_triage_seconds"] == pytest.approx(120, abs=1)
+
+
+@pytest.mark.asyncio
+async def test_overview_ingestion_success_rate(client, app_with_state):
+    stores = app_with_state.state.stores
+    src = SourceConfig(adapter_type="github", config={}, enabled=True)
+    await stores.sources.upsert_source(src)
+    ok = await stores.ingestion_runs.start_run(src.id)
+    await stores.ingestion_runs.finish_run(ok, raw_enqueued=1)
+    bad = await stores.ingestion_runs.start_run(src.id)
+    await stores.ingestion_runs.error_run(bad, "boom")
+    m = (await client.get("/api/stats/overview")).json()["metrics"]
+    # 1 success / 2 total = 0.5 (running runs excluded)
+    assert m["ingestion_success_rate"] == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_overview_efficiency_peak_and_throughput(client, app_with_state):
+    from datetime import datetime, timezone
+
+    from workbench.models import Item
+
+    stores = app_with_state.state.stores
+    now = datetime.now(timezone.utc)
+    # one item created and completed in the current hour bucket → close-rate 1.0
+    done = Item(
+        source_type="github",
+        source_id="d",
+        summary="s",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P1,
+        status=ItemStatus.DONE,
+        created_at=now,
+        completed_at=now,
+    )
+    await stores.items.save_item(done)
+    m = (await client.get("/api/stats/overview")).json()["metrics"]
+    assert m["throughput"] == 1
+    assert m["efficiency_peak"] == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------- #
+# B1 — /api/stats/timeseries (Task 17, ADR0039, spec §6)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_timeseries_signal_velocity_zero_filled(client):
+    r = await client.get(
+        "/api/stats/timeseries?metric=signal_velocity&window=24&bucket=hour"
+    )
+    assert r.status_code == 200
+    series = r.json()
+    assert len(series) == 24  # full bucket array, empty buckets count:0 not omitted
+    assert all(set(p) == {"bucket", "count"} for p in series)
+    assert all(p["count"] == 0 for p in series)  # no items yet
+
+
+@pytest.mark.asyncio
+async def test_timeseries_signal_velocity_counts_items(client, app_with_state):
+    from datetime import datetime, timezone
+
+    from workbench.models import Item
+
+    stores = app_with_state.state.stores
+    # tz-aware created_at so it lands in a real backward bucket (the legacy
+    # naive utcnow() default is stored as a session-tz instant, i.e. future).
+    await stores.items.save_item(
+        Item(
+            source_type="github",
+            source_id="ts1",
+            summary="s",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority=Priority.P0,
+            status=ItemStatus.ACTIVE,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    r = await client.get(
+        "/api/stats/timeseries?metric=signal_velocity&window=24&bucket=hour"
+    )
+    series = r.json()
+    assert sum(p["count"] for p in series) == 1
+
+
+@pytest.mark.asyncio
+async def test_timeseries_throughput_counts_completed(client, app_with_state):
+    from datetime import datetime, timezone
+
+    from workbench.models import Item
+
+    stores = app_with_state.state.stores
+    now = datetime.now(timezone.utc)
+    await stores.items.save_item(
+        Item(
+            source_type="github",
+            source_id="c",
+            summary="s",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority=Priority.P1,
+            status=ItemStatus.DONE,
+            created_at=now,
+            completed_at=now,
+        )
+    )
+    r = await client.get("/api/stats/timeseries?metric=throughput&window=8&bucket=hour")
+    assert r.status_code == 200
+    series = r.json()
+    assert len(series) == 8
+    assert sum(p["count"] for p in series) == 1
+
+
+@pytest.mark.asyncio
+async def test_timeseries_rejects_unknown_metric(client):
+    r = await client.get("/api/stats/timeseries?metric=bogus&window=24&bucket=hour")
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_timeseries_rejects_unknown_bucket(client):
+    r = await client.get(
+        "/api/stats/timeseries?metric=signal_velocity&window=24&bucket=year"
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_timeseries_day_bucket_full_axis(client):
+    r = await client.get(
+        "/api/stats/timeseries?metric=signal_velocity&window=7&bucket=day"
+    )
+    assert r.status_code == 200
+    series = r.json()
+    assert len(series) == 7
+    assert all(p["count"] == 0 for p in series)

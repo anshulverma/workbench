@@ -108,6 +108,17 @@ class HttpMemoryLayer(MemoryLayer):
             logger.warning("Memory service list_facts failed: %s", e)
             return []
 
+    async def add_fact(self, content: str, source: str = "manual") -> Fact:
+        # Manual facts carry a distinct origin marker so the synthesis pipeline
+        # does not overwrite them and the UI can distinguish authored from
+        # learned facts (ADR0045). Failures propagate so the API surfaces them.
+        resp = await self._client.post(
+            f"{self._base_url}/facts",
+            json={"content": content, "source": source},
+        )
+        resp.raise_for_status()
+        return self._parse_fact(resp.json())
+
     async def delete_fact(self, fact_id: str) -> None:
         resp = await self._client.delete(f"{self._base_url}/facts/{fact_id}")
         resp.raise_for_status()

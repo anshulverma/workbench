@@ -203,6 +203,12 @@ async def update_source(source_id: str, updates: SourceConfigUpdate, request: Re
     new_config = updates.config if updates.config is not None else source.config
     new_schedule = updates.schedule if updates.schedule is not None else source.schedule
     new_enabled = updates.enabled if updates.enabled is not None else source.enabled
+    # Per-source relevance/noise thresholds (ADR0044). None on the patch body
+    # means "leave unchanged"; the field is validated/ordered by the pydantic
+    # SourceRelevanceConfig model, so an invalid payload already 422s.
+    new_relevance = (
+        updates.relevance if updates.relevance is not None else source.relevance
+    )
     _validate_cron(new_schedule, request.app.state.config.logging.timezone)
     _validate_config(cls, new_config)
 
@@ -220,11 +226,16 @@ async def update_source(source_id: str, updates: SourceConfigUpdate, request: Re
         }
         if updates.connection:
             node["connection"] = updates.connection
+        if new_relevance is not None:
+            node["relevance"] = new_relevance.model_dump()
         yaml_write_source(_config_path(request), node)
         updated = await stores.sources.update_source(
             source_id,
             SourceConfigUpdate(
-                config=new_config, schedule=new_schedule, enabled=new_enabled
+                config=new_config,
+                schedule=new_schedule,
+                enabled=new_enabled,
+                relevance=new_relevance,
             ),
         )
         # Replace the live adapter in app.state.sources (copy-on-write).
@@ -243,6 +254,12 @@ async def update_source(source_id: str, updates: SourceConfigUpdate, request: Re
         if scheduler is not None:
             # reschedule_source_job removes any old job and re-adds only if enabled.
             scheduler.reschedule_source_job(updated, adapter)
+        # Targeted Hot-Reload of relevance/noise thresholds (ADR0044/ADR0013):
+        # mutate the live PipelineEngine so subsequent ingestion re-routes with
+        # the new thresholds, no restart. Keyed by source_type (== adapter_type).
+        pipeline = getattr(request.app.state, "pipeline", None)
+        if pipeline is not None and hasattr(pipeline, "set_source_thresholds"):
+            pipeline.set_source_thresholds(source.adapter_type, new_relevance)
 
     logger.info("source_updated", source_id=source_id)
     return updated

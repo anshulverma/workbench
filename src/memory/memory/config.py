@@ -51,6 +51,13 @@ class LoggingConfig(BaseModel):
     backup_count: int = 10
 
 
+class MetricsConfig(BaseModel):
+    enabled: bool = True
+    endpoint: str = "/metrics"
+    summary_log: bool = True
+    summary_interval_seconds: int = 30
+
+
 class MemoryConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
@@ -59,6 +66,7 @@ class MemoryConfig(BaseModel):
     embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
     queue: QueueConfig = Field(default_factory=QueueConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
 
 
 def load_config(config_path: str, override_path: str | None = None) -> MemoryConfig:

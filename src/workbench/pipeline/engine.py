@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -19,7 +20,11 @@ from workbench.models import (
 )
 from workbench.pipeline.enrichment import enrich_item
 from workbench.pipeline.extraction import extract_items
-from workbench.pipeline.filter import score_and_decide
+from workbench.pipeline.filter import (
+    decide_from_score,
+    gather_facts_and_rules,
+    score_and_decide,
+)
 from workbench.pipeline.triage import generate_card
 from workbench.providers.enrichment.base import ContextEnricher
 from workbench.providers.llm.base import LLMProvider
@@ -38,6 +43,13 @@ class PipelineEngine:
         queue_scorer=None,
         triage_expiry_days: int = 7,
         content_generators=None,
+        record_drop_decisions: bool = False,
+        include_threshold: int = 70,
+        drop_threshold: int = 30,
+        confidence_threshold: int = 70,
+        batch_relevance: bool = False,
+        max_batch_size: int = 20,
+        source_thresholds: dict | None = None,
     ):
         self.stores = stores
         self.memory = memory
@@ -46,6 +58,43 @@ class PipelineEngine:
         self.queue_scorer = queue_scorer
         self.triage_expiry_days = triage_expiry_days
         self.content_generators = content_generators or {}
+        self.record_drop_decisions = record_drop_decisions
+        self.include_threshold = include_threshold
+        self.drop_threshold = drop_threshold
+        self.confidence_threshold = confidence_threshold
+        self.batch_relevance = batch_relevance
+        self.max_batch_size = max_batch_size
+        # Per-source relevance/noise thresholds keyed by source_type (==
+        # adapter_type), populated at boot and mutated by Targeted Hot-Reload
+        # (ADR0013/ADR0044). Absent key -> inherit the global thresholds above,
+        # which preserves current routing for every existing source.
+        self.source_thresholds: dict = dict(source_thresholds or {})
+
+    def set_source_thresholds(self, source_type: str, relevance) -> None:
+        """Install (or clear with ``None``) per-source thresholds for a
+        source_type. Mutates in place so the live engine picks the new values up
+        on the next routed item -- no restart (ADR0044 hot-reload)."""
+        if relevance is None:
+            self.source_thresholds.pop(source_type, None)
+        else:
+            self.source_thresholds[source_type] = relevance
+
+    def thresholds_for(self, source_type: str) -> tuple[int, int, int]:
+        """Resolve (include_threshold, drop_threshold, confidence_threshold) for
+        a source_type: the per-source override if set, else the global config.
+        ``confidence_threshold`` is global (not per-source)."""
+        rel = self.source_thresholds.get(source_type)
+        if rel is None:
+            return (
+                self.include_threshold,
+                self.drop_threshold,
+                self.confidence_threshold,
+            )
+        return (
+            rel.auto_include_threshold,
+            rel.drop_below,
+            self.confidence_threshold,
+        )
 
     async def enqueue(
         self,
@@ -54,7 +103,11 @@ class PipelineEngine:
         source_id: str | None = None,
         urgency_signals: dict | None = None,
         trigger: JobTrigger = JobTrigger.MANUAL,
+        urgency_score: int | None = None,
     ) -> PipelineJob:
+        """Enqueue a raw item. When ``urgency_score`` is provided (e.g. the
+        scheduler pre-scored a batch via ``score_urgency_many``), the per-item
+        scorer call is skipped (ADR 0048)."""
         if source_id:
             if await self.stores.processed.is_processed(source_type, source_id):
                 job = PipelineJob(
@@ -72,14 +125,15 @@ class PipelineEngine:
         )
         await self.stores.jobs.save_job(job)
 
-        urgency_score = 50
-        if self.queue_scorer and urgency_signals:
-            try:
-                urgency_score = await self.queue_scorer.score_urgency(
-                    raw_text, urgency_signals
-                )
-            except Exception as e:
-                logger.warning(f"Queue scorer failed, using default: {e}")
+        if urgency_score is None:
+            urgency_score = 50
+            if self.queue_scorer and urgency_signals:
+                try:
+                    urgency_score = await self.queue_scorer.score_urgency(
+                        raw_text, urgency_signals
+                    )
+                except Exception as e:
+                    logger.warning(f"Queue scorer failed, using default: {e}")
 
         entry = IngestionQueueEntry(
             raw_content=raw_text,
@@ -107,15 +161,40 @@ class PipelineEngine:
                 job.items_extracted = len(extracted)
                 await self.stores.jobs.update_job(job)
 
-            for ext_item in extracted:
-                ext_item = ExtractedItem(
-                    summary=ext_item.summary,
-                    category=ext_item.category,
-                    source_context=ext_item.source_context,
+            # Rebind each extracted item to this raw_item.
+            items = [
+                ExtractedItem(
+                    summary=e.summary,
+                    category=e.category,
+                    source_context=e.source_context,
                     raw_item=raw_item,
                 )
+                for e in extracted
+            ]
+
+            # Batched relevance scoring (ADR 0048): gather per-item facts/rules
+            # concurrently, score all items in one call, then route each item
+            # through the single-item helper with its precomputed score.
+            precomputed: list[tuple[int, int] | None] = [None] * len(items)
+            if self.batch_relevance and items:
+                contexts = await asyncio.gather(
+                    *(
+                        gather_facts_and_rules(
+                            self.memory, self.stores.filter_rules, it
+                        )
+                        for it in items
+                    )
+                )
+                ctx_for_scoring = [
+                    (it, facts, rules) for it, (facts, rules) in zip(items, contexts)
+                ]
+                precomputed = await self.llm.score_relevance_many(
+                    ctx_for_scoring, max_batch_size=self.max_batch_size
+                )
+
+            for ext_item, score in zip(items, precomputed):
                 try:
-                    await self._process_extracted_item(ext_item, job)
+                    await self._process_extracted_item(ext_item, job, precomputed=score)
                 except Exception as e:
                     logger.error(f"Failed to process extracted item: {e}")
                     if job:
@@ -126,11 +205,39 @@ class PipelineEngine:
             raise
 
     async def _process_extracted_item(
-        self, ext_item: ExtractedItem, job: PipelineJob | None
+        self,
+        ext_item: ExtractedItem,
+        job: PipelineJob | None,
+        precomputed: tuple[int, int] | None = None,
     ) -> None:
-        action, relevance, confidence = await score_and_decide(
-            self.llm, self.memory, self.stores.filter_rules, ext_item
+        # Resolve the routing thresholds for THIS item's source (ADR0044): a
+        # per-source override if configured, otherwise the global PipelineConfig
+        # thresholds. source_type == adapter_type for ingested items.
+        include_t, drop_t, confidence_t = self.thresholds_for(
+            ext_item.raw_item.source_type
         )
+        if precomputed is not None:
+            # Batched path: score already computed by score_relevance_many; apply
+            # the resolved thresholds without a second LLM call. Threshold logic
+            # lives in filter.decide_from_score (ADR 0048).
+            relevance, confidence = precomputed
+            action = decide_from_score(
+                relevance,
+                confidence,
+                include_threshold=include_t,
+                drop_threshold=drop_t,
+                confidence_threshold=confidence_t,
+            )
+        else:
+            action, relevance, confidence = await score_and_decide(
+                self.llm,
+                self.memory,
+                self.stores.filter_rules,
+                ext_item,
+                include_threshold=include_t,
+                drop_threshold=drop_t,
+                confidence_threshold=confidence_t,
+            )
 
         if action == "auto_include":
             item = Item(
@@ -152,18 +259,19 @@ class PipelineEngine:
                 await self.stores.jobs.update_job(job)
 
         elif action == "auto_drop":
-            await self.memory.record_pipeline_decision(
-                Item(
-                    source_type=ext_item.raw_item.source_type,
-                    source_id=ext_item.raw_item.id,
-                    summary=ext_item.summary,
-                    category=ext_item.category,
-                    origin=ItemOrigin.AUTO_INCLUDED,
-                    priority=Priority.P3,
-                ),
-                "auto_drop",
-                f"relevance={relevance}",
-            )
+            if self.record_drop_decisions:
+                await self.memory.record_pipeline_decision(
+                    Item(
+                        source_type=ext_item.raw_item.source_type,
+                        source_id=ext_item.raw_item.id,
+                        summary=ext_item.summary,
+                        category=ext_item.category,
+                        origin=ItemOrigin.AUTO_INCLUDED,
+                        priority=Priority.P3,
+                    ),
+                    "auto_drop",
+                    f"relevance={relevance}",
+                )
             if job:
                 job.items_dropped += 1
                 await self.stores.jobs.update_job(job)

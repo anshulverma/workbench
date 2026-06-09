@@ -42,6 +42,10 @@ class PipelineConfig(BaseModel):
     include_threshold: int = 70
     drop_threshold: int = 30
     confidence_threshold: int = 70
+    # When False, auto_drop decisions are NOT recorded to the memory layer
+    # (avoids needless Graphiti episode fan-out for dropped noise). auto_include
+    # recording is unaffected. See ADR 0048 / spec 3.1.
+    record_drop_decisions: bool = False
 
 
 class LoggingConfig(BaseModel):
@@ -56,6 +60,9 @@ class LoggingConfig(BaseModel):
 class MetricsConfig(BaseModel):
     enabled: bool = True
     endpoint: str = "/metrics"
+    # Periodic batched structured-log summary of plugboard usage (spec 3.6).
+    summary_log: bool = True
+    summary_interval_seconds: int = 30
 
 
 class DebugConfig(BaseModel):
@@ -124,6 +131,14 @@ class PresentationConfig(BaseModel):
     providers: list[dict] = Field(default_factory=list)
 
 
+class BatchingConfig(BaseModel):
+    # Unit-of-work batching of non-interactive LLM calls (ADR 0048).
+    enabled: bool = True
+    score_relevance: bool = True
+    score_urgency: bool = True
+    max_batch_size: int = 20
+
+
 class AppConfig(BaseModel):
     version: str = "0.4.0"
     server: ServerConfig = Field(default_factory=ServerConfig)
@@ -132,6 +147,7 @@ class AppConfig(BaseModel):
     queue: QueueConfig = Field(default_factory=QueueConfig)
     triage: TriageConfig = Field(default_factory=TriageConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    batching: BatchingConfig = Field(default_factory=BatchingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     messenger: dict | None = None
