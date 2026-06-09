@@ -13,8 +13,10 @@ import {
   beforeAll,
   afterAll,
   afterEach,
+  vi,
 } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -132,5 +134,54 @@ describe('Settings page', () => {
     await waitFor(() =>
       expect(screen.getByText(/token unavailable/i)).toBeInTheDocument(),
     )
+  })
+
+  it('tokenizes a config section via the JSON highlighter (no raw HTML)', async () => {
+    const { container } = renderSettings()
+    await screen.findByText(/include_threshold/)
+    // The highlighter emits token spans, never raw HTML injection.
+    expect(container.querySelector('.tok-key')).not.toBeNull()
+    expect(container.querySelector('.tok-number')).not.toBeNull()
+    expect(container.querySelector('[dangerouslySetInnerHTML]')).toBeNull()
+  })
+
+  it('shows a locked secrets vault panel and never renders secret values', async () => {
+    renderSettings()
+    await screen.findByText(/include_threshold/)
+    expect(screen.getByTestId('secrets-vault')).toBeInTheDocument()
+    expect(screen.getByText(/secrets are not exposed/i)).toBeInTheDocument()
+    // The redacted token marker may appear, but never a real secret value.
+    expect(screen.queryByText(/dev-token/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/api_token/)).not.toBeInTheDocument()
+  })
+
+  it('downloads a backup blob of the redacted config', async () => {
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:mock')
+    const revokeObjectURL = vi.fn((_url: string) => {})
+    // jsdom lacks these; stub them on the URL object.
+    Object.assign(URL, { createObjectURL, revokeObjectURL })
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+
+    const user = userEvent.setup()
+    renderSettings()
+    const btn = await screen.findByRole('button', { name: /download backup/i })
+    await user.click(btn)
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    const blob = createObjectURL.mock.calls[0][0]
+    expect(blob).toBeInstanceOf(Blob)
+    expect(blob.type).toContain('application/json')
+    expect(clickSpy).toHaveBeenCalled()
+    clickSpy.mockRestore()
+  })
+
+  it('drops the vanity Runtime Metadata block', async () => {
+    renderSettings()
+    await screen.findByText(/app version/i)
+    for (const m of [/kernel/i, /\barch\b/i, /memory usage/i, /network latency/i]) {
+      expect(screen.queryByText(m)).toBeNull()
+    }
   })
 })

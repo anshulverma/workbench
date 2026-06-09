@@ -231,3 +231,28 @@
   background-color: #353438; /* surface-highest */
   color: #e4e1e6; /* on-surface ≈ 9.5:1 */
 }
+
+/* JsonHighlight token colors (spec §12). Re-themed from the design's
+   low-contrast #003648/#5c1b00 to AA-safe tokens on the dark code surface.
+   Keys use the lighter #ffb59a (never #ff6a2b as text on elevated surfaces,
+   per the §13 contrast contract); strings use tertiary cyan. */
+.tok-key {
+  color: var(--brand, #ffb59a); /* #ffb59a on surface ≈ 8:1 */
+}
+.tok-string {
+  color: var(--tertiary, #71d2ff); /* cyan on dark surface ≈ 9:1 */
+}
+.tok-number {
+  color: var(--foreground, #e4e1e6); /* on-surface ≈ 9.5:1 */
+}
+.tok-boolean {
+  color: var(--foreground, #e4e1e6);
+  font-weight: 600;
+}
+.tok-null {
+  color: var(--muted-foreground, #c8c5cd);
+  font-style: italic;
+}
+.tok-punct {
+  color: var(--muted-foreground, #c8c5cd);
+}
