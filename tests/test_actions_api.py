@@ -4,8 +4,14 @@ from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 
 from workbench.models import (
-    Item, ItemCategory, ItemOrigin, ItemStatus, ItemUpdate, Priority,
-    TriageCard, TriageOption,
+    Item,
+    ItemCategory,
+    ItemOrigin,
+    ItemStatus,
+    ItemUpdate,
+    Priority,
+    TriageCard,
+    TriageOption,
 )
 from workbench.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
@@ -29,13 +35,19 @@ async def app_with_state(stores, mock_llm):
     from workbench.config import AppConfig, ServerConfig, StorageConfig
 
     test_config = AppConfig(
-        storage=StorageConfig(postgres_dsn="postgres://workbench:workbench@localhost:5432/workbench"),
-        llm={"class": "workbench.providers.llm.anthropic.AnthropicLLM", "api_key": "test"},
+        storage=StorageConfig(
+            postgres_dsn="postgres://workbench:workbench@localhost:5432/workbench"
+        ),
+        llm={
+            "class": "workbench.providers.llm.anthropic.AnthropicLLM",
+            "api_key": "test",
+        },
         server=ServerConfig(api_token="dev-token-change-me"),
     )
 
     with patch("workbench.main.get_config", return_value=test_config):
         from workbench.main import create_app
+
         test_app = create_app()
 
     test_app.state.config = test_config
@@ -77,19 +89,27 @@ async def test_get_actions_empty(client):
 async def test_get_actions_grouped(client, app_with_state):
     stores = app_with_state.state.stores
     item1 = Item(
-        source_type="email", source_id="e1",
-        summary="Assign to bob", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P2,
+        source_type="email",
+        source_id="e1",
+        summary="Assign to bob",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="delegation",
+        action_source="triage_response",
+        action_category="delegation",
         parent_item_id="parent-1",
     )
     item2 = Item(
-        source_type="diff", source_id="d1",
-        summary="Review RFC", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P1,
+        source_type="diff",
+        source_id="d1",
+        summary="Review RFC",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P1,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="review",
+        action_source="triage_response",
+        action_category="review",
     )
     await stores.items.save_item(item1)
     await stores.items.save_item(item2)
@@ -106,18 +126,26 @@ async def test_get_actions_grouped(client, app_with_state):
 async def test_get_actions_filter_by_category(client, app_with_state):
     stores = app_with_state.state.stores
     item1 = Item(
-        source_type="email", source_id="e1",
-        summary="Assign to bob", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P2,
+        source_type="email",
+        source_id="e1",
+        summary="Assign to bob",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="delegation",
+        action_source="triage_response",
+        action_category="delegation",
     )
     item2 = Item(
-        source_type="diff", source_id="d1",
-        summary="Review RFC", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P1,
+        source_type="diff",
+        source_id="d1",
+        summary="Review RFC",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P1,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="review",
+        action_source="triage_response",
+        action_category="review",
     )
     await stores.items.save_item(item1)
     await stores.items.save_item(item2)
@@ -134,11 +162,15 @@ async def test_get_actions_filter_by_category(client, app_with_state):
 async def test_mark_action_done(client, app_with_state):
     stores = app_with_state.state.stores
     item = Item(
-        source_type="email", source_id="e1",
-        summary="Assign to bob", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P2,
+        source_type="email",
+        source_id="e1",
+        summary="Assign to bob",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="delegation",
+        action_source="triage_response",
+        action_category="delegation",
     )
     await stores.items.save_item(item)
 
@@ -153,11 +185,15 @@ async def test_mark_action_done(client, app_with_state):
 async def test_mark_action_done_logs_lifecycle(client, app_with_state):
     stores = app_with_state.state.stores
     item = Item(
-        source_type="email", source_id="e1",
-        summary="Assign to bob", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P2,
+        source_type="email",
+        source_id="e1",
+        summary="Assign to bob",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="delegation",
+        action_source="triage_response",
+        action_category="delegation",
     )
     await stores.items.save_item(item)
 
@@ -174,11 +210,15 @@ async def test_mark_action_done_logs_lifecycle(client, app_with_state):
 async def test_change_priority(client, app_with_state):
     stores = app_with_state.state.stores
     item = Item(
-        source_type="email", source_id="e1",
-        summary="Assign to bob", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P2,
+        source_type="email",
+        source_id="e1",
+        summary="Assign to bob",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="delegation",
+        action_source="triage_response",
+        action_category="delegation",
     )
     await stores.items.save_item(item)
 
@@ -196,11 +236,15 @@ async def test_change_priority(client, app_with_state):
 async def test_snooze_action(client, app_with_state):
     stores = app_with_state.state.stores
     item = Item(
-        source_type="email", source_id="e1",
-        summary="Assign to bob", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P2,
+        source_type="email",
+        source_id="e1",
+        summary="Assign to bob",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
         status=ItemStatus.ACTIVE,
-        action_source="triage_response", action_category="delegation",
+        action_source="triage_response",
+        action_category="delegation",
     )
     await stores.items.save_item(item)
 
@@ -223,9 +267,12 @@ async def test_non_action_items_excluded(client, app_with_state):
     """Items without action_source should not appear in /api/actions."""
     stores = app_with_state.state.stores
     item = Item(
-        source_type="email", source_id="e1",
-        summary="Regular item", category=ItemCategory.ACTION_ITEM,
-        origin=ItemOrigin.TRIAGED, priority=Priority.P2,
+        source_type="email",
+        source_id="e1",
+        summary="Regular item",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
         status=ItemStatus.ACTIVE,
         # No action_source set -- this is NOT an action item
     )
@@ -234,6 +281,71 @@ async def test_non_action_items_excluded(client, app_with_state):
     r = await client.get("/api/actions")
     assert r.status_code == 200
     assert r.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_post_manual_action_item(client, app_with_state):
+    r = await client.post(
+        "/api/actions",
+        json={"summary": "Call vendor", "priority": "P1", "action_category": "ops"},
+    )
+    assert r.status_code in (200, 201)
+    row = r.json()
+    assert row["summary"] == "Call vendor"
+    assert row["priority"] == "P1"
+    assert row["action_source"] == "manual"
+    assert row["action_category"] == "ops"
+    assert row["id"]
+    assert row["created_at"]
+
+    # persisted as a manual-origin action item
+    stores = app_with_state.state.stores
+    saved = await stores.items.get_item(row["id"])
+    assert saved is not None
+    assert saved.origin == ItemOrigin.MANUAL
+    assert saved.category == ItemCategory.ACTION_ITEM
+    assert saved.status == ItemStatus.ACTIVE
+    assert saved.action_source == "manual"
+
+    # it now appears in GET /api/actions
+    listing = (await client.get("/api/actions")).json()
+    assert listing["total"] >= 1
+    assert "ops" in listing["categories"]
+
+
+@pytest.mark.asyncio
+async def test_post_manual_action_default_priority(client):
+    r = await client.post("/api/actions", json={"summary": "Tidy backlog"})
+    assert r.status_code in (200, 201)
+    row = r.json()
+    assert row["priority"] == "P2"
+    assert row["action_category"] is None
+
+
+@pytest.mark.asyncio
+async def test_post_manual_action_rejects_empty_summary(client):
+    r = await client.post("/api/actions", json={"summary": "   ", "priority": "P1"})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_manual_action_rejects_missing_summary(client):
+    r = await client.post("/api/actions", json={"priority": "P1"})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_manual_action_rejects_bad_priority(client):
+    r = await client.post("/api/actions", json={"summary": "x", "priority": "P9"})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_manual_action_requires_auth(app_with_state):
+    transport = ASGITransport(app=app_with_state)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.post("/api/actions", json={"summary": "x", "priority": "P1"})
+    assert r.status_code in (401, 403)
 
 
 @pytest.mark.asyncio
