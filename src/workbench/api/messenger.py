@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from workbench.config.writer import write_messenger
-from workbench.redaction import _is_secret_key, redact_secrets
+from workbench.api.redaction import _is_secret_key, redact_secrets
 from workbench.providers.registry import close_provider, create_provider
 
 logger = structlog.get_logger(__name__)
