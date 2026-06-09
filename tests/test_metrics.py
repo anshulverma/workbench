@@ -28,3 +28,15 @@ def test_all_metrics_registered():
     assert m.triage_queue_depth is not None
     assert m.dead_letter_count is not None
     assert m.connection_healthy is not None
+
+
+def test_plugboard_metrics_exist():
+    from prometheus_client import CollectorRegistry
+    from workbench.metrics import create_metrics
+
+    m = create_metrics(CollectorRegistry())
+    m.plugboard_calls.labels(client="main_llm", model="m").inc()
+    m.plugboard_tokens.labels(client="main_llm", model="m", direction="input").inc(10)
+    m.plugboard_items.labels(client="main_llm", model="m").inc(3)
+    m.plugboard_errors.labels(client="main_llm", model="m", error_type="X").inc()
+    m.plugboard_call_seconds.labels(client="main_llm", model="m").observe(0.5)

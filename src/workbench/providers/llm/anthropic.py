@@ -6,6 +6,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
+from workbench.providers._plugboard import record_plugboard_call
 from workbench.providers.llm.base import LLMProvider
 from workbench.models import (
     ExtractedItem,
@@ -53,6 +54,10 @@ class AnthropicLLM(LLMProvider):
         base_url: str = "https://api.anthropic.com"
         model: str = "claude-sonnet-4-20250514"
         http_client: Any = None
+        # Optional sink (PlugboardSink) receiving a PlugboardCallRecord per
+        # messages.create. Injected post-construction in lifespan; providers
+        # never import workbench.metrics. See ADR 0049.
+        on_plugboard_call: Any = None
 
         class Config:
             arbitrary_types_allowed = True
@@ -65,6 +70,7 @@ class AnthropicLLM(LLMProvider):
             http_client=self._http_client,
         )
         self.model = config.model
+        self._sink = config.on_plugboard_call
 
     async def close(self) -> None:
         if self._http_client is not None:
@@ -313,12 +319,17 @@ Return ONLY the card body text, no JSON wrapping."""
         ]
 
         try:
-            response = await self.client.messages.create(
+            response = await record_plugboard_call(
+                client="main_llm",
                 model=self.model,
-                max_tokens=1000,
-                tools=tools,
-                tool_choice={"type": "tool", "name": "interpret_response"},
-                messages=messages,
+                sink=self._sink,
+                do_call=lambda: self.client.messages.create(
+                    model=self.model,
+                    max_tokens=1000,
+                    tools=tools,
+                    tool_choice={"type": "tool", "name": "interpret_response"},
+                    messages=messages,
+                ),
             )
 
             # Extract tool use result
@@ -359,13 +370,21 @@ Return ONLY the card body text, no JSON wrapping."""
                 explanation=f"LLM interpretation failed, defaulting to P2 todo: {raw_text}",
             )
 
-    async def _call_with_retry(self, prompt: str, max_retries: int = 3) -> str:
+    async def _call_with_retry(
+        self, prompt: str, max_retries: int = 3, *, item_count: int = 1
+    ) -> str:
         for attempt in range(max_retries):
             try:
-                response = await self.client.messages.create(
+                response = await record_plugboard_call(
+                    client="main_llm",
                     model=self.model,
-                    max_tokens=2000,
-                    messages=[{"role": "user", "content": prompt}],
+                    sink=self._sink,
+                    item_count=item_count,
+                    do_call=lambda: self.client.messages.create(
+                        model=self.model,
+                        max_tokens=2000,
+                        messages=[{"role": "user", "content": prompt}],
+                    ),
                 )
                 return response.content[0].text
             except Exception:

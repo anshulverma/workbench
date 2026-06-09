@@ -20,9 +20,16 @@ class WorkbenchMetrics:
 
     enrichment_errors: Counter
 
+    # Plugboard transport-view metrics (ADR 0049): per client+model.
+    plugboard_calls: Counter
+    plugboard_errors: Counter
+    plugboard_tokens: Counter
+    plugboard_items: Counter
+
     # Histograms
     adapter_poll_seconds: Histogram
     llm_call_seconds: Histogram
+    plugboard_call_seconds: Histogram
     pipeline_stage_seconds: Histogram
     enrichment_seconds: Histogram
 
@@ -39,79 +46,145 @@ def create_metrics(registry: CollectorRegistry | None = None) -> WorkbenchMetric
 
     return WorkbenchMetrics(
         items_ingested=Counter(
-            "workbench_items_ingested_total", "Items ingested from sources",
-            ["source_type", "adapter"], **kw,
+            "workbench_items_ingested_total",
+            "Items ingested from sources",
+            ["source_type", "adapter"],
+            **kw,
         ),
         adapter_polls=Counter(
-            "workbench_adapter_polls_total", "Source adapter poll attempts",
-            ["adapter", "status"], **kw,
+            "workbench_adapter_polls_total",
+            "Source adapter poll attempts",
+            ["adapter", "status"],
+            **kw,
         ),
         llm_calls=Counter(
-            "workbench_llm_calls_total", "LLM API calls",
-            ["method"], **kw,
+            "workbench_llm_calls_total",
+            "LLM API calls",
+            ["method"],
+            **kw,
         ),
         llm_errors=Counter(
-            "workbench_llm_errors_total", "LLM API errors",
-            ["method", "error_type"], **kw,
+            "workbench_llm_errors_total",
+            "LLM API errors",
+            ["method", "error_type"],
+            **kw,
         ),
         items_triaged=Counter(
-            "workbench_items_triaged_total", "Items triaged by user action",
-            ["action"], **kw,
+            "workbench_items_triaged_total",
+            "Items triaged by user action",
+            ["action"],
+            **kw,
         ),
         items_dropped=Counter(
-            "workbench_items_dropped_total", "Items dropped from pipeline",
-            ["reason"], **kw,
+            "workbench_items_dropped_total",
+            "Items dropped from pipeline",
+            ["reason"],
+            **kw,
         ),
         identity_merges=Counter(
-            "workbench_identity_merges_total", "Entity identity merges",
-            ["resolved_by"], **kw,
+            "workbench_identity_merges_total",
+            "Entity identity merges",
+            ["resolved_by"],
+            **kw,
         ),
         cards_generated=Counter(
-            "workbench_cards_generated_total", "Triage cards generated",
-            ["method"], **kw,
+            "workbench_cards_generated_total",
+            "Triage cards generated",
+            ["method"],
+            **kw,
         ),
         alerts_sent=Counter(
-            "workbench_alerts_sent_total", "Operational alerts sent",
-            ["alert_type"], **kw,
+            "workbench_alerts_sent_total",
+            "Operational alerts sent",
+            ["alert_type"],
+            **kw,
         ),
         enrichment_errors=Counter(
-            "workbench_enrichment_errors_total", "Enrichment errors",
-            ["enricher", "error_type"], **kw,
+            "workbench_enrichment_errors_total",
+            "Enrichment errors",
+            ["enricher", "error_type"],
+            **kw,
+        ),
+        plugboard_calls=Counter(
+            "plugboard_calls_total",
+            "Plugboard (LLM gateway) call attempts (incl. retries)",
+            ["client", "model"],
+            **kw,
+        ),
+        plugboard_errors=Counter(
+            "plugboard_errors_total",
+            "Plugboard call errors",
+            ["client", "model", "error_type"],
+            **kw,
+        ),
+        plugboard_tokens=Counter(
+            "plugboard_tokens_total",
+            "Plugboard tokens by direction",
+            ["client", "model", "direction"],
+            **kw,
+        ),
+        plugboard_items=Counter(
+            "plugboard_items_total",
+            "Logical items folded into plugboard calls (batching visibility)",
+            ["client", "model"],
+            **kw,
         ),
         adapter_poll_seconds=Histogram(
-            "workbench_adapter_poll_seconds", "Source adapter poll duration",
-            ["adapter"], **kw,
+            "workbench_adapter_poll_seconds",
+            "Source adapter poll duration",
+            ["adapter"],
+            **kw,
         ),
         llm_call_seconds=Histogram(
-            "workbench_llm_call_seconds", "LLM call duration",
-            ["method"], **kw,
+            "workbench_llm_call_seconds",
+            "LLM call duration",
+            ["method"],
+            **kw,
+        ),
+        plugboard_call_seconds=Histogram(
+            "plugboard_call_seconds",
+            "Plugboard call duration",
+            ["client", "model"],
+            buckets=(0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60),
+            **kw,
         ),
         pipeline_stage_seconds=Histogram(
-            "workbench_pipeline_stage_seconds", "Pipeline stage duration",
-            ["stage"], **kw,
+            "workbench_pipeline_stage_seconds",
+            "Pipeline stage duration",
+            ["stage"],
+            **kw,
         ),
         enrichment_seconds=Histogram(
-            "workbench_enrichment_seconds", "Enrichment duration",
-            ["enricher"], **kw,
+            "workbench_enrichment_seconds",
+            "Enrichment duration",
+            ["enricher"],
+            **kw,
         ),
         ingestion_queue_depth=Gauge(
-            "workbench_ingestion_queue_depth", "Current ingestion queue depth",
+            "workbench_ingestion_queue_depth",
+            "Current ingestion queue depth",
             **kw,
         ),
         triage_queue_depth=Gauge(
-            "workbench_triage_queue_depth", "Current triage queue depth",
+            "workbench_triage_queue_depth",
+            "Current triage queue depth",
             **kw,
         ),
         dead_letter_count=Gauge(
-            "workbench_dead_letter_count", "Current dead letter count",
+            "workbench_dead_letter_count",
+            "Current dead letter count",
             **kw,
         ),
         connection_healthy=Gauge(
-            "workbench_connection_healthy", "Connection health (1=healthy, 0=unhealthy)",
-            ["name"], **kw,
+            "workbench_connection_healthy",
+            "Connection health (1=healthy, 0=unhealthy)",
+            ["name"],
+            **kw,
         ),
         tracked_threads=Gauge(
-            "workbench_tracked_threads", "Tracked chat threads",
-            ["adapter"], **kw,
+            "workbench_tracked_threads",
+            "Tracked chat threads",
+            ["adapter"],
+            **kw,
         ),
     )

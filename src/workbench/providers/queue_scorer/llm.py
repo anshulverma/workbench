@@ -5,6 +5,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
+from workbench.providers._plugboard import record_plugboard_call
 from workbench.providers.queue_scorer.base import QueueScorer
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class LLMQueueScorer(QueueScorer):
         base_url: str = "https://api.anthropic.com"
         model: str = "claude-haiku-4-5-20251001"
         http_client: Any = None
+        on_plugboard_call: Any = None
 
         class Config:
             arbitrary_types_allowed = True
@@ -36,21 +38,35 @@ class LLMQueueScorer(QueueScorer):
         self.model = config.model
         self._http_client = config.http_client
         self.client = AsyncAnthropic(
-            api_key=config.api_key, base_url=config.base_url,
+            api_key=config.api_key,
+            base_url=config.base_url,
             http_client=self._http_client,
         )
+        self._sink = config.on_plugboard_call
 
     async def score_urgency(self, raw_text: str, urgency_signals: dict) -> int:
-        signals_text = json.dumps(urgency_signals, indent=2) if urgency_signals else "None"
+        signals_text = (
+            json.dumps(urgency_signals, indent=2) if urgency_signals else "None"
+        )
         prompt = URGENCY_PROMPT.format(signals=signals_text, content=raw_text[:2000])
         try:
-            response = await self.client.messages.create(
-                model=self.model, max_tokens=100,
-                messages=[{"role": "user", "content": prompt}],
+            response = await record_plugboard_call(
+                client="queue_scorer",
+                model=self.model,
+                sink=self._sink,
+                do_call=lambda: self.client.messages.create(
+                    model=self.model,
+                    max_tokens=100,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
             )
             text = response.content[0].text.strip()
             if "```" in text:
-                text = text.split("```json")[-1].split("```")[0] if "```json" in text else text.split("```")[1].split("```")[0]
+                text = (
+                    text.split("```json")[-1].split("```")[0]
+                    if "```json" in text
+                    else text.split("```")[1].split("```")[0]
+                )
             data = json.loads(text.strip())
             return max(0, min(100, int(data["urgency"])))
         except Exception:

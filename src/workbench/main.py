@@ -98,6 +98,44 @@ async def lifespan(app: FastAPI):
     else:
         app.state.queue_scorer = None
 
+    # Wire the plugboard transport-view sink onto the underlying providers.
+    # The main LLM is wrapped by InstrumentedLLMProvider, so target its _inner.
+    # Gated on metrics.enabled. Providers never import workbench.metrics; the
+    # sink (a closure here) owns all Prometheus knowledge. See ADR 0049.
+    if config.metrics.enabled:
+        _m = app.state.metrics
+
+        def _plugboard_sink(rec):
+            _m.plugboard_calls.labels(client=rec.client, model=rec.model).inc()
+            _m.plugboard_call_seconds.labels(
+                client=rec.client, model=rec.model
+            ).observe(rec.latency_s)
+            if rec.error_type:
+                _m.plugboard_errors.labels(
+                    client=rec.client, model=rec.model, error_type=rec.error_type
+                ).inc()
+            else:
+                for direction, n in (
+                    ("input", rec.input_tokens),
+                    ("output", rec.output_tokens),
+                    ("cache_read", rec.cache_read_tokens),
+                    ("cache_write", rec.cache_write_tokens),
+                ):
+                    if n:
+                        _m.plugboard_tokens.labels(
+                            client=rec.client, model=rec.model, direction=direction
+                        ).inc(n)
+            if rec.item_count:
+                _m.plugboard_items.labels(client=rec.client, model=rec.model).inc(
+                    rec.item_count
+                )
+
+        app.state.plugboard_sink = _plugboard_sink
+        inner_llm = getattr(app.state.llm, "_inner", app.state.llm)
+        inner_llm._sink = _plugboard_sink
+        if app.state.queue_scorer is not None:
+            app.state.queue_scorer._sink = _plugboard_sink
+
     app.state.sources = create_providers_from_list(
         config.sources, connections=connections, metrics=app.state.metrics
     )
