@@ -9,7 +9,7 @@ import pytest
 import structlog
 
 from workbench.telemetry.logging import setup_logging
-from workbench.middleware import CorrelationIdMiddleware
+from workbench.runtime.middleware import CorrelationIdMiddleware
 
 
 def _attach_capture():

@@ -45,8 +45,8 @@ async def app_with_state(stores, mock_llm):
         server=ServerConfig(api_token="dev-token-change-me"),
     )
 
-    with patch("workbench.main.get_config", return_value=test_config):
-        from workbench.main import create_app
+    with patch("workbench.runtime.app.get_config", return_value=test_config):
+        from workbench.runtime.app import create_app
 
         test_app = create_app()
 

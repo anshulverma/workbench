@@ -61,8 +61,8 @@ async def app_with_state(stores, mock_llm):
         server=ServerConfig(api_token="dev-token-change-me"),
     )
 
-    with patch("workbench.main.get_config", return_value=test_config):
-        from workbench.main import create_app
+    with patch("workbench.runtime.app.get_config", return_value=test_config):
+        from workbench.runtime.app import create_app
 
         test_app = create_app()
 
@@ -70,7 +70,7 @@ async def app_with_state(stores, mock_llm):
     # deterministically in tests (otherwise it lazily loads config.yml, which
     # fails to resolve ${oc.env:ANTHROPIC_API_KEY} in CI and silently disables
     # auth — the cause of the pre-existing test_api auth failure).
-    from workbench.auth import BearerTokenMiddleware
+    from workbench.runtime.auth import BearerTokenMiddleware
 
     for mw in test_app.user_middleware:
         if mw.cls is BearerTokenMiddleware:

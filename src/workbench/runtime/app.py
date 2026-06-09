@@ -9,7 +9,7 @@ import structlog
 from fastapi import FastAPI
 
 from workbench import __version__
-from workbench.auth import BearerTokenMiddleware
+from workbench.runtime.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
 from workbench.telemetry.instrumentation import InstrumentedLLMProvider
 from workbench.telemetry.logging import setup_logging
@@ -17,7 +17,7 @@ from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.telemetry.privacy import SanitizingProcessor
 from workbench.telemetry.metrics import create_metrics
 from workbench.telemetry.usage_aggregator import UsageAggregator
-from workbench.middleware import CorrelationIdMiddleware
+from workbench.runtime.middleware import CorrelationIdMiddleware
 from workbench.providers.registry import (
     close_provider,
     create_provider,
@@ -432,7 +432,7 @@ def cli_main():
 
     config = get_config()
     uvicorn.run(
-        "workbench.main:app",
+        "workbench.runtime.app:app",
         host=config.server.host,
         port=config.server.port,
         reload=config.server.debug,
