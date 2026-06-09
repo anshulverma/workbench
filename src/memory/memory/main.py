@@ -12,6 +12,8 @@ from memory import __version__
 from memory.config import MemoryConfig, load_config
 from memory.graphiti_layer import GraphitiMemoryLayer
 from memory.llm import create_llm_client
+from memory.metrics import create_metrics
+from memory.instrumentation import instrument_llm_client, MemoryUsageAggregator
 from memory.embedder import create_embedder, create_cross_encoder
 from memory.models import (
     DecisionRecordRequest,
@@ -39,7 +41,10 @@ def get_config() -> MemoryConfig:
 
 
 async def _run_ingestion_worker(
-    store: PendingIngestionStore, layer: GraphitiMemoryLayer, concurrency: int = 1
+    store: PendingIngestionStore,
+    layer: GraphitiMemoryLayer,
+    concurrency: int = 1,
+    metrics=None,
 ):
     semaphore = asyncio.Semaphore(concurrency)
     recovered = await store.recover_stuck()
@@ -71,6 +76,8 @@ async def _run_ingestion_worker(
                                 payload["card"], payload["response"]
                             )
                         await store.mark_completed(entry["id"])
+                        if metrics is not None:
+                            metrics.episodes_ingested.labels(type=entry_type).inc()
                         logger.info(
                             "Ingestion completed for %s entry %s",
                             entry_type,
@@ -111,6 +118,23 @@ async def lifespan(app: FastAPI):
     app.state.store = store
 
     llm_client = create_llm_client(config.llm)
+
+    # Plugboard observability (ADR 0050): wrap the Graphiti LLM client in place
+    # to count calls/latency/errors (tokens best-effort). Separate process =>
+    # own registry. Gated on metrics.enabled.
+    if config.metrics.enabled:
+        app.state.metrics = create_metrics()
+        app.state.usage_agg = MemoryUsageAggregator()
+        llm_client = instrument_llm_client(
+            llm_client,
+            app.state.metrics,
+            config.llm.model,
+            aggregator=app.state.usage_agg,
+        )
+    else:
+        app.state.metrics = None
+        app.state.usage_agg = None
+
     embedder = create_embedder(config.embedder)
     cross_encoder = create_cross_encoder(config.embedder)
 
@@ -133,8 +157,32 @@ async def lifespan(app: FastAPI):
     app.state.layer = GraphitiMemoryLayer(graphiti=graphiti)
 
     worker_task = asyncio.create_task(
-        _run_ingestion_worker(store, app.state.layer, config.queue.worker_concurrency)
+        _run_ingestion_worker(
+            store,
+            app.state.layer,
+            config.queue.worker_concurrency,
+            metrics=app.state.metrics,
+        )
     )
+
+    # Periodic plugboard usage summary (process=memory); skip empty intervals.
+    summary_task = None
+    if config.metrics.enabled and config.metrics.summary_log:
+        _interval = config.metrics.summary_interval_seconds
+
+        async def _summary_loop():
+            while True:
+                await asyncio.sleep(_interval)
+                snapshot = app.state.usage_agg.drain()
+                if not snapshot:
+                    continue
+                logger.info(
+                    "llm_usage_summary process=memory interval_seconds=%d usage=%s",
+                    _interval,
+                    snapshot,
+                )
+
+        summary_task = asyncio.create_task(_summary_loop())
 
     logger.info("Memory service %s ready on port %d", __version__, config.server.port)
 
@@ -146,6 +194,12 @@ async def lifespan(app: FastAPI):
         await worker_task
     except asyncio.CancelledError:
         pass
+    if summary_task is not None:
+        summary_task.cancel()
+        try:
+            await summary_task
+        except asyncio.CancelledError:
+            pass
     await graphiti.close()
     await store.close()
 
@@ -231,6 +285,11 @@ def create_app() -> FastAPI:
         graph_uuid = await layer.record_entity(
             request.entity_type, request.entity_id, request.facts, store
         )
+        # record_entity is synchronous and bypasses the ingestion worker, so the
+        # type=entity episode metric must be incremented here (ADR 0050).
+        metrics = getattr(app.state, "metrics", None)
+        if metrics is not None:
+            metrics.episodes_ingested.labels(type="entity").inc()
         return {
             "status": "ok",
             "entity_type": request.entity_type,
@@ -352,6 +411,14 @@ def create_app() -> FastAPI:
         store: PendingIngestionStore = app.state.store
         aliases = await store.list_identities(entity_type, canonical_id)
         return {"canonical_id": canonical_id, "aliases": aliases, "total": len(aliases)}
+
+    # Prometheus metrics endpoint (unauthenticated, like /health; ADR 0051).
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics_endpoint():
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+        from starlette.responses import Response
+
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
 
