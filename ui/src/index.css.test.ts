@@ -63,6 +63,32 @@ describe('theme tokens (spec §1, contrast contract §13)', () => {
     expect(css).toMatch(/outline:\s*2px solid var\(--ring\)/)
   })
 
+  it('self-hosts fonts via @fontsource (no Google CDN)', () => {
+    expect(css).toContain('@import "@fontsource-variable/space-grotesk"')
+    expect(css).toContain('@import "@fontsource-variable/hanken-grotesk"')
+    expect(css).toContain('@import "@fontsource-variable/jetbrains-mono"')
+    expect(css).not.toMatch(/fonts\.googleapis\.com/)
+    expect(css).not.toMatch(/fonts\.gstatic\.com/)
+  })
+
+  it('defines the font + type-scale tokens', () => {
+    expect(css).toMatch(/--font-sans:\s*"Hanken Grotesk Variable"/)
+    expect(css).toMatch(/--font-display:\s*"Space Grotesk Variable"/)
+    expect(css).toMatch(/--font-mono:\s*"JetBrains Mono Variable"/)
+    expect(css).toMatch(/--text-display-lg:\s*32px/)
+    expect(css).toMatch(/--text-display-sm:\s*24px/)
+    expect(css).toMatch(/--text-title-md:\s*18px/)
+    expect(css).toMatch(/--text-body-md:\s*14px/)
+    expect(css).toMatch(/--text-body-sm:\s*13px/)
+    expect(css).toMatch(/--text-mono-label:\s*12px/)
+    expect(css).toMatch(/--text-mono-data:\s*13px/)
+  })
+
+  it('sets base font-family on body and display on headings', () => {
+    expect(css).toMatch(/body\s*\{[^}]*font-family:\s*var\(--font-sans\)/s)
+    expect(css).toMatch(/h1,\s*h2,\s*h3\s*\{[^}]*font-family:\s*var\(--font-display\)/s)
+  })
+
   it('removes the hardcoded dark class from index.html', () => {
     expect(html).not.toMatch(/<html[^>]*class="dark"/)
   })

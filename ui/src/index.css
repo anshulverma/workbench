@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Self-hosted offline fonts (ADR 0035 / spec §2). Vite resolves these to bundled
+   woff2 — NO Google Fonts / Material Symbols CDN. The variable axis covers the
+   400/500/600/700 weights the design uses in one file each. */
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/jetbrains-mono";
+
 @custom-variant dark (&:is(.dark *));
 
 /*
@@ -110,6 +117,21 @@
   --radius-lg: var(--radius); /* cards ~6px */
   --radius-xl: calc(var(--radius) + 4px);
 
+  /* Typography (ADR 0035 / spec §2). Self-hosted variable fonts; Stitch Material
+     Symbols are replaced by the already-bundled lucide-react (no icon font). */
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk Variable", var(--font-sans);
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* Type scale (spec §2) — text-display-lg, …, text-mono-data utilities. */
+  --text-display-lg: 32px;
+  --text-display-sm: 24px;
+  --text-title-md: 18px;
+  --text-body-md: 14px;
+  --text-body-sm: 13px;
+  --text-mono-label: 12px;
+  --text-mono-data: 13px;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -151,6 +173,14 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
+    font-family: var(--font-sans);
+    /* Show fallback text immediately, swap when the woff2 loads (ADR 0035). */
+    font-display: swap;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
   }
 
   /* Visible focus rings on all interactive elements. The Tailwind reset and
