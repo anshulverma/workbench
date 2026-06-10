@@ -415,7 +415,13 @@ def create_app() -> FastAPI:
     async def metrics_endpoint():
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-    ui_dir = os.path.join(os.path.dirname(__file__), "../../ui/dist")
+    @app.get("/", include_in_schema=False)
+    async def root_redirect():
+        from starlette.responses import RedirectResponse
+
+        return RedirectResponse(url="/ui/")
+
+    ui_dir = os.path.join(os.path.dirname(__file__), "../../../ui/dist")
     if os.path.exists(ui_dir):
         from starlette.staticfiles import StaticFiles
 

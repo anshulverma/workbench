@@ -37,7 +37,7 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/health", "/health/live", "/health/ready", "/metrics"):
+        if path in ("/", "/health", "/health/live", "/health/ready", "/metrics"):
             return await call_next(request)
         if path.startswith("/ui") or path == "/api/auth/token":
             return await call_next(request)
