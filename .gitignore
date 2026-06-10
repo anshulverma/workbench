@@ -17,3 +17,4 @@ ui/dist/
 # Stitch design references (not for OSS distribution)
 stitch-design.html
 stitch-design-light.html
+tmp/
