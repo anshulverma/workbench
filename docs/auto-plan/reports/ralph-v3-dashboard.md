@@ -19,7 +19,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 | S11 T275571279 ingestion + LiveTail | 11 | S6,S10,S7 | DONE | 398 vitest; LiveTail component, page restructured |
 | S12 T275571308 ingestion funnel page (filters) | 12 | S4,S5,S6,S10 | DONE | 411 vitest; 9 new files, interleaved funnel + dialogs |
 | S13 T275571331 search page | 13 | S4,S6,S12 | DONE | 437 vitest; 9 new files, master/detail + 4 context renderers |
-| S14 T275571351 overview + SourceFlow Sankey | 14 | S1,S4,S6 | TODO | |
+| S14 T275571351 overview + SourceFlow Sankey | 14 | S1,S4,S6 | DONE | 458 vitest; SourceFlow Sankey + clickable Hot Feed |
 | S15 T275571367 MSW + a11y + test cleanup | 15 | all | TODO | |
 
 ## Rules
