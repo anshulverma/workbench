@@ -7,7 +7,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 | Subtask | Slice | Deps | Status | Notes |
 |---------|-------|------|--------|-------|
 | S1 T275571224 client foundation types + constants + helpers | 1 | — | DONE | 21 tests pass; 3 type modules, funnel-constants, funnel-helpers, TriageTheme |
-| S2 T275571242 server foundation domain + migration 009 + storage | 2 | — | TODO | |
+| S2 T275571242 server foundation domain + migration 009 + storage | 2 | — | DONE | 596 tests pass; 6 new files, 11 modified; migration 009 verified |
 | S3 T275571262 server API endpoints | 3 | S2 | TODO | |
 | S4 T275571286 shared UI primitives | 4 | S1 | TODO | |
 | S5 T275571313 feedback store + hook | 5 | S1,S3 | TODO | |
@@ -42,4 +42,5 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 - Wave 7: S15
 
 ## Log
+- iter 2: S2 DONE — domain/feedback.py (FeedbackCorrection, FilterTuningTask), enrichment.py gains EnricherConfig+LoopBackConfig, FilterRule+Item extended, migration 009 (pg_trgm, 6 tables, columns, GIN index), 5 new storage ABCs + PG impls (feedback/enrichers/loopbacks/funnel_traces/funnel_order), FilterRuleStore gains update/delete/reorder. 596 tests pass.
 - iter 1: S1 DONE — 3 type modules (funnel.ts, feedback.ts, search.ts), funnel-constants.ts (ACTION_META/STAGE_META/SRC_ICON/SOURCE_COLORS/OUTPUT_COLORS), funnel-helpers.ts (ruleById/enricherStageFor/itemLog/stageDuration/stageTimings/buildFlowMatrix), TriageTheme in useTriage.ts. 21 tests pass. Fixed buildFlowMatrix bug (sources.map used tuple destructuring on objects).
