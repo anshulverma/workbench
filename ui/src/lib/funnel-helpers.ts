@@ -1,0 +1,125 @@
+import type { Enricher, FunnelItem, FunnelStage } from './types/funnel'
+
+export interface TimingInfo {
+  at: number
+  dur: number
+}
+
+export interface FlowMatrixSource {
+  id: string
+  label: string
+  vol: number
+}
+
+export interface FlowMatrixOutput {
+  id: string
+  label: string
+  vol: number
+}
+
+export interface FlowMatrix {
+  sources: FlowMatrixSource[]
+  outputs: FlowMatrixOutput[]
+  matrix: number[][]
+}
+
+function hashNum(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  return h
+}
+
+export function ruleById(
+  id: string,
+  filterRules: Array<{ id: string; prompt: string }>,
+  enrichers?: Array<{ id: string; label: string }>,
+): { prompt: string } {
+  const rule = filterRules.find((r) => r.id === id)
+  if (rule) return rule
+  const enr = enrichers?.find((e) => e.id === id)
+  if (enr) return { prompt: `${enr.label} — adds context to the item` }
+  return { prompt: id }
+}
+
+export function enricherStageFor(
+  item: { id: string; source: string },
+  enrichers: Enricher[],
+  enrichmentSamples?: Record<string, Array<{ id: string; context: Record<string, string | number | boolean> }>>,
+): FunnelStage | null {
+  const enr = enrichers.find((e) => e.type === item.source)
+  if (!enr) return null
+  const sample = enrichmentSamples?.[enr.id]?.find((x) => x.id === item.id)
+  const ctxStr = sample
+    ? Object.entries(sample.context).slice(0, 4).map(([k, v]) => `${k}: ${v}`).join(' · ')
+    : enr.adds.slice(0, 4).join(' · ')
+  return {
+    filterId: enr.id,
+    outcome: 'context',
+    reason: `${enr.label} resolved metadata and recorded ${enr.records.join(' + ')} to memory.`,
+    context: ctxStr,
+  }
+}
+
+export function itemLog(
+  item: FunnelItem,
+  enrichers?: Enricher[],
+  enrichmentSamples?: Record<string, Array<{ id: string; context: Record<string, string | number | boolean> }>>,
+): FunnelStage[] {
+  const base = item.stages ?? []
+  if (base.length > 0 && String(base[0].filterId).startsWith('en_')) return base
+  if (!enrichers) return base
+  const en = enricherStageFor(item, enrichers, enrichmentSamples)
+  return en ? [en, ...base] : base
+}
+
+export function stageDuration(stage: FunnelStage): number {
+  const id = String(stage.filterId)
+  const h = hashNum(id)
+  if (id.startsWith('en_')) {
+    return 6 + (h % 14)
+  }
+  return 36 + (h % 120)
+}
+
+export function stageTimings(log: FunnelStage[]): TimingInfo[] {
+  let at = 0
+  return log.map((st) => {
+    const dur = stageDuration(st)
+    const o = { at, dur }
+    at += dur
+    return o
+  })
+}
+
+export function buildFlowMatrix(
+  sourceVolumes: Record<string, number>,
+  outputBuckets: { action_items: number; triage_queue: number; filtered_out: number; errors: number },
+): FlowMatrix {
+  const sourceEntries = Object.entries(sourceVolumes).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
+  const outputEntries: Array<[string, number]> = [
+    ['action_items', outputBuckets.action_items],
+    ['triage_queue', outputBuckets.triage_queue],
+    ['filtered_out', outputBuckets.filtered_out],
+    ['errors', outputBuckets.errors],
+  ]
+
+  const outputLabels: Record<string, string> = {
+    action_items: 'Action Items',
+    triage_queue: 'Triage Queue',
+    filtered_out: 'Filtered Out',
+    errors: 'Errors',
+  }
+
+  const sources: FlowMatrixSource[] = sourceEntries.map(([id, vol]) => ({ id, label: id, vol }))
+  const outputs: FlowMatrixOutput[] = outputEntries.map(([id, vol]) => ({ id, label: outputLabels[id] ?? id, vol }))
+
+  const totalOutput = outputEntries.reduce((s, [, v]) => s + v, 0)
+  if (totalOutput === 0 || sources.length === 0) {
+    return { sources, outputs, matrix: sources.map(() => [0, 0, 0, 0]) }
+  }
+
+  const outputRatios = outputEntries.map(([, v]) => v / totalOutput)
+  const matrix = sources.map((s) => outputRatios.map((ratio) => Math.round(s.vol * ratio)))
+
+  return { sources, outputs, matrix }
+}

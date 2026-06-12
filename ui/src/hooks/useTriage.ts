@@ -26,6 +26,14 @@ import { toast } from 'sonner'
 import { ApiError, apiGet, apiPost } from '@/lib/api'
 import { pollWhenVisible } from '@/lib/query-client'
 
+export interface TriageTheme {
+  id: string
+  label: string
+  summary: string
+  counts: Record<string, number>
+  cards: string[]
+}
+
 export interface TriageOption {
   label: string
   action: string
