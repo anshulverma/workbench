@@ -13,7 +13,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 | S5 T275571313 feedback store + hook | 5 | S1,S3 | DONE | 318 vitest; feedback-store.ts + useFeedback.ts, 26 new tests |
 | S7 T275571257 shell changes (nav, breadcrumbs, hover-expand) | 7 | S4 | DONE | 328 vitest; nav 7 items, hover-expand, breadcrumbs, wb-icon.svg |
 | S6 T275571237 funnel core (FunnelStage, ItemFunnelDialog, MultiLineChart) | 6 | S1,S4,S5 | DONE | 49 new tests; 4 components + smoothPath helper |
-| S8 T275571278 settings sub-tabs | 8 | S4,S7 | TODO | |
+| S8 T275571278 settings sub-tabs | 8 | S4,S7 | DONE | 389 vitest; tab container + SettingsSystem extraction |
 | S9 T275571301 action items changes | 9 | S5,S6 | TODO | |
 | S10 T275571322 triage changes | 10 | S6,S4 | TODO | |
 | S11 T275571279 ingestion + LiveTail | 11 | S6,S10,S7 | TODO | |
@@ -42,6 +42,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 - Wave 7: S15
 
 ## Log
+- iter 8: S8 DONE — Settings refactored to tab container (System/Sources/Messenger), SettingsSystem.tsx extracted, embedded prop on Sources+Messenger, 4 new routes in App.tsx. 389 tests.
 - iter 7: S6 DONE — FunnelStage (correction picker+undo, timing, enricher badge), ItemFunnelDialog (treatment log+verdict+portal), MultiLineChart (Catmull-Rom+tooltip flip+HTML overlay), FilterTuningCard. smoothPath() added to funnel-helpers. 49 new tests.
 - iter 6: S7 DONE — AppSidebar 7 items (removed Sources+Messenger, added Search@2), hover-expand (wb-rail-nav 64→216px), Breadcrumb in AppShell, TopBar route labels, wb-icon.svg, prefers-reduced-motion. 328 tests.
 - iter 5: S5 DONE — feedback-store.ts (WBFeedback singleton, pub/sub, localStorage+fallback, cross-tab sync, refinedPrompt), useFeedback.ts (useFeedbackStore via useSyncExternalStore + TanStack Query hooks). 26 new tests, 318 total.
