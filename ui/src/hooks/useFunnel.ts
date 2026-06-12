@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { apiGet, apiPatch, apiPost, ApiError } from '@/lib/api'
+import { apiGet, apiPatch, apiPost, apiDelete, ApiError } from '@/lib/api'
 import { pollWhenVisible } from '@/lib/query-client'
 import type {
   FilterRuleExtended,
@@ -14,6 +14,7 @@ import type {
   LoopBack,
   FunnelItem,
   FunnelOrderEntry,
+  EnrichmentSample,
 } from '@/lib/types/funnel'
 
 // ---- Query keys ----
@@ -26,6 +27,7 @@ export const FUNNEL_KEYS = {
     ['funnel', 'items', params ?? {}] as const,
   itemDetail: (id: string) => ['funnel', 'item', id] as const,
   order: ['funnel', 'order'] as const,
+  enrichmentSamples: ['funnel', 'enrichment-samples'] as const,
 }
 
 // ---- Read hooks ----
@@ -138,6 +140,56 @@ export function useToggleFunnelStage() {
     },
     onError: (err) => {
       toast.error(`Failed to toggle stage: ${errMessage(err)}`)
+    },
+  })
+}
+
+/** GET /api/funnel/enrichment-samples — enrichment context samples. */
+export function useEnrichmentSamples() {
+  return useQuery({
+    queryKey: FUNNEL_KEYS.enrichmentSamples,
+    queryFn: () =>
+      apiGet<Record<string, EnrichmentSample[]>>(
+        '/api/funnel/enrichment-samples',
+      ),
+    refetchInterval: pollWhenVisible(30_000),
+  })
+}
+
+/** POST /api/funnel/filter-rules — create a new filter rule. */
+export function useCreateFilterRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      prompt: string
+      action: string
+      sources: string[]
+    }) =>
+      apiPost<FilterRuleExtended>('/api/funnel/filter-rules', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: FUNNEL_KEYS.filterRules })
+      qc.invalidateQueries({ queryKey: FUNNEL_KEYS.order })
+      toast.success('Filter rule created')
+    },
+    onError: (err) => {
+      toast.error(`Failed to create filter rule: ${errMessage(err)}`)
+    },
+  })
+}
+
+/** DELETE /api/funnel/filter-rules/:id — delete a filter rule. */
+export function useDeleteFilterRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiDelete<{ status: string }>(`/api/funnel/filter-rules/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: FUNNEL_KEYS.filterRules })
+      qc.invalidateQueries({ queryKey: FUNNEL_KEYS.order })
+      toast.success('Filter rule deleted')
+    },
+    onError: (err) => {
+      toast.error(`Failed to delete filter rule: ${errMessage(err)}`)
     },
   })
 }

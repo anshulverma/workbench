@@ -52,18 +52,8 @@ import {
   type Job,
 } from '@/hooks/useStats'
 
-// TODO(slice-12): Replace this placeholder with the real IngestionFunnel component
-// once Slice 12 builds it. Expected import:
-//   const IngestionFunnel = lazy(() =>
-//     import('@/pages/Filters').then(m => ({ default: m.IngestionFunnel ?? m.default }))
-//   )
-function IngestionFunnelPlaceholder() {
-  return (
-    <div className="flex h-48 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-      Ingestion funnel visualization — coming in Slice 12
-    </div>
-  )
-}
+// Slice 12: Real IngestionFunnel component, embedded.
+import { IngestionFunnel } from '@/pages/Filters'
 
 const JOB_STATUSES = ['queued', 'pending', 'running', 'completed', 'failed']
 const PAGE_SIZE = 25
@@ -505,9 +495,7 @@ export function Ingestion() {
         )}
       </section>
 
-      {/* 5 — Embedded Ingestion Funnel (Slice 12 placeholder) */}
-      {/* TODO(slice-12): IngestionFunnel component — replace Suspense fallback
-          once src/pages/Filters.tsx exports IngestionFunnel. */}
+      {/* 5 — Embedded Ingestion Funnel (Slice 12) */}
       <section className="space-y-2.5" aria-label="ingestion funnel">
         <SectionHeader
           right={
@@ -518,7 +506,7 @@ export function Ingestion() {
         >
           Ingestion Funnel
         </SectionHeader>
-        <IngestionFunnelPlaceholder />
+        <IngestionFunnel embedded />
       </section>
 
       {/* ItemFunnelDialog — opened by clicking a LiveTail row */}
