@@ -52,23 +52,25 @@ describe('accessibility', () => {
     const overview = screen.getByRole('link', { name: 'Overview' })
     expect(overview.tagName).toBe('A')
 
-    // Tab moves focus to the first nav link (keyboard reachable, in order).
+    // Tab moves focus to the first link in the nav — now the logo home link
+    // (V3 restructure added a logo button above the nav items).
+    const logo = screen.getByRole('link', { name: /workbench home/i })
     await userEvent.tab()
-    expect(overview).toHaveFocus()
+    expect(logo).toHaveFocus()
   })
 
   it('rail links are icon-only with accessible names (aria-label)', () => {
     renderWithRouter(<AppSidebar />)
     // The 64px icon rail shows lucide icons; accessible names come from
-    // aria-label, not visible text. All eight routes must remain named.
+    // aria-label, not visible text. All seven routes must remain named.
+    // V3 restructure: Sources + Messenger removed, Search added.
     for (const name of [
       'Overview',
+      'Search',
       'Triage',
       'Action Items',
       'Ingestion',
-      'Sources',
       'Knowledge',
-      'Messenger',
       'Settings',
     ]) {
       expect(screen.getByRole('link', { name })).toBeInTheDocument()

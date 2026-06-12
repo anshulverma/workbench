@@ -17,10 +17,13 @@ import { cn } from '@/lib/utils'
 
 // Route → mono context label. Longest-prefix wins so nested routes
 // (e.g. /triage/:id) inherit the parent surface label.
+// V3: added /search, /filters; /settings/* sub-routes inherit SETTINGS.
 const ROUTE_LABELS: ReadonlyArray<readonly [string, string]> = [
   ['/triage', 'TRIAGE.QUEUE'],
   ['/actions', 'ACTION_ITEMS.LOG'],
   ['/ingestion', 'INGESTION.OPS'],
+  ['/search', 'SEARCH'],
+  ['/filters', 'INGESTION.OPS'],
   ['/sources', 'SOURCES.CONFIG'],
   ['/knowledge', 'KNOWLEDGE.FACTS'],
   ['/messenger', 'MESSENGER'],

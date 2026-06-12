@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { AppSidebar } from './AppSidebar'
+import { Breadcrumb } from './Breadcrumb'
 import { TopBar } from './TopBar'
 import { CommandPalette } from './CommandPalette'
 
@@ -35,7 +36,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="grid min-h-screen grid-cols-[64px_1fr] grid-rows-[auto_1fr] bg-background text-foreground">
       <AppSidebar className="row-span-2 z-30" />
       <TopBar onOpenCommandPalette={openPalette} />
-      <main className="overflow-y-auto p-6">{children}</main>
+      <main className="overflow-y-auto p-6">
+        <Breadcrumb />
+        {children}
+      </main>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   )

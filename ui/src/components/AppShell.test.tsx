@@ -38,7 +38,9 @@ describe('AppShell', () => {
       screen.getByRole('navigation', { name: /primary/i }),
     ).toBeInTheDocument()
     expect(screen.getByText('page-body')).toBeInTheDocument()
-    expect(screen.getByText(/workbench/i)).toBeInTheDocument()
+    // TopBar brand mark renders "Workbench" (the sidebar also has "WorkBench"
+    // in the hover-expand logo label, so we assert at least one match).
+    expect(screen.getAllByText(/workbench/i).length).toBeGreaterThanOrEqual(1)
   })
 
   it('renders a single scrollable <main> as the content region', () => {
@@ -46,6 +48,21 @@ describe('AppShell', () => {
     expect(screen.getByRole('main')).toContainElement(
       screen.getByText('page-body'),
     )
+  })
+
+  it('renders a Breadcrumb inside main (hidden at root)', () => {
+    renderShell('/actions')
+    // On a non-root route the breadcrumb back button should be present.
+    expect(
+      screen.getByRole('button', { name: /back to/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('hides the Breadcrumb on the root route', () => {
+    renderShell('/')
+    expect(
+      screen.queryByRole('button', { name: /back to/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('renders a mono route context label', () => {
