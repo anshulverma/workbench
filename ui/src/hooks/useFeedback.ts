@@ -1,0 +1,174 @@
+// useFeedback.ts — React hooks for feedback corrections and filter tuning.
+//
+// Two layers:
+// 1. useFeedbackStore() — subscribes to the client-side WBFeedback singleton
+//    via useSyncExternalStore so React re-renders on any state change.
+// 2. TanStack Query hooks for server API endpoints (/api/feedback/*), used for
+//    durable persistence and cross-device sync.
+
+import { useSyncExternalStore, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
+import { WBFeedback, type AddOverrideInput, type FeedbackState } from '@/lib/feedback-store'
+
+// ---------------------------------------------------------------------------
+// useFeedbackStore — client-side singleton subscription
+// ---------------------------------------------------------------------------
+
+const subscribe = (fn: () => void) => WBFeedback.subscribe(fn)
+const getSnapshot = () => WBFeedback.getSnapshot()
+
+/** Subscribe to WBFeedback singleton; re-renders on any state change. */
+export function useFeedbackStore() {
+  const state: FeedbackState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  const addOverride = useCallback((input: AddOverrideInput) => {
+    return WBFeedback.addOverride(input)
+  }, [])
+
+  const removeOverride = useCallback((itemId: string, filterId: string) => {
+    WBFeedback.removeOverride(itemId, filterId)
+  }, [])
+
+  const autoApply = useCallback((taskId: string) => {
+    WBFeedback.autoApply(taskId)
+  }, [])
+
+  const dismissTask = useCallback((taskId: string) => {
+    WBFeedback.dismissTask(taskId)
+  }, [])
+
+  const overrideFor = useCallback((itemId: string, filterId: string) => {
+    return WBFeedback.overrideFor(itemId, filterId)
+  }, [])
+
+  const feedbackForFilter = useCallback((filterId: string) => {
+    return WBFeedback.feedbackForFilter(filterId)
+  }, [])
+
+  const openTasks = useCallback(() => {
+    return WBFeedback.openTasks()
+  }, [])
+
+  const promptFor = useCallback((filterId: string, fallback: string) => {
+    return WBFeedback.promptFor(filterId, fallback)
+  }, [])
+
+  return {
+    state,
+    addOverride,
+    removeOverride,
+    autoApply,
+    dismissTask,
+    overrideFor,
+    feedbackForFilter,
+    openTasks,
+    promptFor,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Server API types (matching the Python domain models)
+// ---------------------------------------------------------------------------
+
+export interface ServerCorrection {
+  id: string
+  item_id: string
+  rule_id: string | null
+  original_action: string
+  corrected_action: string
+  reason: string | null
+  created_at: string
+}
+
+export interface ServerTuningTask {
+  id: string
+  rule_id: string
+  proposed_prompt: string
+  correction_ids: string[]
+  status: string
+  created_at: string
+  resolved_at: string | null
+}
+
+// ---------------------------------------------------------------------------
+// TanStack Query hooks — server sync
+// ---------------------------------------------------------------------------
+
+/** Fetch corrections from the server, optionally filtered by item_id. */
+export function useCorrections(itemId?: string) {
+  const qs = itemId ? `?item_id=${encodeURIComponent(itemId)}` : ''
+  return useQuery({
+    queryKey: ['feedback', 'corrections', itemId ?? null],
+    queryFn: () => apiGet<ServerCorrection[]>(`/api/feedback/corrections${qs}`),
+  })
+}
+
+/** Fetch tuning tasks from the server, optionally filtered by status. */
+export function useTuningTasks(status?: string) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+  return useQuery({
+    queryKey: ['feedback', 'tasks', status ?? null],
+    queryFn: () => apiGet<ServerTuningTask[]>(`/api/feedback/tasks${qs}`),
+  })
+}
+
+/** Mutation: add a correction to the server. */
+export function useAddCorrection() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Omit<ServerCorrection, 'id' | 'created_at'>) =>
+      apiPost<ServerCorrection>('/api/feedback/corrections', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['feedback', 'corrections'] })
+    },
+  })
+}
+
+/** Mutation: delete a correction from the server. */
+export function useDeleteCorrection() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (correctionId: string) =>
+      apiDelete<{ status: string }>(`/api/feedback/corrections/${correctionId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['feedback', 'corrections'] })
+    },
+  })
+}
+
+/** Mutation: create a tuning task on the server. */
+export function useCreateTuningTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Omit<ServerTuningTask, 'id' | 'created_at' | 'resolved_at'>) =>
+      apiPost<ServerTuningTask>('/api/feedback/tasks', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })
+    },
+  })
+}
+
+/** Mutation: update a tuning task's status on the server. */
+export function useUpdateTuningTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, status }: { taskId: string; status: string }) =>
+      apiPatch<ServerTuningTask>(`/api/feedback/tasks/${taskId}?status=${encodeURIComponent(status)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })
+    },
+  })
+}
+
+/** Mutation: delete a tuning task from the server. */
+export function useDeleteTuningTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (taskId: string) =>
+      apiDelete<{ status: string }>(`/api/feedback/tasks/${taskId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })
+    },
+  })
+}
