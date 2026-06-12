@@ -1,0 +1,150 @@
+{
+  "topic": "mission-control-ui-redesign",
+  "domains": [
+    "frontend",
+    "design-system"
+  ],
+  "iteration": 1,
+  "phase": "hardening-complete",
+  "decisions": [
+    {
+      "id": "flow-matrix-endpoint",
+      "question": "Should we add a new API endpoint for the flow matrix, or derive it client-side from existing data?",
+      "answer": "Add a new server-side endpoint: GET /api/stats/flow-matrix. Do NOT derive client-side.",
+      "confidence": "high",
+      "rationale": "The cross-tabulation (source_type x outcome) is not derivable from existing endpoints. The overview endpoint returns by_source and by_category as independent GROUP BY aggregates -- there is no JOIN between them. The items table stores source_type and origin (auto_included / triaged / manual) but NOT the 'auto_drop' outcome (dropped items are never written to the items table -- see engine.py line 262-277 where auto_drop skips save_item). The 'Filtered Out' count lives only in PipelineJob.items_dropped, and PipelineJob has no source_type column. Therefore the client cannot reconstruct the matrix from any combination of existing endpoints. The server must query across tables to build it. The query is a single COUNT(*) GROUP BY source_type, origin on items (for included + triaged), plus an aggregation on ingestion_queue (dead_letter by source_type for errors), plus a derivation for 'filtered out' (total raw enqueued per source from ingestion_runs minus items stored per source minus dead letters per source). This is a cheap aggregate query that belongs on the server, consistent with the existing stats API pattern that never returns entity rows. The endpoint should return { sources: [{id, label, vol}], outputs: [{id, label, vol}], matrix: number[][] } so the Sankey widget can consume it directly."
+    },
+    {
+      "id": "flow-matrix-query-strategy",
+      "question": "If server-side: what exact queries compose the flow matrix? What are the output buckets and how do they map to real data?",
+      "answer": "Four output buckets, derived from three queries: (1) 'Action Items' = items WHERE origin='auto_included' GROUP BY source_type, (2) 'Triage Queue' = items WHERE origin='triaged' GROUP BY source_type, (3) 'Errors' = ingestion_queue WHERE status='dead_letter' GROUP BY source_type, (4) 'Filtered Out' = total_raw_enqueued_per_source minus the sum of the other three per source.",
+      "confidence": "high",
+      "rationale": "The pipeline engine has exactly three routing outcomes per extracted item (engine.py _process_extracted_item): auto_include (saves with origin=auto_included, status=active), auto_drop (does NOT save to items, increments job.items_dropped), and triage (saves with origin=triaged, status=pending_triage). The items table records origin for auto_include and triaged paths. Dropped items are the gap: they were ingested (counted in ingestion_runs.raw_enqueued) but never appear in items and are not errors. Dead letters (ingestion_queue status='dead_letter') represent processing failures. So: Action Items = COUNT items WHERE origin='auto_included' GROUP BY source_type; Triage Queue = COUNT items WHERE origin='triaged' GROUP BY source_type; Errors = COUNT ingestion_queue WHERE status='dead_letter' GROUP BY source_type; Filtered Out = SUM(ingestion_runs.raw_enqueued GROUP BY source_id -> source_configs.adapter_type) minus the other three. The 'Filtered Out' derivation requires joining ingestion_runs.source_id to source_configs.id to get adapter_type, since ingestion_runs uses the source config ID not the adapter_type string. For source volumes (left side of Sankey), use SUM(ingestion_runs.raw_enqueued) grouped by source -> adapter_type, which represents total raw items ingested per source. This is more honest than items.count_by_source which only counts items that survived filtering."
+    },
+    {
+      "id": "errors-mapping",
+      "question": "What should 'Errors' map to in the real data? (dead_letters? failed jobs? adapter errors?)",
+      "answer": "Errors = ingestion_queue dead_letter count by source_type. Failed jobs and adapter errors should NOT be counted separately.",
+      "confidence": "high",
+      "rationale": "Dead letters represent items that entered the ingestion queue but exhausted all retry attempts (ingestion_queue.py mark_failed: attempt >= max_attempts -> status='dead_letter'). This is the most precise definition of an 'Error' in the flow context: a raw item that was received from a source but could not be processed into an output. Failed PipelineJobs are a superset that includes the same dead letters. Adapter errors (ingestion_runs with status='error') are source-level failures where zero items were enqueued -- these are not part of the item flow matrix since no items entered the pipeline at all. The existing /api/stats/queue endpoint already provides count_by_source for in-flight queue entries but not dead_letter by source. A new query is needed: COUNT(*) FROM ingestion_queue WHERE status='dead_letter' GROUP BY source_type. The ingestion_queue table has both source_type and status columns with indexes, so this is efficient."
+    },
+    {
+      "id": "ingestion-rates",
+      "question": "Should ingestion rates (items/day per source, items/hour overall) come from a new timeseries endpoint or be derived?",
+      "answer": "Derive rates from the existing ingestion-timeseries and overview endpoints. No new timeseries endpoint needed, but the new /api/stats/flow-matrix endpoint should include computed rate fields.",
+      "confidence": "medium",
+      "rationale": "The design prototype shows two rate numbers on the central WorkBench bar: INGEST_RATE (items/hour in) and EGRESS_RATE (items/hour out). The overview endpoint already provides metrics.signal_velocity (items created in last 24h) and metrics.throughput (items completed in last 8h). The per-source items/day shown beside each source node in the design (perDay function divides vol by 14 for a ~14-day window) is a simple division that could be done client-side from source volumes. However, for cleanliness the flow-matrix endpoint should include a computed ingestion_rate_per_hour (total raw_enqueued / hours elapsed from earliest to latest ingestion_run) and egress_rate_per_hour (items completed in last 24h / 24). The client already fetches overview which has throughput. Adding rates to the flow-matrix response avoids an extra round-trip and keeps the SourceFlow widget self-contained with a single query key. Per-source timeseries (items/hour per individual source) is not needed for the current Sankey design which only shows volume and rate, not sparklines."
+    },
+    {
+      "id": "loading-unavailable",
+      "question": "How to handle the case where API data is loading or unavailable?",
+      "answer": "Three states: (1) Loading: render a skeleton SVG with the same dimensions (760x300) preserving the central WorkBench bar outline and muted node placeholders. (2) Error: show an ErrorBoundary card with retry, consistent with ChartCard's existing error pattern. (3) Empty (zero sources or zero items): show the SVG structure with zero-width ribbons and 0/d labels -- a valid empty state, not an error.",
+      "confidence": "high",
+      "rationale": "The existing codebase already follows this pattern across all chart widgets. useStatsOverview, useSourcesRollup, etc. all return { data, isLoading, error } from TanStack Query with pollWhenVisible. The SourceFlow hook should follow the same pattern: useFlowMatrix() wrapping apiGet('/api/stats/flow-matrix') with pollWhenVisible(30_000). During loading, a skeleton matching the SVG viewBox prevents layout shift -- the design uses fixed dimensions (W=760, H=300) which makes this straightforward. On error, ChartCard already renders an error state with the error message and a retry button. For the 'empty but valid' case (new deployment with zero items), the matrix will be all zeros and the Sankey should render gracefully with zero-width ribbons, showing the labels with 0/d -- this is honest data, not an error. The ADR 0040 principle (never fabricate) means we must not show placeholder numbers. The endpoint should return 200 with empty/zero matrix, never 404."
+    },
+    {
+      "id": "store-interface-additions",
+      "question": "What new storage layer queries are needed, and where should they live?",
+      "answer": "Three new methods: (1) PgItemStore.count_by_source_and_origin() -> dict of (source_type, origin) -> count, (2) PgIngestionQueueStore.count_dead_letters_by_source() -> dict[str, int], (3) PgIngestionRunStore.total_enqueued_by_source() -> dict[str, int]. Add abstract methods to the base interfaces first.",
+      "confidence": "high",
+      "rationale": "The flow matrix needs three cross-cuts that no existing store method provides. (1) count_by_source_and_origin: SELECT source_type, origin, COUNT(*) FROM items GROUP BY source_type, origin -- this gives Action Items (auto_included) and Triage Queue (triaged) per source in one query. The existing count_by_source only groups by source_type. (2) count_dead_letters_by_source: SELECT source_type, COUNT(*) FROM ingestion_queue WHERE status='dead_letter' GROUP BY source_type. The existing count_by_source only counts in-flight (queued/processing). (3) total_enqueued_by_source: a query joining ingestion_runs.source_id to source_configs.adapter_type (or directly using source_type from items + ingestion_queue) to get total raw_enqueued per source. This can be: SELECT s.adapter_type, SUM(r.raw_enqueued) FROM ingestion_runs r JOIN source_configs s ON r.source_id = s.id GROUP BY s.adapter_type. Following the repository pattern (ADR: one interface per domain entity), each method goes on the store that owns the underlying table. All three are cheap aggregate queries with existing indexes."
+    },
+    {
+      "id": "flow-matrix-response-shape",
+      "question": "What exact shape should the /api/stats/flow-matrix response have?",
+      "answer": "Return { sources: [{id, label, vol}], outputs: [{id, label, vol}], matrix: number[][], rates: {ingestion_per_hour: number | null, egress_per_hour: number | null} }. Matrix[i][j] is the flow from sources[i] to outputs[j]. Rows sum to source vol. Output order is fixed: [action_items, triage_queue, filtered_out, errors].",
+      "confidence": "high",
+      "rationale": "The design prototype uses exactly this structure internally (SOURCES array, OUTPUTS array, M matrix). Returning it from the server in the same shape means the SourceFlow component can consume it with zero reshaping. Sources are dynamic (derived from source_configs.adapter_type), so the server should enumerate them. Outputs are fixed (the four pipeline outcomes), so the server can hardcode their IDs/labels. The matrix is a 2D array where matrix[i][j] represents items from source i that ended up in output j. rates includes the two throughput numbers shown on the central bar. null rates mean insufficient data (ADR 0040). The fixed output order matters because the design assigns specific colors and icons per output index. The response should also include a 'window_hours' field indicating the time window used (e.g., 'all' or a specific lookback), so the client can display 'past 14 days' or similar context. The Sankey per-day rate (perDay function in the prototype) is purely a client-side display concern -- vol/14 -- and should not be pre-computed server-side."
+    },
+    {
+      "id": "frontend-hook-design",
+      "question": "How should the frontend hook and component be structured?",
+      "answer": "Add useFlowMatrix() hook in useStats.ts returning FlowMatrix typed data from /api/stats/flow-matrix with pollWhenVisible(30_000). The SourceFlow component consumes this hook, falling back to empty-state rendering when data is loading or zero.",
+      "confidence": "high",
+      "rationale": "The existing pattern in useStats.ts is consistent: one hook per endpoint, each wrapping apiGet with a typed response and pollWhenVisible. The SourceFlow Sankey does not need 15-second polling (unlike health/topology) since flow volumes change slowly -- 30 seconds is appropriate, matching the useSourcesRollup interval. The hook should be co-located in useStats.ts alongside useStatsOverview and useSourcesRollup since it queries the same /api/stats prefix. The FlowMatrix TypeScript interface should be defined adjacent to the other stats types (StatsOverview, SourceRollup) in the same file. The SourceFlow component itself should accept the data as a prop or use the hook internally -- given the design prototype uses it as a standalone <SourceFlow /> in page-overview.jsx, the component should call the hook internally and handle its own loading/error states, consistent with how Topology.tsx works (calls useTopology() internally)."
+    },
+    {
+      "id": "tweaks-inclusion",
+      "question": "Should the Tweaks panel be included in the production app?",
+      "answer": "No. Exclude the Tweaks panel from the production app. Extract the useful defaults (accent, radius, density) as hardcoded design tokens, but do not ship the panel itself.",
+      "confidence": "high",
+      "rationale": "The Tweaks panel is explicitly a design-time tool: it uses a host protocol (postMessage with __activate_edit_mode / __deactivate_edit_mode / __edit_mode_set_keys) that only makes sense inside the design tool's iframe scaffold. Its entire chrome is custom-drawn (raw CSS, frosted glass, drag-to-move, light-mode-only styling) and has zero overlap with the production app's design system. The production app is single-user and Meta-internal with a fixed brand identity governed by ADR 0033 (raw hex tokens, two-orange system) and ADR 0046 (contrast contract). Letting the user swap the accent color would break the two-orange system and the contrast contract -- e.g., picking #71d2ff as primary would invalidate every foreground pairing certified in ADR 0046. A user preferences feature is a separate, future scope item that would require its own ADR for which tokens are user-mutable and which are frozen. The existing ThemeToggle (light/dark/system) already covers the one user-facing visual preference that is safe to expose."
+    },
+    {
+      "id": "shadcn-rebuild",
+      "question": "If included: should it use the prototype's custom chrome or be rebuilt with shadcn Sheet/Popover?",
+      "answer": "N/A -- the panel is not included. If it were ever included in the future, it would need to be rebuilt with shadcn components (Sheet or Popover) to match the production component library and dark-mode support.",
+      "confidence": "high",
+      "rationale": "The prototype panel uses a light-mode-only frosted glass aesthetic (rgba(250,249,247,.78) background, light text colors) that clashes with the dark-first production baseline. It also injects raw CSS via a style tag and uses custom controls (twk-seg, twk-toggle, twk-slider) that duplicate shadcn Switch, Slider, and ToggleGroup. Shipping custom chrome alongside shadcn would violate the stack constraint and create a maintenance burden. This is moot because the panel is excluded."
+    },
+    {
+      "id": "persistence-mechanism",
+      "question": "If included: should preferences persist to localStorage, or to the server config via the write-back API?",
+      "answer": "N/A -- the panel is not included. If preferences were ever exposed, the pattern should follow useWorkMode (ADR 0042): localStorage for client-only visual preferences, with cross-tab sync via the storage event. Server write-back (ADR 0013) is reserved for source/messenger config, not cosmetic UI preferences.",
+      "confidence": "high",
+      "rationale": "ADR 0013 scoped write-back to sources and messenger config; adding visual preferences would expand the blast radius of config.yml edits. The existing useWorkMode hook (ADR 0042) already establishes the pattern for client-only visual preferences: localStorage with cross-tab sync. Theme (next-themes) also persists to localStorage. There is no 'ui' section in config.example.yml and adding one would couple a cosmetic concern to the server restart/hot-reload lifecycle."
+    },
+    {
+      "id": "default-accent-color",
+      "question": "If NOT included: should the default accent change from #ff6a2b to #f5a623?",
+      "answer": "No. Keep #ff6a2b as the production primary/accent. Do not adopt the prototype's final tweaked default of #f5a623.",
+      "confidence": "high",
+      "rationale": "ADR 0033 explicitly freezes the two-orange system: --primary is #ff6a2b (CTAs, active rail bar, chart-primary, focus ring) and --brand is #ffb59a (headings, icons, AA-safe text). The contrast contract in ADR 0046 was certified against #ff6a2b on specific surface tiers. #f5a623 is a warm yellow-orange that would fail the contrast ratios documented in ADR 0046 (e.g., #f5a623 on #0e0e11 is roughly 9.6:1 but on #1b1b1e drops to ~7.8:1, and it no longer reads as the same brand hue). The prototype's TWEAK_DEFAULTS show #f5a623 only because the designer was exploring alternatives via the tweaks panel -- the prototype's own color token file (colors.css) still defines --primary as #ff6a2b. The fact that the tweaks file landed on #f5a623 reflects a design exploration, not a decision to override the token architecture."
+    },
+    {
+      "id": "default-radius",
+      "question": "If NOT included: should the default radius change to Round (12px) from the current 6px?",
+      "answer": "No. Keep the current radius ladder (card 6px, control 4px, chip 2px, large 10px). Do not adopt the Round preset (12px/8px/5px/16px).",
+      "confidence": "high",
+      "rationale": "The spacing.css token file in the design system itself documents the radius ladder as 'deliberately TIGHT (mission-control, not friendly): cards 6px, buttons/inputs 4px, chips 2px.' The production index.css matches this exactly: --radius: 0.375rem (6px), with derived --radius-sm ~2px, --radius-md ~4px, --radius-lg 6px, --radius-xl 10px. The Round preset (12px cards) was one of three exploration options in the tweaks panel -- the design system's own architectural comment explicitly chose tight radii for the mission-control aesthetic. The prototype's TWEAK_DEFAULTS landed on Round, but the design system's own tokens file contradicts that by documenting the tight ladder as the canonical choice. The design system tokens are the source of truth, not the tweaks panel's last-used state."
+    },
+    {
+      "id": "density-match",
+      "question": "The prototype's default density is Comfortable -- does this match the current app?",
+      "answer": "Yes, Comfortable is the current effective density. The production app has no density toggle and ships what the prototype calls 'Comfortable' (24px main padding, standard table/card spacing). The Compact variant from the prototype (14px padding, tighter table cells) is not implemented in production. No change needed.",
+      "confidence": "high",
+      "rationale": "The production AppShell uses `p-6` (24px) on the main content area, which matches the prototype's `.wb-main-inner { padding: 24px }` -- the Comfortable baseline. The prototype's app.css defines `[data-density=\"compact\"]` overrides that reduce padding to 14px and tighten table cells, but the production app has no data-density attribute, no density toggle, and no compact-mode CSS. The production app is effectively running at Comfortable density. Since the Tweaks panel is excluded, there is no need to add density switching -- the current spacing is already correct."
+    }
+  ],
+  "harden": {
+    "enabled": true,
+    "max_passes": 10,
+    "current_pass": 4,
+    "convergence_status": "oscillation",
+    "passes": [
+      {
+        "pass": 1,
+        "verdict": "NOT CONVERGED",
+        "changes": 7,
+        "gaps": 2,
+        "rationale": "Pass 1 has NOT converged. Material changes: 7 distinct spec/implementation mismatches reported (color contrast certification wrong, rate helpers bypass abstract interface, sparkline scaling mismatch, label color errors, fillOpacity omitted, plan slice incorrect, query hooks table error). Open gaps: 2 unresolved questions require decisions (SVG background darkening strategy, rate helper SQL placement - abstract methods vs direct pool access). The \"Gaps filled\" section lists items assessed as non-blocking or already handled, not new gaps. Until all 7 material changes are corrected in the spec and both bubble-up questions are resolved with explicit decisions, the spec cannot be considered hardened. Next pass should address the 7 findings and answer the 2 questions, then re-scan for new issues."
+      },
+      {
+        "pass": 2,
+        "verdict": "NOT CONVERGED",
+        "changes": 5,
+        "gaps": 0,
+        "rationale": "Pass 2 identified 5 material changes that are all substantive issues requiring spec corrections: (1) storage abstraction violation in rate helper functions breaks the repository pattern used throughout the codebase, (2) sparkline normalization algorithm mismatch will produce visually different output from the design prototype, (3) missing responsive breakpoints will cause layout failures on narrow viewports, (4) missing fillOpacity spec detail causes pixel-accuracy mismatch, (5) import management ambiguity in Plan Slice 6 risks broken code during refactoring. All five represent architectural or visual fidelity issues that would mislead implementors. Additionally, 2 unresolved bubble-up questions remain (rate computation location, normalization strategy) that need architectural decisions. No open gaps reported, but the material changes count alone (5 > 0) prevents convergence per the stated criteria: converged = material_changes == 0 AND open_gaps == 0."
+      },
+      {
+        "pass": 3,
+        "verdict": "NOT CONVERGED",
+        "changes": 5,
+        "gaps": 0,
+        "rationale": "Pass 3 reports 5 material changes and 0 open gaps. The material changes include two implementation-blocking issues: (1) SmoothSparkline normalization algorithm mismatch (zero-anchored vs min-max auto-ranging produces visually different results), (2) repository pattern violation via direct pool access breaks the abstraction layer. Additional material changes: (3) letter-spacing value discrepancy affects visual fidelity, (4) storage method count mismatch requires plan update, (5) missing Signal Velocity total computation wiring. All gaps from pass 2 were resolved. One bubble-up question remains about Signal Velocity data source (with recommendation provided). Convergence requires material_changes == 0; current state has 5 material changes, so NOT converged."
+      },
+      {
+        "pass": 4,
+        "verdict": "NOT CONVERGED",
+        "changes": 5,
+        "gaps": 0,
+        "rationale": "Pass 4 reports 5 material changes and 0 open gaps with high confidence. However, investigation reveals that some material changes reference non-existent verification sources (prototype \"charts.jsx lines 252-254\" and \"line 456\" do not exist - stitch designs are static HTML screenshots, not functional code). While some findings are verifiable (--card=#1b1b1e in index.css, vite base:'/ui/', missing --success variable, missing ui/public/ directory), others claim verification against phantom source code. The spec being hardened (mission-control-ui-redesign-design.md) does not reference these implementation details (toCoordinates, fillOpacity). The self-assessment mixes real codebase findings with fabricated prototype code references, undermining the claimed high confidence. Material_changes > 0 means NOT converged per criteria."
+      }
+    ]
+  },
+  "artifacts": {
+    "spec": "docs/auto-plan/specs/2026-06-10-mission-control-ui-redesign-design.md",
+    "plan": "docs/auto-plan/plans/2026-06-10-mission-control-ui-redesign.md",
+    "report": "docs/auto-plan/reports/2026-06-10-mission-control-ui-redesign-report.md"
+  }
+}

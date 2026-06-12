@@ -1,0 +1,1012 @@
+{
+  "topic": "v3-dashboard-design-upgrade",
+  "domains": [
+    "frontend",
+    "backend",
+    "design-system"
+  ],
+  "decisions": [
+    {
+      "id": "search-page-component",
+      "question": "What new React component is needed for the Search page master/detail layout?",
+      "answer": "Create /home/anshulverma/workspace/workbench/ui/src/pages/Search.tsx with master/detail split: left panel (340px sticky) shows filtered results grid, right panel shows selected item detail with LLM summary, contextual payload, processing log, and actions. Pattern follows existing Triage.tsx layout but with kind filtering instead of priority/source filters.",
+      "confidence": "high",
+      "rationale": "Design prototype specifies this exact structure. Current codebase has no Search.tsx. The master/detail pattern is proven in Triage.tsx (filter rail + card feed + detail). All dependencies exist: router, hooks, primitives."
+    },
+    {
+      "id": "context-renderer-components",
+      "question": "What new sub-components are needed for contextual payload rendering?",
+      "answer": "Create four context renderer components inside Search.tsx: DiffContext (author/team/status/hunks using existing DiffHunks component), EmailContext (from/to/when/body in definition list), MeetingContext (when/where/attendees/agenda), ChatContext (channel + message list). Plus a dispatcher component ItemContext that switches on ctx.type. These render the source-type-specific payload from raw_data.",
+      "confidence": "high",
+      "rationale": "Design prototype shows all four renderers with exact structure. DiffHunks component already exists and can be reused. Pattern is straightforward conditional rendering based on item kind. Follows the established pattern from TriageDetail.tsx which already renders diff card_content."
+    },
+    {
+      "id": "search-item-detail",
+      "question": "What component renders the full item detail in the right panel?",
+      "answer": "Create SearchItemDetail component with sections: (1) header with kind icon, ID, priority badge, state dot, source, timestamp, summary, tags; (2) actions bar with priority select, Mark done, Snooze 4h, Archive, Delete buttons; (3) LLM summary section (\"Why this matters to you\"); (4) contextual payload card using ItemContext dispatcher; (5) processing log card with funnel stages. Empty state when no item selected.",
+      "confidence": "high",
+      "rationale": "Design spec clearly defines this structure. All pieces exist: priority select from ActionItems.tsx, action buttons patterns from ActionItems.tsx and useItems hook, funnel stages will come from FunnelStage component (branch 3), LLM summary and tags are new fields but straightforward rendering."
+    },
+    {
+      "id": "search-result-row",
+      "question": "What component renders individual search result rows?",
+      "answer": "Create ResultRow component: clickable card with kind icon (lucide), item ID (mono), priority badge, state dot (triaged/pending_triage/action_item/dropped/archived with color coding), summary text, and footer with source + relative time + relevance score percentage. Active state via boolean prop for selection highlighting.",
+      "confidence": "high",
+      "rationale": "Design prototype defines exact structure. Pattern mirrors ActionRow from ActionItems.tsx and result rows from TriageDetail.tsx. All primitives exist (Badge, Mono, relativeTime utility, lucide icons). State dot is new but simple color-coded component."
+    },
+    {
+      "id": "state-dot-component",
+      "question": "Do we need a new StateDot component for item state visualization?",
+      "answer": "Yes, create StateDot component in Search.tsx: small colored dot + label for item states (triaged=green, pending_triage=tertiary, action_item=primary, dropped=red, archived=muted). Similar to HealthBadge pattern but for ItemStatus enum values.",
+      "confidence": "high",
+      "rationale": "Design prototype shows state dots throughout search results and detail view. Current codebase has HealthBadge with similar pattern (colored indicator + label). ItemStatus enum already defined in domain/enums.py. Simple mapping from status to color/label."
+    },
+    {
+      "id": "search-api-endpoint",
+      "question": "What new API endpoint is needed for full-text search with rich item data?",
+      "answer": "Extend existing GET /api/search to support a new mode: when a new query param full=true is passed, return full Item records with llm_summary, raw_data (context payload), processing_log (funnel stages), and verdict fields. Current endpoint returns minimal SearchHit records for command palette. Alternative: create GET /api/items/search with full records only.",
+      "confidence": "medium",
+      "rationale": "Current /api/search exists but returns minimal SearchHit records (id, kind, label, sublabel, route) for command palette. Search page needs full Item records with contextual payload, LLM summary, funnel log, and verdict. Two options: (1) add full=true param to existing endpoint or (2) create new endpoint. Option 2 is cleaner separation but duplicates search logic. Design prototype shows searchItems[] with full records distinct from command palette SearchHits."
+    },
+    {
+      "id": "item-enriched-fields",
+      "question": "What new database fields are needed on items table for search page data?",
+      "answer": "Add four JSONB columns to items table via Alembic migration: llm_summary TEXT (personalized summary), enriched_context JSONB (source-type-specific payload: diff hunks, email body, meeting agenda, chat messages), processing_log JSONB (array of funnel stage records), verdict JSONB (final decision with priority, confidence, rationale). Tags as TEXT[] array.",
+      "confidence": "high",
+      "rationale": "Design prototype shows searchItems with these exact fields. Current Item model has raw_data dict but design shows structured enriched_context separate from raw. Processing log and verdict are new concepts for provenance tracking. LLM summary is personalized explanation field. All are JSONB/TEXT suitable for PostgreSQL storage. Migration pattern established in codebase."
+    },
+    {
+      "id": "search-typescript-types",
+      "question": "What new TypeScript types are needed for search page?",
+      "answer": "Define in Search.tsx or new types file: SearchItem (extends Item with llm_summary, enriched_context, processing_log, verdict, tags), ItemContext union type (DiffContext | EmailContext | MeetingContext | ChatContext), ProcessingStage (filterId, outcome, confidence?, reason, context?, weak?), Verdict (decision, priority, confidence, rationale), ItemKind enum (diff, email, meeting, chat), ItemState enum (triaged, pending_triage, action_item, dropped, archived).",
+      "confidence": "high",
+      "rationale": "Design prototype defines all these shapes in searchItems[] and funnelItems[]. Current Item interface in useItems.ts is minimal. Need rich types for the extended search data. Context union follows established pattern from triage card_content. Processing log and verdict are new domain concepts. TypeScript enums for kind/state ensure type safety."
+    },
+    {
+      "id": "search-hooks",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "Create in new useSearch.ts or extend existing: useSearchItems(q, kind) -> GET /api/items/search or /api/search?full=true (returns SearchItem[], 15s poll when query non-empty), useUpdateItem(id) -> PATCH /api/items/{id} (for priority/status/summary updates), useSnoozeItem(id) -> POST /api/items/{id}/snooze, useArchiveItem(id) -> DELETE /api/items/{id}. Some may already exist in useItems.ts and just need exposure.",
+      "confidence": "medium",
+      "rationale": "Current useSearch hook exists but for command palette (SearchHit records). Need separate hook for full search items or extend with mode parameter. Update/snooze/archive actions shown in design but current useItems.ts only has list query. Action mutations may exist in useActions.ts (mark done, snooze) but are item-id based, not action-specific. May need to refactor or add item-level mutations."
+    },
+    {
+      "id": "item-actions-api",
+      "question": "What server-side API routes are needed for item actions (snooze, archive, update)?",
+      "answer": "Extend existing PATCH /api/items/{item_id} to accept ItemUpdate (priority, status, summary) per api-types.ts. Add POST /api/items/{item_id}/snooze endpoint (accepts hours param, sets snoozed_until). DELETE /api/items/{item_id} already exists for archive per api-types.ts. Mark done via PATCH with status=done. All patterns match existing /api/actions endpoints but operate on any item, not just action items.",
+      "confidence": "high",
+      "rationale": "api-types.ts shows PATCH /api/items/{item_id} and DELETE /api/items/{item_id} already exist. ItemUpdate schema supports priority, status, summary. Snooze pattern exists in /api/actions/{id}/snooze per useActions.ts. Design shows same action bar on search detail as actions page. Just need to expose/create item-level snooze endpoint and connect UI to existing PATCH/DELETE."
+    },
+    {
+      "id": "search-filtering",
+      "question": "How is client-side filtering implemented for kind and text search?",
+      "answer": "Client-side filtering in Search.tsx using useMemo: (1) text search via .includes() on summary, id, source, tags array, llm_summary fields (case-insensitive); (2) kind filter via === check on item.kind (all/diff/email/meeting/chat). Filter input is controlled state, auto-focused on mount. Kind filter as button group with active state styling. Pattern matches Triage.tsx filter rail.",
+      "confidence": "high",
+      "rationale": "Design prototype shows client-side filtering (no server round-trip on filter change). Text input + kind buttons. Pattern proven in Triage.tsx which filters client-side on source/priority/time. Search corpus is bounded (recent items, not full archive), so client filtering is performant. Auto-focus pattern from CommandPalette.tsx."
+    },
+    {
+      "id": "funnel-stage-reuse",
+      "question": "Can we reuse FunnelStage component from filters page (branch 3)?",
+      "answer": "Yes, import FunnelStage from page-filters.jsx (branch 3) into Search.tsx. It renders stage timeline with filterId, outcome chip, confidence, reason, context, timing, and correction UI. Search page processing log section uses same component in read-only mode (editable=false). Timing data may not be available in search corpus; handle gracefully with optional timing prop.",
+      "confidence": "medium",
+      "rationale": "Design prototype shows identical funnel stage rendering on both Filters page (ItemFunnelDialog) and Search page (processing log card). Component is designed for reuse with editable prop for correction mode. However, branch 3 (filters page) is not yet implemented, so coordination needed. May need to extract FunnelStage to shared components/ if circular dependency issues arise."
+    },
+    {
+      "id": "search-route-integration",
+      "question": "How is the search page integrated into the app routing?",
+      "answer": "Add to App.tsx Routes: <Route path=\"/search\" element={<Search />} />. Add to AppSidebar.tsx NAV array: { route: '/search', label: 'Search', icon: 'Search', context: 'SEARCH' }. Icon from lucide-react. Position between Overview and Triage in nav order per design shell documentation.",
+      "confidence": "high",
+      "rationale": "Design shell shows /search route with Search icon in nav rail, positioned 2nd (after Overview, before Triage). Current App.tsx routing pattern is straightforward Route elements. NAV array pattern in AppSidebar.tsx matches exactly. All infrastructure exists."
+    },
+    {
+      "id": "search-toast-notifications",
+      "question": "How are action confirmations (done, snooze, archive) communicated to user?",
+      "answer": "Use sonner toast (already integrated): import { toast } from 'sonner'. Call toast.success('Item archived') after successful mutation. Pattern matches ActionItems.tsx which shows action feedback. Toast auto-dismisses after 2.2 seconds per design. Error toasts for failed mutations with toast.error().",
+      "confidence": "high",
+      "rationale": "Design prototype shows toast notifications for actions ('Item marked done', 'Snoozed for 4h', etc.). Sonner is already installed and configured in package.json and likely in root provider. Pattern proven in existing pages. Duration 2.2s matches design spec timing for action feedback."
+    },
+    {
+      "id": "search-empty-states",
+      "question": "What empty/loading/error states are needed?",
+      "answer": "Five states per UI taxonomy: (1) loading: skeleton grid of result rows + detail skeleton; (2) error: alert with message + request ID; (3) unauthorized: full-page lockout (reuse from Overview.tsx); (4) empty: 'No items match filters' with dashed border when filtered, 'Type to search' when no query; (5) no selection: dashed border in right panel 'select an item to inspect its full processing log'.",
+      "confidence": "high",
+      "rationale": "Design prototype defines all five states explicitly. Loading/error/unauthorized/empty pattern is standard across all pages (Overview.tsx, Triage.tsx). No-selection empty state is unique to master/detail layout. All primitives exist (Skeleton, EmptyState, error/unauthorized patterns)."
+    },
+    {
+      "id": "search-accessibility",
+      "question": "What accessibility considerations are needed for master/detail navigation?",
+      "answer": "Master list: role=\"list\" on result container, role=\"listitem\" on ResultRow, aria-label=\"Search results\". Selected row: aria-selected=\"true\", focus management on selection. Detail panel: aria-live=\"polite\" region, aria-labelledby pointing to item ID header. Keyboard nav: arrow keys to move selection, Enter to open (already handled by click), Escape to clear (optional). Search input: aria-label=\"Search items\".",
+      "confidence": "medium",
+      "rationale": "Design doesn't explicitly call out a11y but UI taxonomy and existing patterns show consistent a11y. Triage.tsx has keyboard nav (J/K keys). Master/detail is complex interaction requiring ARIA roles. Focus management is critical for screen readers. Pattern should match accessibility-focused component libraries but implementation details need verification."
+    },
+    {
+      "id": "search-performance",
+      "question": "Are there performance concerns with rich search results?",
+      "answer": "Potential concern: search corpus includes full hunks, email bodies, meeting agendas in enriched_context. Mitigations: (1) limit search to recent N items (e.g., 500 most recent) in SQL query; (2) paginate results if count > 100 (offset/limit pattern from Ingestion.tsx jobs table); (3) defer rendering detail panel content until item selected (lazy); (4) use React.memo on ResultRow to prevent re-renders; (5) index summary, tags, llm_summary columns for fast ILIKE.",
+      "confidence": "medium",
+      "rationale": "Design prototype shows 8 searchItems in mock data but real corpus could be thousands. Fetching full records with hunks/logs/context for all items is expensive. Current /api/items endpoint supports pagination but hook doesn't use it. Client-side filtering assumes full corpus loaded. Need to balance UX (instant filter) vs performance (paginated API). Trade-offs depend on corpus size."
+    },
+    {
+      "id": "search-default-behavior",
+      "question": "What is the default state when /search loads with no query?",
+      "answer": "Show empty search input (auto-focused), kind filter on 'All', and empty state message 'Type to search across all items'. No API call until query length >= 2 chars (matches command palette MIN_QUERY_LEN pattern). Right panel shows 'select an item' empty state. Alternative: load recent 20 items as starting corpus.",
+      "confidence": "medium",
+      "rationale": "Design prototype doesn't show initial state clearly. Command palette waits for 2+ chars before searching. Could apply same pattern (no search = no results) or show recent items by default (discoverability). Empty-first is simpler, matches command palette. Recent-items-first is more useful. Need design decision or user testing."
+    },
+    {
+      "id": "search-result-count",
+      "question": "How is the result count displayed?",
+      "answer": "Below search input, mono text: '{count} results' when filtered, hidden when no query. Updates reactively as user types (debounced). Positioned in the header area above the result list, aligned left. Pattern matches Triage.tsx which shows card count.",
+      "confidence": "high",
+      "rationale": "Design prototype shows result count in search header. Common pattern in search UIs. Triage.tsx shows '12 cards' count. Simple derived state from filtered array length. Debouncing matches command palette 200ms pattern to avoid UI flicker during typing."
+    },
+    {
+      "id": "llm-summary-generation",
+      "question": "How is the LLM summary ('Why this matters to you') generated and stored?",
+      "answer": "Server-side during item extraction/triage: after priority scoring, call LLM provider with item context + user preference facts to generate personalized summary (2-3 sentences). Store in llm_summary column. Regenerate on preference changes or manual refresh. API: no new endpoint needed, generated as part of item processing pipeline. UI displays read-only with Sparkles icon + 'LLM' label.",
+      "confidence": "medium",
+      "rationale": "Design shows LLM summaries as static text with sparkles icon, not editable. Implies server-generated, stored field. Pattern matches existing LLM-scored priority (relevance/urgency). Personalization requires access to user memory/preferences. Regeneration logic (when?) is unclear from design. May need background job or on-demand refresh endpoint."
+    },
+    {
+      "id": "D1",
+      "question": "What new React components are needed for the feedback system?",
+      "answer": "1. FilterTuningCard component (for Actions page) - displays pending tuning tasks with auto-apply/dismiss actions. 2. FunnelStage component (for Filters/Search pages) - vertical timeline stage with correction picker. 3. ItemFunnelDialog component - full per-item provenance view. 4. FilterDetailDialog component - shows items processed by a filter with corrections summary. 5. EnricherDetailDialog component - shows enrichment samples. 6. AddRuleDialog component - create new filter rules. 7. ActionChip component - color-coded filter action indicators. 8. ConfidenceBar component - horizontal progress bar. 9. VerdictPill component - final verdict indicator. 10. FilterRuleCard component - card for filter in ordered funnel. 11. EnricherCard component - card for enricher stage. 12. LoopBackCard component - card for loop-back control stage. 13. SourceChip component - inline source indicator. 14. LiveTail component (for Ingestion page) - auto-scrolling funnel tail. 15. Portal component (shared primitive) - escape overflow/z-index stacking.",
+      "confidence": "high",
+      "rationale": "The design prototype clearly defines each component's purpose, props, and interactions. These components form the complete feedback loop UI: correction capture (FunnelStage), task display (FilterTuningCard), detailed inspection (dialogs), and live monitoring (LiveTail). All follow existing patterns (shadcn/ui composition, TypeScript strict typing, TanStack Query integration)."
+    },
+    {
+      "id": "D2",
+      "question": "What new TypeScript types/interfaces are needed?",
+      "answer": "1. FeedbackOverride interface: {id, itemId, itemSummary, filterId, filterPrompt, fromOutcome, fromLabel, toOutcome, toLabel, at}. 2. FilterTuningTask interface: {id, kind: 'filter-tuning', status: 'open'|'applied'|'dismissed', itemId, itemSummary, filterId, filterPrompt, fromOutcome, fromLabel, toOutcome, toLabel, proposedPrompt, at}. 3. FunnelStage interface: {filterId, outcome, confidence, reason, context, weak, timestamp, duration}. 4. FunnelItem interface: extends Item with stages[] array. 5. EnrichmentSample interface: {itemId, summary, contextKV: Record<string,string>, entities: Array}. 6. Enricher interface: {id, sourceType, depth, fields, entities, budget, stats}. 7. LoopBack interface: {id, label, condition, maxLoops, stats}. 8. FilterRuleExtended interface: extends FilterRule with {processed_count, origin: 'learned'|'explicit', match_stats}. 9. PromptPatch type: Map<string, string> (filterId -> refined prompt). 10. Verdict interface: {decision, priority, confidence, rationale, context}.",
+      "confidence": "high",
+      "rationale": "These types directly map to the data structures in the design spec. FeedbackOverride and FilterTuningTask are the core feedback loop types. FunnelStage/FunnelItem support per-item provenance. Enrichment types support the enricher detail views. All types follow existing codebase patterns (Pydantic-like structure, string enums, null safety)."
+    },
+    {
+      "id": "D3",
+      "question": "What new API endpoints are needed (server-side)?",
+      "answer": "1. GET /api/feedback/overrides - list all filter corrections. 2. POST /api/feedback/overrides - record a new correction (creates override + tuning task). 3. DELETE /api/feedback/overrides/{itemId}/{filterId} - remove a correction. 4. GET /api/feedback/tasks - list filter-tuning tasks (filtered by status). 5. POST /api/feedback/tasks/{taskId}/apply - apply a prompt patch (writes to filter store). 6. POST /api/feedback/tasks/{taskId}/dismiss - dismiss a tuning task. 7. GET /api/filter-rules/{filterId}/items - items processed by a specific filter. 8. GET /api/items/{itemId}/funnel - full funnel trace for an item. 9. GET /api/enrichers - list all enricher configs. 10. GET /api/enrichers/{enricherId}/samples - enrichment samples for an enricher. 11. GET /api/loopbacks - list loop-back control stages. 12. PATCH /api/filter-rules/{filterId}/prompt - update filter prompt (for manual edits). 13. GET /api/funnel/items - recent items with full funnel traces (for Filters page output table and live tail).",
+      "confidence": "high",
+      "rationale": "The feedback loop requires dedicated endpoints to manage overrides and tasks separately from the existing filter-rules API. The funnel inspection endpoints extend the existing items API with stage-level detail. Enricher/loopback endpoints surface pipeline config that currently lives only in backend domain models. All follow existing REST patterns (GET for reads, POST for writes, PATCH for updates, proper resource nesting)."
+    },
+    {
+      "id": "D4",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "1. useFeedbackOverrides() - GET /api/feedback/overrides with 30s poll. 2. useAddOverride() - POST mutation, invalidates feedback queries + filter items. 3. useRemoveOverride() - DELETE mutation, invalidates feedback queries. 4. useFeedbackTasks(status?) - GET /api/feedback/tasks?status= with 15s poll. 5. useApplyTask() - POST mutation, invalidates tasks + filter-rules queries. 6. useDismissTask() - POST mutation, invalidates tasks query. 7. useFilterItems(filterId) - GET /api/filter-rules/{filterId}/items, no poll (dialog-only). 8. useItemFunnel(itemId) - GET /api/items/{itemId}/funnel, no poll (dialog-only). 9. useEnrichers() - GET /api/enrichers with 60s poll. 10. useEnricherSamples(enricherId) - GET /api/enrichers/{enricherId}/samples, no poll. 11. useLoopbacks() - GET /api/loopbacks with 60s poll. 12. useFunnelItems(limit?) - GET /api/funnel/items?limit= with 15s poll (live tail). 13. useUpdateFilterPrompt() - PATCH mutation for manual prompt edits. All hooks use pollWhenVisible, follow error-handling patterns from existing hooks (ApiError extraction, toast notifications, optimistic updates where applicable).",
+      "confidence": "high",
+      "rationale": "Each hook maps directly to a new API endpoint or extends existing patterns. Feedback hooks need polling for live task updates. Dialog-only hooks (filter items, item funnel, enricher samples) should not poll to reduce server load. Mutations follow existing patterns (invalidate related queries, toast on success/error). The useFeedbackStore client-only hook complements these by managing prompt patches in React state."
+    },
+    {
+      "id": "D5",
+      "question": "What existing components need modification?",
+      "answer": "1. ActionItems.tsx - add FilterTuning section above throughput chart, render FilterTuningCard for open tasks. 2. Ingestion.tsx - add LiveTail component at top, embed IngestionFunnel component at bottom. 3. pages/Filters.tsx - NEW page (FiltersPage component) to replace existing filter management, becomes primary funnel config surface. 4. pages/Search.tsx - NEW page (SearchPage component) with master/detail layout, ItemFunnelDialog integration. 5. App.tsx/Router - add /filters and /search routes. 6. AppSidebar.tsx - add nav items for Filters (Workflow icon) and Search (Search icon). 7. primitives.jsx (if using design prototype pattern) - add Portal, useFeedbackStore hook. No modifications to existing StatCard, Sparkline, DataTable, ChartCard, etc. - these remain unchanged.",
+      "confidence": "high",
+      "rationale": "The design spec explicitly calls out modifications to ActionItems (filter tuning section) and Ingestion (live tail + embedded funnel). Filters and Search are net-new pages, not modifications. The router and sidebar changes are straightforward additions. Existing display primitives are stable and reused as-is. The feedback store is a new client-side singleton, not a modification to existing hooks."
+    },
+    {
+      "id": "D6",
+      "question": "What testing strategy is needed?",
+      "answer": "1. Unit tests for feedback store (WBFeedback): addOverride creates task + refines prompt, removeOverride clears task, autoApply updates promptPatches, promptFor returns patched prompt with fallback. 2. Component tests for FilterTuningCard: renders task details, auto-apply calls mutation, dismiss calls mutation. 3. Component tests for FunnelStage: renders stage details, correction picker opens on 'correct' click, correction submission calls addOverride. 4. Integration tests for ItemFunnelDialog: renders all stages, shows corrected outcomes with strikethrough, timing calculations are correct. 5. MSW mocks for new endpoints: /api/feedback/*, /api/filter-rules/{id}/items, /api/items/{id}/funnel, /api/enrichers, /api/loopbacks, /api/funnel/items. 6. E2E test for full feedback loop: correct a filter classification -> task appears on Actions page -> auto-apply -> prompt updates on Filters page. 7. Accessibility tests: FunnelStage correction picker keyboard nav, FilterTuningCard focus management, dialogs aria-labelledby/describedby. Follow existing patterns from ActionItems.test.tsx, Triage.test.tsx (React Testing Library + Vitest + MSW).",
+      "confidence": "medium",
+      "rationale": "Testing strategy follows existing codebase patterns (unit tests for stores/hooks, component tests for UI, MSW for API mocking). The feedback loop introduces complex state dependencies (corrections -> tasks -> prompt patches) that require integration testing. E2E coverage ensures the full loop works. Medium confidence because the design spec doesn't specify testing requirements, but the existing codebase has comprehensive test coverage (*.test.tsx for every page/component) that should be matched."
+    },
+    {
+      "id": "D7",
+      "question": "What accessibility considerations are needed?",
+      "answer": "1. FunnelStage correction picker: keyboard navigation (Tab, Arrow keys, Enter to select), aria-expanded on 'correct' button, role='group' on picker, aria-label on outcome choices. 2. FilterTuningCard: semantic heading (h3) for filter ID, clear button labels ('Auto-apply update', 'I'll do it manually'), focus management after dismiss (return to next task or containing section). 3. ItemFunnelDialog: aria-labelledby pointing to item ID heading, aria-describedby for summary, scrollable region has aria-label='Funnel stages', FunnelStage list as ordered list (ol) with proper nesting. 4. FilterDetailDialog: table of processed items has proper th/td structure, aria-sort on sortable columns if added later, click-to-open-funnel pattern needs Enter key support + aria-label. 5. LiveTail: role='log' + aria-live='polite' on scrollable region (already follows LogStream pattern), aria-label='Live funnel tail', row selection via keyboard (arrow keys + Enter). 6. ActionChip/VerdictPill: ensure sufficient contrast for all states (green/orange/red/cyan on dark background), test against WCAG AA. 7. ConfidenceBar: aria-valuenow/valuemin/valuemax attributes, visible percentage label for screen readers. All dialogs must have Escape-to-close + focus trap (follow existing Dialog primitive pattern). Ensure Portal-rendered content is in DOM order for screen readers.",
+      "confidence": "high",
+      "rationale": "The design prototype doesn't explicitly document a11y, but the existing codebase has strong accessibility patterns (LogStream uses role='log'/aria-live, CommandPalette has keyboard nav, Topology has visually-hidden fallback table). The new components introduce interactive pickers and data visualizations that need proper ARIA semantics. ADR 0046 enforces contrast standards. The correction picker is the highest-risk a11y surface (nested interactive elements, state changes) and needs careful testing."
+    },
+    {
+      "id": "D8",
+      "question": "What performance concerns need to be addressed?",
+      "answer": "1. LiveTail streaming: cap at 60 rows max (spec says this), use virtualization if pool exceeds 500 items (react-window or manual windowing). 2. ItemFunnelDialog stage rendering: memoize FunnelStage components (React.memo) to prevent re-renders when dialog scrolls, compute timings once in useMemo. 3. Filters page reordering: optimistic UI update + debounced PATCH to avoid race conditions, use CSS transitions instead of re-rendering full list. 4. useFeedbackStore subscription: ensure subscribers are unsubscribed on unmount to prevent memory leaks, use shallow equality check to avoid unnecessary re-renders. 5. FilterDetailDialog items table: paginate if >100 items, lazy-load item funnels only when row is clicked (not on table mount). 6. Search page master/detail: virtualize result list if >50 items (lucide Search icon), debounce search input (200ms, already standard in CommandPalette). 7. Prompt patch diffing: cache refinedPrompt() result per override, don't recompute on every render. 8. Feedback task polling: use pollWhenVisible(15000) to pause when tab hidden, consider WebSocket for real-time updates if >10 concurrent users (unlikely for single-user tool). 9. Enrichment samples: limit to 3 samples per enricher in detail dialog to keep payload small. 10. Chart re-renders: MultiLineChart and SourceFlow use requestAnimationFrame for animations - ensure cleanup on unmount.",
+      "confidence": "medium",
+      "rationale": "Most performance concerns are addressed by existing patterns (TanStack Query caching, pollWhenVisible, React.memo). LiveTail is the highest-risk surface (streaming data, DOM churn) but spec already caps it at 60 rows. The feedback store is client-only and manages small datasets (typically <20 overrides, <10 tasks). Search page virtualization is only needed if corpus grows >1000 items (unlikely for single-user). Medium confidence because actual performance depends on real-world usage patterns not fully specified in design."
+    },
+    {
+      "id": "D9",
+      "question": "What is the feedback store architecture and persistence strategy?",
+      "answer": "Client-side only. WBFeedback is a module-scoped singleton (like existing api.ts token cache pattern). State: {overrides[], tasks[], promptPatches: Map<filterId, string>}. Persistence: localStorage with key 'workbench.feedback', serialize/deserialize on load/change. Sync across tabs via storage event listener (like useWorkMode pattern). Server integration: overrides/tasks read from /api/feedback/* on mount to seed initial state, then kept in sync via mutations. promptPatches are local-only until auto-applied (POST /api/feedback/tasks/{id}/apply writes to server). No optimistic updates for corrections - wait for server confirmation to avoid race conditions. Subscribe/notify pattern for React integration: useFeedbackStore() hook subscribes on mount, unsubscribes on unmount, forces re-render on any state change. Exposed globally on window.WBFeedback for debugging (follows existing window.WB pattern from design prototype). Fallback: if localStorage unavailable (privacy mode), fall back to in-memory only with warning toast on first correction.",
+      "confidence": "medium",
+      "rationale": "The design spec describes WBFeedback as a 'global singleton' with subscribe/notify pattern and local promptPatches cache, which maps to module-scoped + localStorage. The existing codebase has precedent for client-side singletons (api.ts token cache) and localStorage sync (useWorkMode). However, the spec doesn't explicitly detail persistence or cross-tab sync, so medium confidence. Server-first alternative (store everything server-side) would be simpler but requires more backend work and loses the 'instant prompt preview' UX benefit."
+    },
+    {
+      "id": "D10",
+      "question": "How should the funnel evaluation order (enrichers, filters, loop-backs) be stored and updated?",
+      "answer": "Single unified ordering array stored server-side: [{kind: 'enricher'|'filter'|'loopback', id: string, order: number}]. Endpoint: GET /api/funnel/order returns ordered list, PATCH /api/funnel/order {items: [{kind, id, order}]} updates. Client-side: Filters page maintains order state as array, optimistic reorder on up/down arrow click (swap adjacent items), debounced PATCH after 500ms idle. Backend: funnel/order config stored in new funnel_stages table (schema: id, kind, stage_id, order, enabled). Pipeline engine reads this order at runtime to determine execution sequence. Enrichers run first for their target source_type, then filters for that source, then loop-backs can re-inject. Stage execution: pipeline/engine.py loads ordered stages, groups by source_type, executes sequentially per item. Enable/disable: PATCH /api/funnel/stages/{id} {enabled: bool} toggles without reordering. Default order on fresh install: all enrichers (by source_type alpha), then all filters (by created_at), then loop-backs. Move operation: swap order values of two adjacent stages, backend validates no gaps in sequence.",
+      "confidence": "medium",
+      "rationale": "The design spec shows a unified interleaved order with up/down arrows, implying a single sequence. The 'enrichers, filters, loop-backs in a single reorderable list' pattern requires server-side storage of the ordering. However, the spec doesn't detail the backend schema or API contract. Medium confidence because this is a reasonable extension of existing patterns (filter-rules store, source configs) but requires new storage layer. Alternative: client-only ordering would be simpler but lose persistence across sessions."
+    },
+    {
+      "id": "D11",
+      "question": "What is the scope of the initial implementation vs future branches?",
+      "answer": "Initial (this branch): 1. Feedback store (WBFeedback) with override/task management, promptFor() API, localStorage persistence. 2. FilterTuningCard on Actions page. 3. FunnelStage with correction picker. 4. ItemFunnelDialog with full trace + timing. 5. New API endpoints: /api/feedback/*, /api/items/{id}/funnel, /api/filter-rules/{id}/items. 6. New hooks: useFeedbackOverrides, useAddOverride, useFeedbackTasks, useApplyTask, useDismissTask, useItemFunnel, useFilterItems. 7. ActionItems page modifications (filter tuning section). 8. Ingestion page LiveTail (without full Filters page). 9. Basic tests for feedback store + FilterTuningCard + FunnelStage. Future branches: 1. Full Filters page (FiltersPage component) with enricher/filter/loopback cards, reordering, detail dialogs. 2. Search page with master/detail layout. 3. Enricher/loopback config endpoints + hooks. 4. SourceFlow Sankey visualization (complex animation, separate branch). 5. MultiLineChart component (if not already built). 6. EnricherDetailDialog, FilterDetailDialog (depend on full Filters page). 7. Funnel ordering API + storage. This scoping keeps the initial branch focused on the core feedback loop (correct -> task -> apply) without the full funnel management surface.",
+      "confidence": "high",
+      "rationale": "The design spec presents the full vision, but implementing all components in one branch risks scope creep and integration issues. The feedback loop (override -> task -> prompt patch) is the core value and can be delivered incrementally. The LiveTail is a natural extension of existing Ingestion page. The full Filters page is substantial (9 sub-components, reordering UX, 3 detail dialogs) and should be a separate branch. This scoping follows the 'small, testable, shippable increments' principle and allows validating the feedback UX before building the full funnel config surface."
+    },
+    {
+      "id": "new-component-sourceflow",
+      "question": "What new React component is needed for the animated Sankey flow visualization?",
+      "answer": "Create src/components/SourceFlow.tsx as a TypeScript port of the prototype's SourceFlow component. It will render an animated SVG Sankey diagram showing source\u2192WorkBench\u2192output flows with: (1) B\u00e9zier ribbon paths connecting source/output nodes through a central bar, (2) requestAnimationFrame-driven animated dots flowing along ribbons (density proportional to flow volume), (3) stalled source detection (red dashed ribbons + alert icon when health_status === 'erroring'), (4) hover isolation with smooth re-proportioning (hovering a source re-proportions outputs; hovering an output re-proportions inputs), (5) click navigation for output nodes. Use React.useState for focus state, React.useMemo for layout computation, React.useRef for path/dot element refs, React.useEffect for rAF animation loop cleanup. Import lucide-react icons (Github, Mail, Calendar, MessageCircle, CircleCheckBig, ListChecks, Filter, TriangleAlert, ArrowDownToLine, ArrowUpFromLine). Component accepts onNavigate callback prop for routing to clicked outputs.",
+      "confidence": "high",
+      "rationale": "The prototype shows a complete, self-contained SourceFlow component with well-defined props and internal state. The existing codebase uses TypeScript + React 19 + lucide-react icons. The pattern matches other chart components (Topology.tsx): hand-rolled SVG with role='img', accessibility labels, and smooth CSS transitions. The animation loop is rAF-based (no library), which is appropriate for 60fps smooth flow. This is a new visualization type not present in the current codebase."
+    },
+    {
+      "id": "new-types-sourceflow",
+      "question": "What new TypeScript types/interfaces are needed for SourceFlow?",
+      "answer": "No new exported interfaces required. SourceFlow will use inline types for its internal SOURCES/OUTPUTS/M matrix data structures and consume the existing SourceRollup[] type from useStats.ts (which already has health_status field). The component will read window.WB.sources (prototype pattern) OR accept sources prop typed as SourceRollup[] for production. Focus state type will be inline: { t: 'none' | 'src' | 'out', i: number, j: number }. Ribbon metadata will be inline: { side: 'L' | 'R', idx: number, color: string, value: number, on: boolean, broken: boolean, band: string, mid: string }.",
+      "confidence": "high",
+      "rationale": "The existing SourceRollup interface already includes health_status ('disabled' | 'never_run' | 'erroring' | 'healthy') which is exactly what SourceFlow needs to detect stalled sources. The prototype uses window.WB.sources which maps to this type. No new backend API types needed since /api/stats/sources already returns the required data. Internal component types can be inline since they're implementation details, following the pattern in Topology.tsx which also uses inline types for layout positions."
+    },
+    {
+      "id": "api-endpoints-none",
+      "question": "What new API endpoints are needed on the server side?",
+      "answer": "No new API endpoints required. SourceFlow will consume the existing GET /api/stats/sources endpoint (already polled by useSourcesRollup hook) which returns SourceRollup[] with health_status. The flow matrix M[source][output] and volume calculations will be computed client-side from aggregated stats already available in StatsOverview (useStatsOverview hook returns items.by_source breakdown). Output node volumes (Action Items count, Triage Queue count, etc.) are derived from existing overview stats (pending_triage, active_items) and queue stats (by_status). All necessary data already flows through the UI's existing API contract.",
+      "confidence": "high",
+      "rationale": "The prototype hardcodes the flow matrix M and volumes as mock data. In production, these can be derived from existing API responses: (1) source volumes from SourceRollup.items_stored, (2) output volumes from StatsOverview (pending_triage for Triage Queue, active_items for Action Items) and QueueStats.by_status (filtered/dropped counts), (3) flow proportions computed client-side using the same breakdown ratios. The health_status field for stalled-source detection already exists in /api/stats/sources. No new backend computation needed\u2014this is a pure visualization layer concern."
+    },
+    {
+      "id": "tanstack-query-hooks",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "No new hooks required. SourceFlow will consume three existing hooks: (1) useSourcesRollup() for source health status and volumes, (2) useStatsOverview() for output node volumes (pending_triage, active_items, items.by_status breakdown), (3) useQueueStats() for filtered/error counts. These are already polled at appropriate intervals (30s/15s/15s). The component will destructure data from these hooks in its parent container (likely Overview page) and pass computed props, OR consume the hooks directly if used as a standalone widget.",
+      "confidence": "high",
+      "rationale": "All three hooks already exist and are used extensively across pages. useSourcesRollup returns SourceRollup[] with health_status (stalled detection). useStatsOverview returns ItemsBreakdown.by_source (for source volumes) and counts for outputs. useQueueStats provides queue depth by status (for Filtered Out / Errors buckets). The polling intervals are already appropriate for live monitoring. No new data fetching patterns needed\u2014this follows the established pattern where chart components receive pre-fetched data as props (see Topology component which receives Topology object from useTopology hook)."
+    },
+    {
+      "id": "component-modifications",
+      "question": "What existing components need modification?",
+      "answer": "Minimal modifications: (1) Add SourceFlow to Overview.tsx as a new card in the Infrastructure section (replace or augment the existing Topology graph). Import SourceFlow component, consume useSourcesRollup + useStatsOverview + useQueueStats hooks, compute flow matrix from stats, render <SourceFlow sources={sources} flows={flowMatrix} onNavigate={navigate} />. (2) Export SourceFlow from src/components/index.ts (if using barrel exports). (3) Optionally create a ChartCard variant or use existing Card wrapper for consistent styling. No modifications to hooks, API layer, or other pages required.",
+      "confidence": "medium",
+      "rationale": "The prototype shows SourceFlow as a standalone visualization that could replace or complement the existing Topology graph on the Overview page. The existing Topology component uses similar patterns (pure SVG, role='img', accessibility). Integration is straightforward: add the component, wire up data from existing hooks, pass onNavigate callback. Medium confidence because the exact placement strategy (replace Topology vs. separate card vs. tabbed view) is a UX decision not fully specified in the branch description. The component itself is self-contained and doesn't require modifications to other components."
+    },
+    {
+      "id": "testing-strategy",
+      "question": "What testing strategy is appropriate for SourceFlow?",
+      "answer": "Three-tier strategy: (1) Unit tests (SourceFlow.test.tsx) using @testing-library/react + Vitest: test layout computation logic (ribbon path generation, node positioning, re-proportioning on hover), verify focus state transitions, check stalled source rendering (red ribbons when health_status='erroring'), assert aria-label presence. Mock the rAF animation loop. (2) Visual regression (optional): screenshot tests for hover states and stalled indicators. (3) Integration test: render with real hook data mocks (MSW handlers for /api/stats/sources), verify click navigation callback, test keyboard navigation if added. Follow existing test patterns from Topology.test.tsx (SVG structure assertions, accessibility checks).",
+      "confidence": "medium",
+      "rationale": "The component has three testable concerns: (1) layout math (ribbon paths, node positions, proportioning), (2) interaction state (hover focus, click navigation), (3) stalled source detection. The rAF animation is hard to test in JSDOM but can be mocked/skipped. Existing codebase has comprehensive component tests (see Topology, Sparkline tests) using @testing-library/react + Vitest. The accessibility requirement (aria-label, role='img') mirrors Topology's pattern. Medium confidence because animation testing can be flaky; may need snapshot tests or visual regression tools beyond the current test stack."
+    },
+    {
+      "id": "accessibility",
+      "question": "What are the key accessibility considerations for SourceFlow?",
+      "answer": "Five requirements: (1) Add role='img' and comprehensive aria-label summarizing the flow (e.g., 'Signal flow: 612 items/day from github, 388 from email... to 280 Action Items, 410 Triage Queue, 540 Filtered Out, 54 Errors. Hover a source or output to see breakdown.'). (2) Provide a visually-hidden <table> fallback (sr-only class) listing all flows in tabular format (Source | Volume | Destination | Count), mirroring Topology.tsx pattern. (3) Ensure output nodes are keyboard-navigable buttons (not just click handlers on SVG elements) with visible focus rings. (4) Add title elements to each source/output node for tooltip-style descriptions. (5) Respect prefers-reduced-motion: disable rAF animation loop and CSS transitions when user has motion sensitivity. Use media query in useEffect cleanup.",
+      "confidence": "high",
+      "rationale": "The existing Topology component sets the precedent: role='img', aria-label summary, plus a visually-hidden <table> fallback for screen readers. This is the correct pattern per WCAG 2.2 for complex SVG visualizations. The prototype's click handlers on output nodes need to be keyboard-accessible (use foreignObject with button elements or add keyboard event handlers). Motion reduction is critical for animated visualizations\u2014other components (Sparkline, transitions) already respect prefers-reduced-motion via CSS. The component description explicitly mentions accessibility as a key consideration, and the settled ADRs emphasize contrast/focus rings."
+    },
+    {
+      "id": "performance-concerns",
+      "question": "What are the performance concerns and mitigation strategies?",
+      "answer": "Four concerns + mitigations: (1) rAF animation loop: Limit dot pool size (80 dots in prototype). Use requestAnimationFrame with delta-time throttling. Clean up rAF on unmount and when tab is hidden (check document.visibilityState). (2) Layout recomputation on hover: Memoize layout calculations with React.useMemo keyed on focus state. Avoid recomputing ribbon paths when only opacity changes. (3) SVG re-renders: Use React.memo on the component if it's re-rendered frequently by parent. Cache path refs in React.useRef to avoid getTotalLength() calls every frame. (4) Large flow matrices: Keep matrix size small (4 sources \u00d7 4 outputs = 16 flows max). If sources grow beyond ~10, consider aggregating or paginating. Monitor paint time with React DevTools Profiler.",
+      "confidence": "medium",
+      "rationale": "The prototype's rAF loop is well-designed: it uses delta-time for frame-rate independence, limits the dot pool to 80, and spawns dots proportionally to flow volume. The main risk is unnecessary layout thrashing on hover. React.useMemo on the layout object (keyed on focus.t/focus.i/focus.j) prevents recomputation except when focus changes. Path.getTotalLength() is expensive but cached in refs and called only on layout change. Medium confidence because real-world performance depends on browser SVG rendering speed and the number of concurrent transitions. May need to profile with Chrome DevTools Performance tab on lower-end devices. The codebase's existing charts are lightweight, so this shouldn't introduce major perf regressions."
+    },
+    {
+      "id": "chart-theme-integration",
+      "question": "How should SourceFlow integrate with the existing centralized chart theme?",
+      "answer": "Import CHART_COLORS and CHART_PALETTE from @/lib/chart-theme.ts. Use CHART_COLORS.primary (#ff6a2b) for github source, CHART_COLORS.tertiary (#71d2ff) for email, CHART_COLORS.amber (#ffb59a) for calendar, CHART_COLORS.green (#9ad08a) for chat. Use error color #e5484d for stalled source ribbons (not in CHART_COLORS but consistent with destructive variant). Output colors can use extended palette or semantic colors (Action Items: purple #b79cf7, Triage Queue: #9a7af0, Filtered: gray #71717a, Errors: red #e5484d). Grid lines and borders use CHART_DEFAULTS.grid.stroke (#26262C). Define a local SOURCEFLOW_COLORS constant for output node colors to avoid hardcoding, but source colors should map to CHART_PALETTE for consistency with other multi-series charts.",
+      "confidence": "high",
+      "rationale": "ADR 0038 mandates centralized chart theming to prevent color drift. The prototype hardcodes hex values that closely match CHART_COLORS (primary/tertiary/amber/green). Importing from chart-theme.ts ensures future theme changes (e.g., light mode support, accessibility contrast tuning) apply to SourceFlow automatically. The error red for stalled sources is a semantic color (destructive state) and should remain distinct. Output node colors are domain-specific (Action Items, Triage Queue) and can be local constants, but they should still respect the overall palette harmony. This follows the pattern in BarChart (Overview.tsx) which uses CHART_COLORS for priority-based fills."
+    },
+    {
+      "id": "stalled-source-indicator",
+      "question": "How should stalled source indicators be implemented and surfaced?",
+      "answer": "Three-part implementation: (1) Detect stalled sources by filtering sources.filter(s => s.health_status === 'erroring'). Store in a Set for O(1) lookup. (2) Visual treatment: render stalled source node with fill='#e5484d' (error red), ribbon with stroke='#e5484d', strokeDasharray='5 3', strokeOpacity='0.6', and fillOpacity reduced to 0.12. Add a TriangleAlert icon (lucide-react) next to the source label. Replace volume text with 'STALLED' label in uppercase mono font. (3) Hover behavior: when hovering a stalled source, zero out the right-side (output) proportions to visually indicate no flow. Add a tooltip (foreignObject <title>) explaining 'Ingestion stalled \u2014 check source configuration'. Cross-reference the Sources page health badge pattern for visual consistency.",
+      "confidence": "high",
+      "rationale": "The prototype shows clear stalled-source handling: red dashed ribbons, triangle alert icon, 'stalled' label instead of volume. This maps directly to SourceRollup.health_status === 'erroring' from the existing API. The visual treatment is consistent with error states elsewhere (red destructive variant, dashed borders for warnings). Zeroing outputs on hover makes logical sense: a stalled source produces zero flow. The HealthBadge component already renders 'erroring' status with red styling, so this is an extension of that pattern to the flow diagram. High confidence because the API contract is already stable and the visual design is fully specified in the prototype."
+    },
+    {
+      "id": "tabs-primitive",
+      "question": "What tabs primitive should we use for the Settings sub-tab navigation?",
+      "answer": "Implement Radix UI Tabs primitive following shadcn/ui pattern (components/ui/tabs.tsx). This matches the existing design system stack and provides accessible tab navigation. The component should export: Tabs (root), TabsList (horizontal flex container), TabsTrigger (individual tab button), TabsContent (panel wrapper). Styling should match the prototype: role='tablist', bottom border on TabsList, 2px solid --primary bottom border on active tab with negative margin trick to overlap tablist border, text-muted-foreground inactive state, text-foreground active state.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly describes a tab pattern with role='tablist' and aria-selected. Radix UI Tabs is the standard primitive for this in the shadcn/ui stack already used throughout the codebase. This provides keyboard navigation (arrow keys), ARIA attributes, and controlled/uncontrolled modes out of the box. The visual styling described in the prototype (bottom border, overlap trick) is standard and tested."
+    },
+    {
+      "id": "routing-strategy",
+      "question": "Should Settings sub-tabs use React Router sub-routes or controlled tab state?",
+      "answer": "Use React Router sub-routes with URL-driven tab state: /settings (defaults to System tab), /settings/sources (Sources tab), /settings/messenger (Messenger tab). The active tab is derived from route.pathname parsing: pathname.split('/')[2] with fallback to 'system'. Clicking a tab navigates via <Link> or navigate() rather than controlled tab state. This makes sub-tabs bookmarkable, preserves browser back/forward, and aligns with the existing routing pattern.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly shows this pattern: 'Active tab derived from route: /settings -> \"system\", /settings/sources -> \"sources\"'. The existing App.tsx uses React Router v7. URL-driven tabs are the standard pattern for multi-page dashboards and align with user expectations (bookmarkable, back button works). The prototype's SettingsPage already demonstrates the route parsing logic."
+    },
+    {
+      "id": "settings-page-refactor",
+      "question": "How should we refactor Settings.tsx to support the tab container pattern?",
+      "answer": "Refactor Settings.tsx to be a container with three sections: (1) Page header with h1 'Settings', (2) Tabs navigation bar using the new Tabs primitive with three TabsTrigger components (System/Sources/Messenger with icons), (3) Content area that renders the active tab component based on route. Move current Settings.tsx content into a new SettingsSystem component. Render <Outlet /> from React Router to display the child route components (SettingsSystem at index route, Sources at /sources child route, Messenger at /messenger child route). Alternatively, use conditional rendering if not using nested routes.",
+      "confidence": "medium",
+      "rationale": "The design prototype shows two possible architectures: (a) conditional rendering based on parsed route, (b) nested routes with Outlet. The prototype uses conditional rendering which is simpler and already works in the hash-based environment. However, React Router v7 supports nested routes which would be cleaner. Given the existing codebase uses flat routes and the prototype pattern is already proven, conditional rendering is safer and requires fewer routing changes."
+    },
+    {
+      "id": "embedded-prop-pattern",
+      "question": "Should we use the 'embedded' prop pattern for Sources and Messenger pages or create separate components?",
+      "answer": "Use the embedded prop pattern: add an optional 'embedded?: boolean' prop to Sources.tsx and Messenger.tsx. When embedded=true, hide the page-level h1 title and any redundant chrome, since the Settings container provides the title and tab navigation. This allows reuse of the same component at both /sources (standalone) and /settings/sources (embedded in tab). The prop controls only presentational concerns (title visibility), not data fetching or business logic.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly describes this pattern: 'The \"embedded\" prop allows SourcesPage and MessengerPage to be used both standalone (at /sources, /messenger) and embedded within the settings tabs. This is a reuse pattern -- the same page components serve two contexts.' This avoids code duplication while supporting both navigation patterns. The current Sources.tsx and Messenger.tsx already have self-contained h1 titles that can be conditionally rendered."
+    },
+    {
+      "id": "router-changes",
+      "question": "What changes to App.tsx routing are needed?",
+      "answer": "Add nested routes under /settings: <Route path='/settings' element={<Settings />}><Route index element={<SettingsSystem />} /><Route path='sources' element={<Sources embedded />} /><Route path='messenger' element={<Messenger embedded />} /></Route>. Keep the existing standalone routes /sources and /messenger for backward compatibility and direct navigation. The Settings component renders <Outlet /> to display the child route. If nested routes prove complex with HashRouter, use the conditional rendering pattern from the prototype instead.",
+      "confidence": "medium",
+      "rationale": "React Router v7 supports nested routes but the existing codebase uses flat routes. The prototype shows conditional rendering which is simpler but less idiomatic. Nested routes provide better separation of concerns and follow React Router conventions. The risk is complexity with the HashRouter + nested routes interaction. Fallback: conditional rendering as shown in prototype is proven to work."
+    },
+    {
+      "id": "sidebar-nav-changes",
+      "question": "Should the sidebar Settings nav item link to /settings or /settings/system?",
+      "answer": "Link to /settings (no sub-path). The Settings page index route defaults to the System tab. This provides the cleanest URL and follows the principle that /settings is the canonical entry point, with sub-tabs as refinements. The NavLink in AppSidebar.tsx remains { to: '/settings', label: 'Settings', icon: Settings }.",
+      "confidence": "high",
+      "rationale": "Standard navigation pattern: the primary nav goes to the top-level route, which then provides sub-navigation. The /settings route will render the Settings container with the System tab active by default (either via index route or fallback logic). This keeps URLs clean and predictable."
+    },
+    {
+      "id": "new-components",
+      "question": "What new React components need to be created?",
+      "answer": "1. components/ui/tabs.tsx - Radix UI Tabs primitive wrapper (Tabs, TabsList, TabsTrigger, TabsContent) following shadcn/ui pattern. 2. pages/SettingsSystem.tsx - Extract current Settings.tsx content (versions, health, config sections, secrets vault, download backup) into this new component. This becomes the System tab content. No other new page components needed since Sources and Messenger already exist.",
+      "confidence": "high",
+      "rationale": "The tabs primitive is the only missing UI component from the design system. The SettingsSystem component is a straightforward extraction of existing code from Settings.tsx. Sources and Messenger pages already exist and just need the embedded prop added. This is the minimal set of new components required."
+    },
+    {
+      "id": "typescript-types",
+      "question": "What new TypeScript types/interfaces are needed?",
+      "answer": "No new API types needed - all data shapes already exist (HealthResponse, DebugConfigResponse, MessengerInfo, SourceRollup). Only presentational types: (1) Add 'embedded?: boolean' to Sources and Messenger component props (inline prop typing is sufficient). (2) TabValue type alias: type TabValue = 'system' | 'sources' | 'messenger' for type safety in route parsing and tab state (optional but recommended).",
+      "confidence": "high",
+      "rationale": "This is purely a UI reorganization. All data types already exist in the current pages. The embedded prop is a simple boolean presentational flag. A TabValue union type provides type safety for the route parsing logic but is not strictly required."
+    },
+    {
+      "id": "api-endpoints",
+      "question": "What new API endpoints are needed?",
+      "answer": "No new API endpoints required. All three tabs use existing endpoints: System tab uses GET /health and GET /api/debug/config (already in useSettings.ts hooks). Sources tab uses GET /api/stats/sources and source mutation endpoints (already in useSources.ts). Messenger tab uses GET /api/messenger and PATCH /api/messenger (already in useMessenger.ts). This is purely a client-side UI reorganization.",
+      "confidence": "high",
+      "rationale": "The design spec confirms this is a consolidation/reorganization of existing pages under a tab interface. No new data is being displayed, just existing pages being embedded in a new navigation structure. All hooks and endpoints are already implemented and tested."
+    },
+    {
+      "id": "tanstack-query-hooks",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "No new hooks required. All data fetching hooks already exist: useHealth() and useDebugConfig() from hooks/useSettings.ts for System tab. useSourceStats(), useToggleSource(), usePollSource(), useDeleteSource() from hooks/useSources.ts for Sources tab. useMessenger(), usePendingCount(), useUpdateMessenger() from hooks/useMessenger.ts for Messenger tab. The embedded prop is purely presentational and doesn't affect data fetching.",
+      "confidence": "high",
+      "rationale": "The existing pages are fully functional with their own data fetching. The tab structure doesn't change what data is fetched, only how the pages are organized visually. Each tab continues to use its existing hooks. No data sharing between tabs is required."
+    },
+    {
+      "id": "testing-strategy",
+      "question": "What testing strategy should we use for the new tab structure?",
+      "answer": "1. Unit test components/ui/tabs.tsx: verify Radix Tabs wrapper passes through props, applies className, renders children. 2. Update Settings.test.tsx: test tab navigation (clicking tab triggers navigate), test route-driven active state (url /settings shows System active, /settings/sources shows Sources active), test that all three tab panels render when active. 3. Add embedded prop tests to Sources.test.tsx and Messenger.test.tsx: verify h1 is hidden when embedded=true, shown when embedded=false/undefined. 4. Integration test: verify standalone routes /sources and /messenger still work. Use existing MSW mocks. Follow existing test patterns (Vitest + Testing Library).",
+      "confidence": "high",
+      "rationale": "The existing codebase has comprehensive tests for all three pages. The testing additions are incremental: test the new tabs primitive, test the tab navigation/routing logic, test the embedded prop presentational changes. The MSW server is already set up with all necessary endpoint mocks. This follows the established testing patterns in the codebase."
+    },
+    {
+      "id": "accessibility",
+      "question": "What accessibility considerations are needed for the tab structure?",
+      "answer": "1. Radix UI Tabs provides accessible tab pattern out of the box: role='tablist' on container, role='tab' on triggers, role='tabpanel' on content, aria-selected on active tab, aria-controls/aria-labelledby associations, keyboard navigation (Arrow keys, Home, End). 2. Ensure TabsTrigger includes both icon and label text (not icon-only) for screen readers. 3. The existing a11y.test.tsx should be updated to verify the Settings route has proper tab ARIA attributes. 4. Preserve focus management: when navigating to a tab via URL (not click), focus should move to the active tab panel heading. 5. Ensure focus-visible ring styles from index.css apply to TabsTrigger elements.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly mentions role='tablist' and aria-selected. Radix UI Tabs is WCAG 2.1 compliant and handles the complex ARIA patterns. The existing codebase has strong a11y practices (a11y.test.tsx, focus-visible styles). The main concern is ensuring tab triggers have visible labels (not just icons) and that focus management works with URL-driven navigation."
+    },
+    {
+      "id": "performance",
+      "question": "Are there any performance concerns with the tab structure?",
+      "answer": "No significant performance concerns. Each tab component only mounts when active (TabsContent renders children conditionally). Data fetching hooks use TanStack Query with staleTime/polling, so switching tabs may trigger refetches but this is intended behavior. Potential optimization: if switching between tabs causes jank, consider keeping inactive tab components mounted but hidden (aria-hidden) to preserve query cache. However, start with unmount-on-hide (default Radix behavior) as it's simpler and follows the prototype pattern. The existing pages have no performance issues, so tab wrapping shouldn't introduce new problems.",
+      "confidence": "medium",
+      "rationale": "The tab structure is lightweight (just conditional rendering). Each tab uses the same hooks it uses now as a standalone page, so no new performance characteristics. TanStack Query handles caching and background refetching. The only risk is if users rapidly switch tabs and trigger many refetches, but this is unlikely and the hooks already have staleTime configuration. The prototype doesn't mention performance optimizations, suggesting the default behavior is acceptable."
+    },
+    {
+      "id": "tab-icons",
+      "question": "Should tab triggers include icons alongside labels?",
+      "answer": "Yes, include lucide-react icons in each TabsTrigger: System tab uses SlidersHorizontal icon, Sources tab uses Database icon, Messenger tab uses MessageSquare icon (as specified in the prototype TABS array). Render icon + label together inside each trigger, following the pattern: <Icon className='size-4 mr-2' aria-hidden='true' /><span>{label}</span>. This matches the design prototype and provides visual wayfinding while keeping labels for accessibility.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly specifies icons for each tab: 'Three tabs defined in TABS array: System (SlidersHorizontal icon), Sources (Database icon), Messenger (MessageSquare icon).' Icons improve scannability and visual hierarchy. The aria-hidden on icons ensures screen readers focus on the label text. This follows the same pattern used in AppSidebar.tsx."
+    },
+    {
+      "id": "legacy-routes",
+      "question": "Should we maintain the standalone /sources and /messenger routes or deprecate them?",
+      "answer": "Maintain both standalone routes /sources and /messenger AND the embedded tab routes /settings/sources and /settings/messenger. The standalone routes render the full page with h1 title (embedded=false). This provides flexibility: users can link directly to Sources or Messenger without going through Settings, while the Settings tabs provide grouped navigation for related configuration. Update AppSidebar.tsx to keep Sources and Messenger nav items, or remove them if consolidating all config under Settings. Recommend: remove Sources and Messenger from sidebar (they're now sub-tabs of Settings) but keep the routes active for direct links and backward compatibility.",
+      "confidence": "medium",
+      "rationale": "The design prototype mentions 'legacy/alias routes' and shows both patterns. Removing the standalone routes would break existing links/bookmarks. Keeping them provides flexibility at minimal cost (just a boolean prop). The design question is whether to keep them in the sidebar nav. The prototype suggests removing them from primary nav since Settings consolidates all configuration, but keeping the routes themselves active is low-risk and user-friendly."
+    },
+    {
+      "id": "sidebar-sources-messenger",
+      "question": "Should Sources and Messenger nav items be removed from AppSidebar.tsx?",
+      "answer": "Remove Sources and Messenger from the primary AppSidebar nav. They become sub-tabs under Settings only. This reduces visual clutter in the icon rail and provides a clearer information architecture: Settings is the single entry point for all configuration (System/Sources/Messenger). The NAV array in AppSidebar.tsx should be updated to remove the Database and MessageSquare entries. Users access these via Settings > [Sources|Messenger] tab. Direct URL access to /sources and /messenger still works for deep links.",
+      "confidence": "medium",
+      "rationale": "The branch name is 'Settings sub-tabs: System/Sources/Messenger consolidation' which implies bringing Sources and Messenger under Settings rather than having them in parallel. The prototype describes Settings as 'the container' with sub-tabs. Removing from sidebar simplifies navigation. However, this is a UX trade-off: some users may prefer Sources/Messenger as top-level items. Recommend: start with removal (consolidation), can always add back if user testing shows strong preference for top-level access."
+    },
+    {
+      "id": "shell-001",
+      "question": "What new React components are needed for the hover-expand rail?",
+      "answer": "No new components needed. The existing AppSidebar.tsx already implements a similar pattern but needs CSS updates to support hover-expand. The component structure is correct - it renders nav items with icons and labels. The CSS needs to add hover transitions (width 64px \u2192 216px, label opacity 0 \u2192 1, box-shadow on hover) mirroring the design prototype's wb-rail-nav behavior in app.css lines 25-59.",
+      "confidence": "high",
+      "rationale": "The design prototype shows the hover-expand is purely CSS-driven (transition on width, opacity, box-shadow). The existing AppSidebar already has the correct DOM structure with NavLink items containing icons and labels. We just need to update the Tailwind classes or add custom CSS to match the prototype's hover behavior."
+    },
+    {
+      "id": "shell-002",
+      "question": "Does the rail need a logo/brand mark at the top?",
+      "answer": "Yes. Add a logo button at the top of AppSidebar that shows the WB icon (34x34) and 'WorkBench' label (display font, weight 600). This button should navigate to / when clicked. The design prototype shows this in shell.jsx lines 37-40 with className 'wb-rail-logo' that gets margin-bottom: 12px.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly shows a wb-rail-logo button as the first item in the rail (shell.jsx line 37-40) with the WB icon and WorkBench label. The existing codebase's AppSidebar does not have this - it only shows nav items. The TopBar has a brand mark but the rail needs its own for consistency when hovering."
+    },
+    {
+      "id": "shell-003",
+      "question": "What navigation items should appear in the rail after adding Search and removing Sources/Messenger?",
+      "answer": "The NAV array should be: Overview (LayoutDashboard), Search (Search icon), Triage (ListChecks), Action Items (CircleCheckBig), Ingestion (Workflow), Knowledge (BookOpen), Settings (Settings). Total: 7 items. Sources and Messenger are removed from the rail but remain accessible via Settings sub-tabs at /settings/sources and /settings/messenger.",
+      "confidence": "high",
+      "rationale": "The design prototype's NAV array in shell.jsx lines 10-18 shows exactly this structure: 7 items with Search added at position 2, and Sources/Messenger removed from the main nav. The context summary confirms 'Sources and Messenger pages are used both as standalone routes (/sources, /messenger) and embedded within Settings sub-tabs (via the embedded prop).' This matches the dual-use pattern described."
+    },
+    {
+      "id": "shell-004",
+      "question": "What new route needs to be added for the Search page?",
+      "answer": "Add route '/search' pointing to a new SearchPage component. The page implements master/detail layout: left panel with search input, kind filter (All/Diffs/Email/Meetings/Chat), and result list (340px sticky); right panel with rich item detail view including LLM summary, contextual payload (diff/email/meeting/chat renderers), full funnel processing log, and item actions.",
+      "confidence": "high",
+      "rationale": "The design prototype includes a complete SearchPage implementation in page-search.jsx with all the specified features. The existing App.tsx routing needs to add this route between / and /triage to match the nav order. The page structure is well-defined in the design summary."
+    },
+    {
+      "id": "shell-005",
+      "question": "How should Settings sub-tabs for Sources and Messenger be implemented?",
+      "answer": "Modify Settings.tsx to add a tab bar with three tabs: System (existing content), Sources (renders Sources page with embedded=true prop), Messenger (renders Messenger page with embedded=true prop). Add routes /settings/sources and /settings/messenger. The Sources and Messenger components need an optional 'embedded' prop to conditionally hide page headers when rendered within Settings.",
+      "confidence": "high",
+      "rationale": "The design prototype's shell.jsx contextLabel function (lines 24-25) explicitly maps /settings/sources \u2192 SOURCES.CONFIG and /settings/messenger \u2192 MESSENGER. The design summary states: 'The embedded prop allows SourcesPage and MessengerPage to be used both standalone (at /sources, /messenger) and embedded within the settings tabs. This is a reuse pattern.' The existing Settings.tsx is currently a single page without tabs."
+    },
+    {
+      "id": "shell-006",
+      "question": "What TypeScript types/interfaces are needed for the Search page?",
+      "answer": "SearchItem type with: id, kind ('diff'|'email'|'meeting'|'chat'), state (using existing ItemStatus enum), priority (existing Priority enum), relevance (number), summary, source, created_at, tags (string[]), llm_summary (string), context (union type: DiffContext | EmailContext | MeetingContext | ChatContext), log (Stage[] - reuse from funnel types), verdict (existing verdict structure). Context types need: DiffContext (author, team, status, url, hunks), EmailContext (from, to, when, body), MeetingContext (when, duration, location, attendees, agenda), ChatContext (channel, messages[]).",
+      "confidence": "high",
+      "rationale": "The design prototype's page-search.jsx and the data.js mock show searchItems[] with all these fields. The existing codebase has ItemStatus and Priority enums in api-types.ts. The context types are clearly defined in the contextual payload renderers (lines 42-114 of page-search.jsx). These types align with the existing domain vocabulary."
+    },
+    {
+      "id": "shell-007",
+      "question": "What new API endpoint is needed for the Search page?",
+      "answer": "GET /api/search already exists and is used by the command palette (useSearch hook). The Search page can reuse this endpoint but may need different query parameters: add optional 'kind' filter (diff/email/meeting/chat) and increase limit (palette uses 20, page might need 50+). The endpoint returns SearchResponse with groups (items, actions, sources, facts) - the Search page will only use the 'items' group and client-side filter by kind.",
+      "confidence": "medium",
+      "rationale": "The existing useSearch hook (hooks/useSearch.ts) already calls GET /api/search with q and limit parameters. The command palette uses it successfully. However, the Search page needs richer item data (full context, log, verdict) than the palette's SearchHit type provides. Either the endpoint needs to return fuller item data when limit is higher, or the page needs to fetch individual items after search. The design prototype doesn't show server interactions, only window.WB.searchItems."
+    },
+    {
+      "id": "shell-008",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "Create useSearchItems(query, kind, limit) hook that wraps the existing GET /api/search but returns full SearchItem[] instead of SearchHit[]. The hook should enable only when query.length >= 2 (matching SEARCH_MIN_CHARS), use placeholderData to keep prior results visible while fetching, and staleTime of 30s. May also need useItemActions(itemId) hook for the action buttons (set priority, mark done, snooze, archive, delete) unless these can reuse existing action hooks.",
+      "confidence": "medium",
+      "rationale": "The pattern matches the existing useSearch hook structure. However, whether to create a new hook or extend useSearch depends on the API response shape. The Search page also needs item action mutations - the existing useActions hooks are for action items, not generic items. We may need new mutations for item-level operations or extend existing ones."
+    },
+    {
+      "id": "shell-009",
+      "question": "What existing components need modification for the Settings tabs?",
+      "answer": "Modify Settings.tsx to add tab bar UI (role=tablist, tab buttons with aria-selected, content conditional on active tab). Modify Sources.tsx and Messenger.tsx to accept optional 'embedded' prop and conditionally hide page title when embedded=true. The tab active state should derive from pathname (/settings \u2192 system, /settings/sources \u2192 sources, /settings/messenger \u2192 messenger). No new shadcn components needed - use native button elements with custom styling matching the design prototype's tab pattern.",
+      "confidence": "high",
+      "rationale": "The design prototype's SettingsPage (in shell design context) shows the tab bar implementation pattern with inline buttons and conditional rendering. The embedded pattern is explicitly documented. The existing Settings.tsx needs restructuring but Sources and Messenger pages only need minor conditional rendering changes."
+    },
+    {
+      "id": "shell-010",
+      "question": "What about the breadcrumb navigation shown in the design?",
+      "answer": "Add a Breadcrumb component that renders when route !== '/'. It shows '< Back to {label}' button in mono uppercase (11px, .04em tracking). For /triage/* routes, back goes to /triage. For all other routes, back goes to /. The component should render inside AppShell's main area, above page content (in the wb-main-inner div before children), with 12px bottom margin.",
+      "confidence": "high",
+      "rationale": "The design prototype's shell.jsx lines 240-251 show the exact Breadcrumb implementation. The context summary explicitly states: 'Breadcrumb: Renders only when route is not /. Shows a < Back to {label} button in mono uppercase.' The existing AppShell.tsx does not have this feature. It should be added as a component that consumes useLocation to determine back target."
+    },
+    {
+      "id": "shell-011",
+      "question": "Does the TopBar need changes for the breadcrumb pattern?",
+      "answer": "No changes needed to TopBar. The breadcrumb is separate and renders inside the main content area, not in the TopBar. The TopBar keeps its current structure: brand mark, context label, command palette trigger, sync status, theme toggle, user chip. The contextLabel function needs to add a mapping for /search \u2192 'SEARCH'.",
+      "confidence": "high",
+      "rationale": "The design prototype keeps TopBar unchanged (shell.jsx lines 70-99) and adds breadcrumb as a separate component (lines 240-251). The breadcrumb lives in the main content flow, not the sticky header. The only TopBar change needed is adding the /search context label mapping which is trivial."
+    },
+    {
+      "id": "shell-012",
+      "question": "What testing strategy is needed for the new Search page?",
+      "answer": "Create SearchPage.test.tsx with: (1) renders empty state when no item selected, (2) search input auto-focuses on mount, (3) client-side kind filtering works, (4) clicking result row selects item and shows detail, (5) item actions trigger correct mutations with toast notifications, (6) contextual renderers (Diff/Email/Meeting/Chat) display correctly, (7) funnel log renders with FunnelStage components, (8) verdict pill shows current state. Mock the useSearchItems hook and action mutation hooks. Test keyboard interaction (Enter to search, arrow keys for result navigation) is optional but recommended.",
+      "confidence": "high",
+      "rationale": "The existing page tests (pages/*.test.tsx) follow this pattern: render states, user interactions, data display, action handlers. The Search page has complex master/detail interaction, multiple context renderers, and action buttons - all testable with @testing-library/react. The design prototype shows client-side filtering (no server call per kind change) so tests should verify that behavior."
+    },
+    {
+      "id": "shell-013",
+      "question": "Are there accessibility considerations for the hover-expand rail?",
+      "answer": "Yes. Labels must remain accessible even when visually hidden (opacity: 0). Use aria-label on each NavLink button. Ensure focus-visible outline is visible during hover-expanded state. The rail expansion on hover should respect prefers-reduced-motion (disable transition). Keyboard users navigating via Tab should trigger the expanded state, not just mouse hover - consider :focus-within on wb-rail-nav to expand when any child has focus.",
+      "confidence": "high",
+      "rationale": "The existing AppSidebar already uses aria-label on NavLinks (line 70). The design prototype's CSS (app.css line 54) has focus-visible styling. However, the hover-expand is currently mouse-only - keyboard focus should also expand the rail for equity. The labels at opacity 0 with pointer-events: none (app.css line 50) are still in the DOM for screen readers, which is correct."
+    },
+    {
+      "id": "shell-014",
+      "question": "Are there performance concerns with the Search page?",
+      "answer": "Potential concerns: (1) rendering large result lists - virtualize if 100+ results, (2) client-side text search across all fields could be slow with 1000+ items - debounce input and consider server-side search, (3) the funnel log trace in detail view can be expensive if stages[] is long - limit visible stages or paginate. The design shows max 60 items in memory which is fine for client-side filtering. Use React.memo for ResultRow to prevent re-renders when selection changes.",
+      "confidence": "medium",
+      "rationale": "The design prototype uses client-side filtering (filter items by q.toLowerCase().includes) which works for small datasets but won't scale to 10k+ items. The existing useSearch hook already debounces at 200ms and does server-side search. The Search page should follow the same pattern. The funnel trace rendering performance depends on log complexity - the design's FunnelStage component should be memoized."
+    },
+    {
+      "id": "shell-015",
+      "question": "What CSS changes are needed for the hover-expand rail beyond the component?",
+      "answer": "Add custom CSS to index.css or a new shell.css module: .wb-rail-nav class with position: absolute, width transition (64px \u2192 216px on hover, 0.18s ease), box-shadow on hover (var(--shadow-pop)), overflow: hidden. .wb-rail-label with opacity transition (0 \u2192 1 on parent hover, 0.14s ease). .wb-rail-item.is-active::before for the 2px orange left bar. @media (prefers-reduced-motion: reduce) to disable transitions. The existing Tailwind setup can handle most of this via custom classes but the hover parent-child relationship may need CSS.",
+      "confidence": "high",
+      "rationale": "The design prototype's app.css lines 25-59 show the exact CSS needed. Tailwind v4 can handle most of this (group-hover, transition utilities) but the complex hover state (expand nav, fade in all labels, add shadow) is cleaner as custom CSS. The existing index.css has theme tokens and primitives - shell-specific layout CSS should be co-located or imported as a module."
+    },
+    {
+      "id": "shell-016",
+      "question": "How should the SearchPage component be structured for maintainability?",
+      "answer": "Extract sub-components into separate files: components/search/ResultRow.tsx, components/search/SearchItemDetail.tsx, components/search/contextual/ folder with DiffContext.tsx, EmailContext.tsx, MeetingContext.tsx, ChatContext.tsx. Keep filtering logic and state in the main SearchPage component. The contextual renderers are reusable (could be used in other item detail views) so they should be in components/search/ not inline. Use a barrel export (components/search/index.ts) to keep imports clean.",
+      "confidence": "medium",
+      "rationale": "The design prototype puts everything in one file (page-search.jsx is 400+ lines per the 150-line sample). The existing codebase prefers modular components (DiffHunks is separate, FactRow is separate). The contextual renderers are domain-specific and could grow - email might add attachments, diffs might add code review UI. Splitting now prevents the page from becoming unmaintainable."
+    },
+    {
+      "id": "shell-017",
+      "question": "Should the command palette search also show full item context or keep current minimal SearchHit?",
+      "answer": "Keep the command palette's SearchHit minimal (label, sublabel, route). The palette is for quick navigation, not inspection. The Search page is for deep exploration. The two use cases are distinct and should have different data shapes. Do not overload the SearchHit type with context/log/verdict - those are Search page concerns only.",
+      "confidence": "high",
+      "rationale": "The design prototype shows the palette returns only label/sub/route (shell.jsx lines 106-124) while the search page uses full items with context (data.js searchItems). The palette is a quick-jump tool (Cmd+K, type, hit Enter) - showing full diff hunks there would be overwhelming. The existing useSearch hook serves the palette well; create a separate hook for the Search page."
+    },
+    {
+      "id": "shell-018",
+      "question": "What happens to existing /sources and /messenger routes?",
+      "answer": "Keep the standalone routes (/sources, /messenger) for backward compatibility and direct access. Also add /settings/sources and /settings/messenger. The AppSidebar nav removes these routes but they remain accessible via: (1) Settings tabs, (2) direct URL navigation, (3) command palette search, (4) internal links (e.g., SourceForm 'connection picker' navigation). Update the Sources and Messenger page components to accept an 'embedded' prop that hides the page header when true.",
+      "confidence": "high",
+      "rationale": "The design summary explicitly states: 'Sources and Messenger pages are used both as standalone routes (/sources, /messenger) and embedded within Settings sub-tabs (via the embedded prop). This is a reuse pattern -- the same page components serve two contexts.' Removing the routes would break direct links and internal navigation. The rail removal is a UX simplification, not a route deletion."
+    },
+    {
+      "id": "new-pages",
+      "question": "What new React pages are needed?",
+      "answer": "Two new pages: (1) FiltersPage (IngestionFunnel) - unified interleaved funnel view with filters, enrichers, loopbacks, and funnel output table; (2) SearchPage - master/detail corpus search with full item context and funnel traces. Both are fully defined in the design prototype but do not exist in the current codebase.",
+      "confidence": "high",
+      "rationale": "The design prototype has complete implementations at page-filters.jsx (723 lines) and page-search.jsx (290 lines). The existing codebase has no /filters or /search routes in App.tsx. The Ingestion page exists but is focused on job monitoring, not the funnel. These are net-new pages with distinct purposes."
+    },
+    {
+      "id": "api-endpoints-filters",
+      "question": "What new API endpoints are needed for the filters/enrichers/funnel flow?",
+      "answer": "Six new GET endpoints: /api/filter-rules (already exists but needs enrichment), /api/enrichers (new - list all enrichers with config/stats), /api/loopbacks (new - list loop-back stages), /api/funnel-items (new - recent items with full stage traces), /api/enrichment-samples (new - sample context per enricher), /api/flow-matrix (new - source->output flow volumes for SourceFlow chart). Plus PATCH /api/filter-rules/{id} (enable/disable/reorder), DELETE /api/filter-rules/{id}, PATCH /api/enrichers/{id} (toggle), PATCH /api/loopbacks/{id} (toggle). The /api/filter-rules POST endpoint exists but needs validation for the new schema (prompt, action, sources array, confidence, origin).",
+      "confidence": "high",
+      "rationale": "The design data.js defines filterRules (9 entries), enrichers (4 entries), loopbacks (1 entry), funnelItems (9 items with stages arrays), enrichmentSamples (keyed by enricher ID). The existing filter_rules.py only has GET /filter-rules, POST /filter-rules, GET /filter-rules/{source_type}. The design's FilterRuleCard uses onToggle/onDelete/onMove callbacks, FilterDetailDialog reads processed items by filterId, EnricherDetailDialog reads samples by enricher.id. None of these data sources exist server-side yet."
+    },
+    {
+      "id": "api-endpoints-search",
+      "question": "What API endpoints are needed for the search page?",
+      "answer": "One enhanced endpoint: GET /api/search needs to return full Item objects with context payloads (diff hunks, email body, meeting, chat messages), llm_summary, tags, funnel log (stages array), and verdict. The existing /api/search (used by CommandPalette) only returns lightweight search results (id, summary, type). We need either a new /api/items/search with full hydration or a query param on /api/items (?q=...) that filters the corpus and includes all enrichment/funnel data. Also need item action endpoints: PATCH /api/items/{id} (priority, state), POST /api/items/{id}/snooze, DELETE /api/items/{id}. Some of these exist (PATCH /api/items/{item_id}) but may need schema updates for the new fields (tags, llm_summary, context, log, verdict).",
+      "confidence": "high",
+      "rationale": "The design searchItems array (8 entries in data.js) includes kind, state, priority, relevance, tags[], llm_summary (personalized), context (type-specific payloads with hunks/body/messages), log (funnel stages), and verdict (decision/priority/confidence/rationale). The existing Item domain model (items.py) has id, summary, priority, status, created_at, updated_at, but no tags/llm_summary/context/log/verdict fields. The SearchItemDetail component renders DiffContext, EmailContext, MeetingContext, ChatContext - all require structured context payloads not currently in the Item schema."
+    },
+    {
+      "id": "api-endpoints-feedback",
+      "question": "What API endpoints are needed for the feedback correction loop?",
+      "answer": "Four new endpoints: POST /api/feedback/corrections (record a filter classification override), DELETE /api/feedback/corrections/{item_id}/{filter_id} (undo), GET /api/feedback/tasks (list filter-tuning tasks), POST /api/feedback/tasks/{task_id}/apply (auto-apply refined prompt), POST /api/feedback/tasks/{task_id}/dismiss. The feedback store (feedback.js) is client-side only in the design - we need server persistence. Alternatively, tuning tasks could be action items with a special category='filter-tuning'.",
+      "confidence": "medium",
+      "rationale": "The design's feedback.js implements WBFeedback as a pure client-side store with overrides[], tasks[], promptPatches{}. The FunnelStage component calls fb.addOverride() and fb.removeOverride(), FilterTuningCard (on Actions page) calls fb.autoApply(taskId) and fb.dismissTask(taskId). For production, this state must persist server-side - corrections inform future LLM calls, tuning tasks need to survive page reload. The design doesn't specify persistence, so we must decide: dedicated feedback tables or reuse action_items with metadata."
+    },
+    {
+      "id": "domain-models",
+      "question": "What new domain models or schema changes are required?",
+      "answer": "Seven new or extended models: (1) FilterRule - add fields: prompt (str), action (enum: drop/include/label/context), sources (list), confidence (int 0-100), origin (enum: learned/explicit), matched (int), enabled (bool), label (optional str for action=label); (2) Enricher (new) - id, type, label, enabled, depth (shallow/deep), adds (list of field names), records (list of entity types), budget (max_calls, max_time_ms), enriched (int count), avg_calls, avg_ms; (3) LoopBack (new) - id, label, enabled, kind='loopback', trigger, condition, max_loops, looped (count), avg_loops; (4) FunnelStage (new, embedded) - filterId, outcome (enum), confidence, reason, context, label, weak (bool); (5) Item - add fields: tags (list), llm_summary (str), context (JSON), log/stages (list of FunnelStage), verdict (decision/priority/confidence/rationale); (6) Verdict (new, embedded) - decision (queued/dropped/triaged), priority, confidence, rationale; (7) FeedbackCorrection (new) - id, item_id, filter_id, from_outcome, to_outcome, to_label, created_at.",
+      "confidence": "high",
+      "rationale": "The design data structures are explicit in data.js. The existing FilterRule (filters.py) only has id, source_type, pattern, action, priority, created_from_interaction_id - missing prompt, sources array, confidence, origin, matched, enabled, label. The Item model (items.py) has 8 fields; the design searchItems need 15+ fields. Enrichers, LoopBacks, FunnelStage, Verdict, FeedbackCorrection do not exist in the domain/ package at all."
+    },
+    {
+      "id": "new-components",
+      "question": "What new shared React components are needed?",
+      "answer": "Fourteen new components: (1) ActionChip - color-coded outcome badge (drop/include/label/context/pass/skip/loopback); (2) ConfidenceBar - horizontal progress bar with percentage; (3) VerdictPill - final verdict indicator with decision/priority/confidence; (4) SourceChip - inline source icon+name chip; (5) StateDot - colored dot+label for item state; (6) FunnelStage - single stage in item funnel trace with correction UI; (7) ItemFunnelDialog - full per-item provenance modal; (8) FilterRuleCard - ordered filter card with reorder/toggle/delete; (9) FilterDetailDialog - filter's processed items with correction summary; (10) EnricherCard - enricher card with stats/budget/samples; (11) EnricherDetailDialog - enricher samples detail view; (12) LoopBackCard - loop-back stage card; (13) DiffHunks - collapsible diff viewer (may already exist in components/); (14) Portal - ReactDOM.createPortal wrapper for dialogs. Plus context renderers: DiffContext, EmailContext, MeetingContext, ChatContext for SearchPage.",
+      "confidence": "high",
+      "rationale": "The design primitives.jsx exports Icon, Skeleton, EmptyState, Dialog, Menu, SectionHeader, StateLoading, StateError, StateUnauthorized, Portal, useFeedbackStore. The existing codebase components/ has EmptyState, Skeleton, but not Dialog/Menu/Portal/SectionHeader. The design page-filters.jsx defines 9 sub-components inline (SourceChip, ActionChip, ConfidenceBar, VerdictPill, FilterRuleCard, FilterDetailDialog, FunnelStage, ItemFunnelDialog, EnricherCard, EnricherDetailDialog, LoopBackCard, AddRuleDialog). The design page-search.jsx defines 6 sub-components (StateDot, ResultRow, DiffContext, EmailContext, MeetingContext, ChatContext, ItemContext, SearchItemDetail). DiffHunks is referenced in both pages. The existing codebase has DiffHunks.tsx in components/ (117 lines), so we can reuse that."
+    },
+    {
+      "id": "hooks",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "Twelve new hooks: (1) useFilterRules() - GET /api/filter-rules with polling; (2) useEnrichers() - GET /api/enrichers; (3) useLoopbacks() - GET /api/loopbacks; (4) useFunnelItems() - GET /api/funnel-items; (5) useEnrichmentSamples(enricherId) - GET /api/enrichment-samples/{id}; (6) useFlowMatrix() - GET /api/flow-matrix for SourceFlow chart; (7) useToggleFilterRule() - PATCH /api/filter-rules/{id} mutation; (8) useDeleteFilterRule() - DELETE /api/filter-rules/{id}; (9) useReorderFilterRules() - PATCH /api/filter-rules/order (new endpoint); (10) useItemSearch(query, kind) - GET /api/items/search?q=...&kind=...; (11) useItemActions() - mutations for PATCH /api/items/{id}, DELETE /api/items/{id}, POST /api/items/{id}/snooze; (12) useFeedbackCorrections() - GET /api/feedback/corrections, POST mutations. Plus a custom useFeedbackStore() hook wrapping WBFeedback client store for React subscriptions.",
+      "confidence": "high",
+      "rationale": "The design pages reference data from window.WB (mock data). For production, each data source needs a hook. The FiltersPage reads filterRules, enrichers, loopbacks, funnelItems, enrichmentSamples - none of these have existing hooks. The SearchPage reads searchItems - the existing useSearch hook (for command palette) is different. The design feedback.js exports useFeedbackStore() as a React subscription wrapper. The existing hooks/ directory has useStats, useItems, useTriage, useActions, useSources, useFacts, useMessenger, useSettings, useTopology, useSearch, useWorkMode - none cover filters/enrichers/funnel/feedback."
+    },
+    {
+      "id": "storage-repositories",
+      "question": "What new storage repositories are needed?",
+      "answer": "Five new repository interfaces + PostgreSQL implementations: (1) FilterRulesStore - get_rules(), add_rule(), update_rule(id, enabled/prompt), delete_rule(id), reorder_rules(order); (2) EnrichersStore - get_enrichers(), update_enricher(id, enabled); (3) LoopBacksStore - get_loopbacks(), update_loopback(id, enabled); (4) FunnelTracesStore - get_recent_items_with_traces(limit), get_item_trace(item_id); (5) FeedbackStore - add_correction(), get_corrections_for_filter(filter_id), delete_correction(item_id, filter_id), add_tuning_task(), get_open_tasks(), apply_task(task_id), dismiss_task(task_id). The existing stores (storage/postgres/) have ItemStore, TriageStore, IngestionQueueStore, SourceStore, JobStore - none of these cover the new entities.",
+      "confidence": "high",
+      "rationale": "The design data structures (filterRules, enrichers, loopbacks, funnelItems, enrichmentSamples, feedback state) have no storage layer in the existing codebase. The existing filter_rules.py API references stores.filter_rules, which does not exist in storage/. The repository pattern (storage/README.md) requires one interface per domain entity. Enrichers are provider config, not stored data - but their stats (enriched count, avg_ms) need persistence. FunnelTraces are item metadata - could be JSON columns on items table or a separate funnel_stages table. Feedback corrections are user input that must persist across sessions."
+    },
+    {
+      "id": "database-migrations",
+      "question": "What database migrations are required?",
+      "answer": "Four new tables + schema changes: (1) filter_rules table - id, prompt, action, sources (JSON array), confidence, origin, matched, enabled, label, created_at, updated_at, order_index; (2) enricher_stats table - enricher_id (references provider config), enriched_count, avg_calls, avg_ms, last_run; (3) loopback_stats table - loopback_id, looped_count, avg_loops; (4) feedback_corrections table - id, item_id, filter_id, from_outcome, from_label, to_outcome, to_label, created_at; (5) ALTER items table - add columns: tags (JSON array), llm_summary (text), context (JSONB), funnel_log (JSONB array of stages), verdict_decision (enum), verdict_priority (enum), verdict_confidence (int), verdict_rationale (text). Alternative: store funnel_log/verdict in a separate item_verdicts table if items get too wide.",
+      "confidence": "high",
+      "rationale": "The existing migrations/ has schema for items, triage_cards, ingestion_queue, sources, jobs, memory tables. None of the new entities (FilterRule, Enricher stats, LoopBack stats, FeedbackCorrection, Item.tags/llm_summary/context/log/verdict) exist in the schema. The design's domain models require persistent storage for all fields shown in data.js. The Item extension (tags, llm_summary, context, log, verdict) adds 8 new columns - manageable as ALTER but consider normalization for funnel_log if stage count grows large."
+    },
+    {
+      "id": "charts-enhancements",
+      "question": "What chart/visualization components need to be added or modified?",
+      "answer": "Two new chart components: (1) MultiLineChart - multi-series smooth line chart with hover tooltip, legend, HTML axis overlay (used for throughput chart on Actions page); (2) SourceFlow - animated Sankey flow visualization showing items flowing from sources through WorkBench to outputs (Action Items, Triage Queue, Filtered Out, Errors) with animated dots, hover interactions, stalled-source detection (used on Overview or new Dashboard page). The existing charts.jsx (from design prototype) has both implementations. The existing codebase ui/src/components/ has ChartCard, but uses Recharts (AreaChart, BarChart, PieChart) - SourceFlow and MultiLineChart are custom SVG.",
+      "confidence": "high",
+      "rationale": "The design charts.jsx exports MultiLineChart (new, 132px default height, Catmull-Rom curves, per-series data[], hover tooltip with edge-flip) and SourceFlow (new, animated Bezier ribbons, flow matrix M[source][output], dot animation via RAF). The existing Overview.tsx uses Recharts. The design's ActionItems page references a throughput chart (MultiLineChart with incoming vs completion series). The design mentions SourceFlow on the Overview but the existing Overview.tsx doesn't have it - this is a new addition."
+    },
+    {
+      "id": "types-interfaces",
+      "question": "What new TypeScript types/interfaces are needed beyond domain models?",
+      "answer": "Fifteen new types: (1) FilterRule (client) - matches server but adds tuned:boolean for UI; (2) Enricher - id, type, label, enabled, depth, adds[], records[], budget, enriched, avg_calls, avg_ms; (3) LoopBack - id, label, enabled, kind, trigger, condition, max_loops, looped, avg_loops; (4) FunnelStage - filterId, outcome, confidence, reason, context, label, weak; (5) Verdict - decision, priority, confidence, rationale; (6) FunnelItem - id, summary, source, created_at, verdict, stages[]; (7) SearchItem - extends Item with tags[], llm_summary, context (union type), log[], verdict; (8) DiffContext - type='diff', author, team, status, url, hunks[]; (9) EmailContext - type='email', from, to, when, body; (10) MeetingContext - type='meeting', when, duration, location, attendees[], agenda; (11) ChatContext - type='chat', channel, messages[]; (12) ItemContext - union of Diff/Email/Meeting/ChatContext; (13) FeedbackCorrection - itemId, filterId, fromOutcome, toOutcome, etc; (14) FilterTuningTask - id, kind, status, proposedPrompt, ...; (15) FlowMatrix - M: Record<Source, Record<Output, number>>.",
+      "confidence": "high",
+      "rationale": "The design data.js defines explicit shapes for all entities. The existing api-types.ts (auto-generated from OpenAPI) will not have these until the server schema is updated. The UI components need client-side types immediately for development. The context union type (DiffContext | EmailContext | MeetingContext | ChatContext) is used by ItemContext component and SearchItemDetail. The FeedbackCorrection and FilterTuningTask types match the feedback.js store schema."
+    },
+    {
+      "id": "accessibility",
+      "question": "What accessibility considerations are critical for the new features?",
+      "answer": "Eight a11y requirements: (1) Keyboard navigation in FiltersPage - reorder buttons must be keyboard-accessible (arrow keys + Enter, or up/down buttons with proper focus management); (2) FilterDetailDialog, ItemFunnelDialog, EnricherDetailDialog - modal dialogs need focus trap, Escape to close, aria-modal, aria-labelledby; (3) SearchPage master/detail - result list must be keyboard-navigable (j/k keys or arrow keys), selected item indicated by aria-current or similar; (4) FunnelStage correction picker - 'correct' button + inline form must be keyboard-operable, focus returns to button on cancel; (5) ActionChip, VerdictPill, StateDot - ensure color + text/icon redundancy (not color-only); (6) SourceFlow animated chart - provide static text fallback or ARIA live region announcing flow changes; (7) MultiLineChart hover tooltip - ensure keyboard users can access data (keyboard-navigable data table alternative or aria-describedby); (8) Toast notifications - use role='status' (already in design), auto-dismiss with adequate duration (design: 2.2s).",
+      "confidence": "high",
+      "rationale": "The design prototype uses semantic HTML (button, form, table, dialog) and includes some ARIA (aria-label, aria-modal, role='dialog', role='status'). The existing codebase ADR 0046 enforces contrast requirements. The new features add complex interactions: reorderable lists (drag-and-drop alternative needed), modal dialogs (focus management critical), master/detail (keyboard nav), inline editing (correction picker). The design's SearchPage already supports j/k keyboard nav. The SourceFlow chart is purely visual - needs a11y fallback."
+    },
+    {
+      "id": "performance",
+      "question": "What are the primary performance concerns?",
+      "answer": "Six performance considerations: (1) FunnelItems query - fetching all recent items with full stage arrays could be expensive; implement pagination or limit to last 100 items, index on created_at; (2) EnrichmentSamples - per-enricher sample data is large (context key/value pairs); lazy-load on dialog open, not on page mount; (3) SearchPage corpus - full-text search across all items with context payloads is heavy; implement server-side search with limit (max 100 results), debounce client input (design: none specified, recommend 300ms); (4) ItemFunnelDialog - rendering 10+ FunnelStage components with timing calculations; memoize stageTimings(), use React.memo for FunnelStage; (5) SourceFlow animation - requestAnimationFrame loop for dot movement; pause animation when tab hidden (visibilitychange event); (6) FilterRules/Enrichers reordering - optimistic updates to avoid UI lag, rollback on server error.",
+      "confidence": "medium",
+      "rationale": "The design data.js has 9 funnelItems, 4 enrichers, 8 searchItems - realistic for a demo but production could have 1000s. The ItemFunnelDialog calls itemLog(item), stageTimings(log) on every render - needs memoization. The SourceFlow uses setInterval + RAF for dot animation - needs cleanup on unmount and pause on hidden. The existing codebase uses TanStack Query with 15s-60s polling - the new endpoints should follow this pattern but avoid polling for large datasets (funnel items, search results). The design's SearchPage has no pagination - needs to be added."
+    },
+    {
+      "id": "testing-strategy",
+      "question": "What testing strategy should be used for the new features?",
+      "answer": "Five-layer testing approach: (1) Unit tests for helpers - ruleById(), itemLog(), stageTimings(), enricherStageFor(), refinedPrompt() (feedback.js); use deterministic fixtures; (2) Component tests - ActionChip, ConfidenceBar, VerdictPill, SourceChip, StateDot, FunnelStage (with and without correction), FilterRuleCard, EnricherCard, LoopBackCard; test visual states, interactions, keyboard nav; (3) Integration tests - FilterDetailDialog with mock items, ItemFunnelDialog with mock log, EnricherDetailDialog with mock samples; test dialog open/close, item click handlers; (4) Page tests - FiltersPage with mock data (rules, enrichers, loopbacks, items), SearchPage with mock corpus; test filtering, reordering, correction flow, item actions; (5) API tests - new endpoints with test database, verify schema, pagination, error handling. Use MSW for mocking in component/page tests. Existing pattern: *.test.tsx files next to components/pages, using @testing-library/react + Vitest.",
+      "confidence": "high",
+      "rationale": "The existing codebase has comprehensive test coverage - every page has a .test.tsx file (14 test files total), components/ has test files for primitives, hooks/ has useTriageCard.test.ts and useWorkMode.test.ts. The design introduces ~20 new components and 4 helper functions - all need tests. The feedback correction loop is complex (multi-step user flow) - needs integration tests. The new API endpoints need server-side tests (pytest) to verify data integrity, especially reordering logic and feedback persistence."
+    },
+    {
+      "id": "new-component-live-tail",
+      "question": "What new React component is needed for the Live Funnel Tail?",
+      "answer": "Create a new `LiveTail.tsx` component that renders a structured table with 5 columns (Time, Item ID, Source, Funnel stage, Status). The component will: (1) flatten funnelItems into item+stage event pool, (2) stream new rows at 2.1s intervals via setInterval, (3) maintain max 60 rows, (4) auto-scroll to bottom on new rows, (5) apply 'wb-tail-new' CSS class to newest row for flash animation, (6) make rows clickable to open ItemFunnelDialog, (7) accept onOpenItem callback and paused prop, (8) use ActionChip for status column, (9) show enricher stages in tertiary color and filter stages in brand color.",
+      "confidence": "high",
+      "rationale": "The design prototype shows a complete LiveTail component with clear requirements. It's a structured table replacing the unstructured LogStream. All visual and interaction patterns are specified. The component maps directly to existing patterns (DataTable structure, auto-scroll from LogStream, ActionChip from filters page)."
+    },
+    {
+      "id": "new-component-action-chip",
+      "question": "Do we need a new ActionChip component for funnel stage status display?",
+      "answer": "Yes, create `ActionChip.tsx` component that accepts action (drop/include/label/pass/skip/context/loopback), optional label, optional confidence, and optional small flag. Use STAGE_META constant for colors and icons. Render as inline-flex chip with icon, action label, optional confidence percentage. Handle special case for 'label' action to show 'label: {label}' format.",
+      "confidence": "high",
+      "rationale": "ActionChip is referenced in the LiveTail design and is central to the filters/funnel visualization. It's a new primitive not present in the current codebase. The design prototype provides exact styling, color mappings, and behavior. This will be reusable across LiveTail, filter cards, and funnel traces."
+    },
+    {
+      "id": "stage-meta-constants",
+      "question": "What constants are needed to support ActionChip and funnel stage visualization?",
+      "answer": "Create two constant objects in a new `lib/funnel-constants.ts`: (1) ACTION_META with keys context/drop/include/label/loopback, each mapping to {label, icon, chipFg, chipBg, accent}; (2) STAGE_META extending ACTION_META with pass and skip. Color values: drop uses red tones (#ffb4ab fg, color-mix red bg), include uses success green, label uses purple (#b79cf7), context uses tertiary cyan, pass/skip use muted colors.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly defines STAGE_META and ACTION_META with exact color values and icon mappings. These are referenced by ActionChip, FunnelStage, and filter cards. Extracting to a constants file follows the pattern of CHART_COLORS in lib/chart-theme.ts and enables consistency across all funnel visualizations."
+    },
+    {
+      "id": "typescript-types-funnel",
+      "question": "What new TypeScript interfaces are needed for funnel data structures?",
+      "answer": "Add to useStats.ts or new hooks/useFunnel.ts: (1) FunnelStage interface {filterId: string, outcome: string, confidence?: number, reason: string, context?: string, label?: string, weak?: boolean}, (2) FunnelItem interface {id: string, summary: string, source: string, created_at: string, stages: FunnelStage[], verdict: {decision: string, priority?: string, confidence: number, rationale: string}}, (3) LiveTailRow interface {key: string, t: number, item: FunnelItem, stage: FunnelStage}.",
+      "confidence": "medium",
+      "rationale": "The design prototype shows clear data structures for funnelItems with stages arrays and verdict objects. These types don't exist in current api-types.ts. However, the exact server-side schema may differ, so medium confidence. We need these types for the component props and state management regardless of whether the API returns exactly this shape or we transform it client-side."
+    },
+    {
+      "id": "api-endpoint-funnel-items",
+      "question": "What new API endpoint is needed to fetch funnel items for the live tail?",
+      "answer": "Add GET /api/ingestion/funnel-items endpoint (or extend existing /api/items with ?include_stages=true) that returns recent items with their full funnel trace: stages array (filterId, outcome, confidence, reason, context, label, weak flag) and aggregated verdict. Should return last 50-100 items, ordered by created_at desc. The endpoint should be polled at 15-30s interval like other stats endpoints.",
+      "confidence": "medium",
+      "rationale": "The current codebase has /api/items but the api-types.ts doesn't show a stages field on Item. The design prototype's data.js shows funnelItems as a distinct array with full stage history. This data must come from somewhere. Medium confidence because: (1) we might extend existing endpoint vs create new one, (2) polling interval is a product decision (design shows 2.1s client-side animation, but data refresh can be slower), (3) exact field names may differ from prototype."
+    },
+    {
+      "id": "tanstack-query-hook",
+      "question": "What TanStack Query hook is needed to fetch and poll funnel items?",
+      "answer": "Add useFunnelItems() hook to useStats.ts using the pollWhenVisible pattern. Return UseQueryResult<FunnelItem[]>. Poll at 30s interval (staleTime: 30000). If extending /api/items, could be useItems({include_stages: true}). The hook should handle loading/error states per the five-state taxonomy and provide the data for LiveTail component to flatten into events.",
+      "confidence": "high",
+      "rationale": "All data-fetching in the current codebase uses TanStack Query with the pollWhenVisible helper (see useActivity, useJobs, etc). The pattern is established and consistent. The only uncertainty is the exact endpoint path and parameter shape, but the hook structure is certain. The 30s poll matches other stats endpoints while keeping data fresh enough for a 'live' experience."
+    },
+    {
+      "id": "modify-ingestion-page",
+      "question": "How should Ingestion.tsx be modified to integrate the Live Funnel Tail?",
+      "answer": "Replace the 'Live Ingestion Log' section (lines 373-377) with a new 'Live Funnel Tail' section. Remove LogStream and activityLogLine. Add LiveTail component with paused state toggle (live/paused button in SectionHeader right slot), tailItem state for dialog, and onOpenItem callback. Move the section higher in page layout (after stat cards, before warnings). Add ItemFunnelDialog component import/render at bottom (conditional on tailItem). Keep four stat cards at top but revise Processing Rate to show real-time rate from funnel data.",
+      "confidence": "high",
+      "rationale": "The design prototype shows exact layout: stat cards, then side-by-side LiveTail + Queue chart, then warnings, then full ingestion funnel. This is a clear structural change from current sequential sections. The live/paused toggle, dialog trigger, and section positioning are all explicitly shown in the design. High confidence because it's a direct replacement of one section with clear before/after states."
+    },
+    {
+      "id": "item-funnel-dialog",
+      "question": "Is a new ItemFunnelDialog component needed or does it already exist?",
+      "answer": "Need to check if ItemFunnelDialog exists (referenced in design as window.ItemFunnelDialog). If not, create a new dialog component that shows full item provenance: header with item metadata + summary + VerdictPill, treatment log with all FunnelStage components in vertical timeline, aggregated verdict section with rationale. The dialog should accept item prop and onClose callback. Use existing Dialog primitive from ui/dialog.tsx.",
+      "confidence": "medium",
+      "rationale": "The design prototype references window.ItemFunnelDialog as if it exists globally, but it's not clear if this is already built or needs creation. The current codebase inventory doesn't show this component. Medium confidence because: (1) it might exist in a branch not yet merged, (2) the exact component structure is shown in page-filters.jsx design but not in current codebase, (3) creating it is straightforward given the design spec, but we need to verify current state first."
+    },
+    {
+      "id": "css-tail-animation",
+      "question": "What CSS is needed for the live tail flash animation?",
+      "answer": "Add to index.css: (1) .wb-tail-new class with animation: wb-tail-flash 1.1s ease; (2) @keyframes wb-tail-flash with 0% background: color-mix(in srgb, var(--primary) 12%, transparent), 100% background: transparent. Also add @media (prefers-reduced-motion: reduce) override to disable animation. This creates a subtle flash when new rows appear, matching the design pattern used in LogStream's polite updates.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly references wb-tail-new class and describes the flash behavior. The current index.css already has animation patterns (wb-pulse for the live indicator dot) and prefers-reduced-motion guards. This follows established patterns and accessibility practices. The color-mix technique matches the live button's background treatment."
+    },
+    {
+      "id": "live-pause-toggle",
+      "question": "What UI control is needed for live/paused toggle and how should it work?",
+      "answer": "Add a toggle button in the SectionHeader right slot: inline-flex with dot indicator (7px circle, animated pulse when live, static when paused), 'live'/'paused' label, and Play/Pause icon. Use aria-pressed for accessibility. Button style: rounded border, green-tinted background when live (color-mix success 12%), transparent when paused. State stored in tailLive boolean, toggled by setTailLive. When paused=true, LiveTail's useEffect returns early without starting setInterval.",
+      "confidence": "high",
+      "rationale": "The design prototype shows exact button structure with inline styles, color values, and icon names. The animation reference (wb-pulse 1.6s) is already in index.css. The interaction pattern (click to pause, useEffect gated by paused prop) is simple and explicit in the design code. This is a standard play/pause control with clear accessibility and visual treatment."
+    },
+    {
+      "id": "funnel-item-pool-logic",
+      "question": "How should the component flatten funnelItems into a streamable event pool?",
+      "answer": "In LiveTail: (1) useMemo to iterate funnelItems, for each item iterate its stages, push {item, stage} objects to pool array; (2) use a cursor ref (initialized to random pool index) to track position; (3) on mount, generate initial 9 rows with sequential cursor increments and decreasing timestamps (now - index*4200ms); (4) on interval, append mkRow(cursor++, Date.now()), slice to last 60; (5) mkRow generates unique key from cursor+item.id and creates {key, t, item, stage} row object; (6) increment cursor.current modulo pool.length to cycle.",
+      "confidence": "high",
+      "rationale": "The design prototype provides exact implementation in LiveTail function: useMemo for pool, useRef for cursor, useState with initializer for rows, mkRow helper, setInterval logic, slice(-60) cap. This is a complete algorithm with no ambiguity. The only adaptation needed is replacing window.WB.funnelItems with the TanStack Query hook result."
+    },
+    {
+      "id": "testing-strategy",
+      "question": "What testing approach should be used for LiveTail and related components?",
+      "answer": "Create LiveTail.test.tsx with: (1) render test with mock funnelItems, verify 5 column headers; (2) paused prop test: verify no new rows after 3 seconds when paused=true; (3) click handler test: click row, verify onOpenItem called with correct item; (4) animation test: verify newest row has wb-tail-new class; (5) empty state test with no items. Create ActionChip.test.tsx: render each action type, verify icon/label/colors. Mock useFunnelItems hook in MSW test server. Use vi.useFakeTimers for interval tests.",
+      "confidence": "medium",
+      "rationale": "Current codebase has comprehensive component tests (see LogStream.test.tsx, DataTable.test.tsx). The testing patterns are established. Medium confidence because: (1) testing setInterval with fake timers can be tricky, (2) scrolling behavior tests may need special DOM mocking, (3) exact assertions depend on final implementation details. However, the approach is clear and precedented."
+    },
+    {
+      "id": "accessibility-considerations",
+      "question": "What accessibility features are needed for the Live Funnel Tail?",
+      "answer": "Add: (1) role='table' on container with role='columnheader' on headers and role='row'/'cell' on data rows (or use semantic table elements); (2) aria-label='Live funnel tail' on section; (3) aria-live='polite' on scrollable container so screen readers announce new rows without interrupting; (4) aria-pressed on live/paused toggle button; (5) keyboard focus ring on clickable rows with :focus-visible; (6) title attribute on each row button describing the action; (7) respect prefers-reduced-motion for auto-scroll and flash animation.",
+      "confidence": "high",
+      "rationale": "The design prototype uses button elements for rows (good for a11y), includes title attributes, and references aria-expanded. Current codebase shows strong a11y patterns: LogStream uses role='log' + aria-live, DataTable uses semantic table elements, focus-visible rings are global. The Live Tail is essentially a clickable, live-updating table, so standard table a11y patterns apply. Prefers-reduced-motion is already used in LogStream and index.css."
+    },
+    {
+      "id": "performance-concerns",
+      "question": "What performance optimizations are needed for streaming updates?",
+      "answer": "Implement: (1) useMemo for funnelItems pool flattening to prevent re-computation on unrelated renders; (2) useRef for cursor to avoid triggering re-renders on increment; (3) 60-row cap via slice(-60) to bound memory and DOM nodes; (4) cleanup function in useEffect to clearInterval on unmount/pause; (5) requestAnimationFrame for scroll updates instead of immediate scrollTop assignment; (6) React.memo on ActionChip if re-render profiling shows issues; (7) consider virtualizing rows if 60 rows causes scroll lag (unlikely but monitor).",
+      "confidence": "medium",
+      "rationale": "The design prototype uses useMemo, useRef, and cleanup patterns correctly. These are React best practices. The 60-row cap is explicit. However, medium confidence because: (1) we haven't profiled the actual performance, (2) virtualization may be over-engineering for 60 rows, (3) the optimal polling interval (client animation vs server poll) affects data freshness vs load. The fundamentals are sound, but real-world performance depends on data volume and user behavior."
+    },
+    {
+      "id": "icon-source-mapping",
+      "question": "How should source types map to lucide icons in the Source column?",
+      "answer": "Create SRC_ICON constant mapping source strings to icon names: {github: 'Github', email: 'Mail', calendar: 'Calendar', chat: 'MessageCircle', phabricator: 'FileCode'}. Use in LiveTail to render Icon component with source-specific icon + source name label. Default to 'Database' icon for unknown sources. This matches the pattern in design prototype and existing source type displays.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly shows SRC_ICON mapping with these exact values. The current codebase uses lucide-react icons throughout (see existing Icon usage in HealthBadge, StatCard, etc). Source types are stable (github/email/calendar/chat from useSourcesRollup). This is a simple lookup table with clear precedent."
+    },
+    {
+      "id": "verdict-pill-component",
+      "question": "Do we need a VerdictPill component for displaying final item verdicts?",
+      "answer": "Yes, if ItemFunnelDialog is created, add VerdictPill.tsx component that accepts verdict object {decision, priority?, confidence, rationale} and optional large flag. Render color-coded badge: queued=tertiary, dropped=red, triaged=green. Show decision label + priority (if present) + confidence percentage. Use existing Badge primitive with custom colors via style prop. Component is used in funnel dialogs and search results.",
+      "confidence": "medium",
+      "rationale": "VerdictPill is referenced in the design prototype's page-filters.jsx and would be needed for ItemFunnelDialog. However, the current codebase might already represent verdicts differently (e.g., just status badges). Medium confidence because: (1) we need to verify ItemFunnelDialog requirements first, (2) the verdict data structure may not exist yet in the API, (3) this might be phase 2 work if funnel provenance isn't fully implemented yet."
+    },
+    {
+      "id": "est-priority-label",
+      "question": "How should we indicate that priorities are model-estimated (not user-set) in the UI?",
+      "answer": "Add a tooltip and 'est' prefix to priority badges. Include explanatory subtitle under page title: 'Priorities are estimated by the model from relevance and urgency signals \u2014 not user-set.' The tooltip reads: 'Estimated priority \u2014 model-scored from relevance + urgency signals, not user-set'",
+      "confidence": "high",
+      "rationale": "The design prototype shows this pattern clearly in page-triage.jsx lines 44, 166. This follows ADR 0051 patterns for contextual annotation without UI clutter. The 'est' prefix is lightweight (3 chars) and the tooltip provides full explanation on demand. The subtitle provides context without requiring interaction."
+    },
+    {
+      "id": "theme-clustering",
+      "question": "What data structure and UI pattern should we use for 'Focus by theme' semantic clustering?",
+      "answer": "New data structure: themes array with {id, label, summary, cards[], counts{}} where counts is keyed by type (diff/task/meeting/note). UI: new section at top of left rail with clickable theme cards showing type counts, theme label, and summary. Clicking activates theme filter (shows only cards in that theme). State: themeFilter (string|null) in component state.",
+      "confidence": "high",
+      "rationale": "Design prototype data.js lines 436-440 shows the exact structure: triageThemes with id, label, summary, cards (array of card IDs), and counts (object with type counts). The UI pattern in page-triage.jsx lines 178-200 shows a distinct 'Focus by theme' section with interactive theme cards. This is a pure client-side filter (no new endpoint needed) \u2014 just adds theme membership check to existing filter logic."
+    },
+    {
+      "id": "throughput-chart",
+      "question": "What chart should replace Signal Velocity in the right analytics column?",
+      "answer": "Multi-line chart showing 24h throughput with three series: Ingestion (orange #ff6a2b), Triage queue (purple #9a7af0), Triaged (cyan #71d2ff). Use the new MultiLineChart component (from charts.jsx) with smooth Catmull-Rom curves, hover tooltips, and HTML axis labels.",
+      "confidence": "high",
+      "rationale": "Design prototype page-triage.jsx lines 237-244 shows the exact chart with three series and 24 data points per series. The MultiLineChart component is already designed (charts.jsx lines 279-349) with all required features: smooth lines, hover interaction, tooltips, legend. This provides more insight than the single Signal Velocity sparkline \u2014 shows the full pipeline flow."
+    },
+    {
+      "id": "item-detail-dialog",
+      "question": "How should clicking a triage card summary open the item's full funnel trace?",
+      "answer": "Make the card summary a clickable button that calls onOpenItem callback. Pass a handler that looks up the item from searchItems or funnelItems arrays by card.item_id, then passes it to window.ItemFunnelDialog (already exists, used in Overview and Ingestion pages). Add state [triageItem, setTriageItem] to page component.",
+      "confidence": "high",
+      "rationale": "Design prototype page-triage.jsx lines 47, 92-95, 256 shows the exact pattern: summary is a button, onOpenItem handler looks up item by card.item_id, opens ItemFunnelDialog. This reuses the existing ItemFunnelDialog component (referenced in codebase inventory) \u2014 no new dialog needed. The searchItems/funnelItems lookup pattern matches the existing Overview page implementation."
+    },
+    {
+      "id": "new-react-components",
+      "question": "What new React components need to be created for this branch?",
+      "answer": "No new standalone components needed. Add inline MultiLineChart usage to Triage.tsx (import from charts module when charts are migrated). The theme filtering UI is inline markup (not extracted to a component). ItemFunnelDialog already exists as a shared component.",
+      "confidence": "medium",
+      "rationale": "The design prototype uses inline markup for theme cards and reuses existing components (MultiLineChart, ItemFunnelDialog). However, we'll need to migrate/create MultiLineChart in the production codebase \u2014 it doesn't exist yet in ui/src/components/. This could be added to a new ui/src/components/MultiLineChart.tsx or to an existing chart utilities file."
+    },
+    {
+      "id": "typescript-types",
+      "question": "What new TypeScript interfaces are needed?",
+      "answer": "Add to useTriage.ts: TriageTheme interface {id: string, label: string, summary: string, cards: string[], counts: Record<string, number>}. Extend TriageCard to include item_id field (appears to already exist but verify). No changes to API types needed \u2014 themes are client-side derived.",
+      "confidence": "high",
+      "rationale": "The design data structure (data.js line 436-440) shows the theme shape clearly. The card.item_id field is already used in the design prototype (line 92-94) and appears in the current TriageCard type (useTriage.ts line 39 shows 'item_id?: string | null'). Themes are not returned from the server \u2014 they're computed client-side from card content, so no API schema changes needed."
+    },
+    {
+      "id": "api-endpoints",
+      "question": "What new API endpoints are required?",
+      "answer": "No new endpoints required. The /api/triage/pending endpoint needs to include item_id in the response (verify current response includes this). Themes are computed client-side from the existing card data. Throughput timeseries data should come from existing /api/stats/timeseries endpoint with appropriate metric parameters.",
+      "confidence": "high",
+      "rationale": "The design prototype shows all data flowing through existing endpoints. Themes (data.js line 436) are mock client-side data. The throughput chart (page-triage.jsx line 240-243) uses hardcoded arrays in the prototype \u2014 in production this would come from the existing stats/timeseries endpoint queried for ingestion/queue/triaged metrics. The item_id field is already in the TriageCard type definition."
+    },
+    {
+      "id": "query-hooks",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "Possibly add useThemes() hook to fetch or compute themes, but more likely themes are computed via useMemo from the existing useTriagePending() data. For throughput chart, use existing useMetricsTimeseries() hook called three times (once per series: ingestion_rate, queue_depth, triage_rate) or add a single useTriageThroughput() hook that batches the queries.",
+      "confidence": "medium",
+      "rationale": "The design shows themes as derived data (computed from card relationships, not fetched). However, the actual theme computation logic (LLM clustering) isn't shown in the prototype \u2014 it's just mock data. For MVP, themes could be hardcoded or computed client-side from card metadata. The throughput chart needs three timeseries \u2014 could reuse existing hook or create a convenience wrapper. Need to verify what metrics the backend actually provides."
+    },
+    {
+      "id": "existing-modifications",
+      "question": "What existing components need modification?",
+      "answer": "Triage.tsx: (1) Add explanatory subtitle about estimated priorities, (2) Add 'est' prefix and tooltip to priority badges, (3) Add theme filtering section to left rail above sources, (4) Replace Signal Velocity card with Throughput multi-line chart, (5) Make card summary clickable with onOpenItem handler, (6) Add triageItem dialog state. TriageCardItem subcomponent needs summary as button and priority badge changes. No changes needed to TriageDetail.tsx.",
+      "confidence": "high",
+      "rationale": "Comparing current Triage.tsx (lines 1-554) to design prototype page-triage.jsx (lines 1-332), these are the exact diffs. The current file already has the three-column layout, filter rail, keyboard navigation, and right analytics column \u2014 we're just enhancing what's there. TriageDetail is unchanged in this branch (it's already complete per design)."
+    },
+    {
+      "id": "testing-strategy",
+      "question": "What testing approach should we take for these changes?",
+      "answer": "Unit tests: (1) Theme filtering logic (ensure clicking theme filters cards correctly, clearing works), (2) Priority badge rendering (verify 'est' prefix and tooltip), (3) Item lookup by card.item_id, (4) MultiLineChart hover interaction. Integration tests: (1) Full triage flow with theme filter active, (2) Opening item detail dialog from card summary. Visual regression: Compare theme cards and throughput chart rendering.",
+      "confidence": "high",
+      "rationale": "Following existing test patterns in the codebase (pages/*.test.tsx). The theme filtering is pure client-side logic (useMemo) \u2014 easy to unit test. Priority badge change is a rendering test. MultiLineChart is a new component requiring interaction tests (hover, tooltip positioning). The ItemFunnelDialog integration is already tested in Overview.test.tsx \u2014 can follow that pattern."
+    },
+    {
+      "id": "accessibility",
+      "question": "What accessibility considerations are needed?",
+      "answer": "Theme cards: ensure buttons have accessible labels and keyboard navigation (already handled by native button). Priority tooltips: tooltip content should be accessible via aria-describedby. MultiLineChart: ensure chart has accessible data table fallback or aria-label describing the data. Item detail dialog: ensure dialog is announced to screen readers (already handled by existing Dialog component). Theme filter active state: announce to screen readers when theme filter is applied.",
+      "confidence": "high",
+      "rationale": "Following WCAG 2.1 AA and existing codebase patterns. The design prototype shows semantic HTML (button elements for theme cards, native checkbox inputs). Tooltips should use Radix Tooltip which provides proper aria attributes. Charts need text alternatives per WCAG 1.1.1. The existing Dialog component (from shadcn/ui) already has proper ARIA roles. Screen reader announcements for filter state changes can use aria-live regions."
+    },
+    {
+      "id": "performance-concerns",
+      "question": "Are there any performance concerns with these changes?",
+      "answer": "Theme filtering adds one more condition to the existing useMemo filter pipeline \u2014 negligible impact (cards array is small, max ~20 items). MultiLineChart hover interaction is performant (uses CSS transforms for tooltip positioning, React state for hover index). Item lookup by item_id is O(n) but n is small. No concerns. Consider: if themes are LLM-computed server-side in future, add caching/polling strategy.",
+      "confidence": "high",
+      "rationale": "The existing Triage.tsx already filters cards client-side with multiple conditions (lines 354-368) \u2014 adding theme membership check is just one more filter. The design shows max 6 triage cards (data.js line 99-172), so array operations are trivial. MultiLineChart hover uses requestAnimationFrame implicitly via React's state updates and CSS transitions \u2014 no manual DOM manipulation. The only future concern is if themes become server-computed (LLM clustering), which would need an API endpoint and query hook."
+    },
+    {
+      "id": "remove-work-mode",
+      "question": "Should Work Mode functionality be removed from ActionItems page?",
+      "answer": "Yes. Remove the WorkModeCard component, useWorkMode hook import, workMode state, and the conditional Work Mode UI rendering (lines 381-408). Keep only the standard bucketed action items view.",
+      "confidence": "high",
+      "rationale": "The design prototype explicitly removes Work Mode from the Actions page. The prototype shows only the standard three-bucket layout (ACTIVE NOW / TODAY / LATER) with no Work Mode toggle or Terminal Focus card. This aligns with branch 10's stated goal of 'removed work mode'."
+    },
+    {
+      "id": "add-multiline-chart",
+      "question": "What new component is needed for the throughput chart?",
+      "answer": "Create a new MultiLineChart component in /home/anshulverma/workspace/workbench/ui/src/components/MultiLineChart.tsx based on the design prototype. This is a pure SVG chart with Catmull-Rom smoothed paths, HTML axis overlay for undistorted labels, and interactive hover tooltip with vertical rule and per-series dots.",
+      "confidence": "high",
+      "rationale": "The design prototype shows a multi-series chart (incoming vs completion rate) using the MultiLineChart component. The existing UI uses a StatCard with Sparkline showing only efficiency_peak. The prototype's MultiLineChart has: SVG with preserveAspectRatio=none for full-width stretch, HTML y-axis labels positioned via %, smoothPath() helper for Catmull-Rom curves, hover interaction with crosshair cursor and floating tooltip that flips to left when near right edge, and a legend row below."
+    },
+    {
+      "id": "throughput-chart-data",
+      "question": "Where should throughput chart data come from?",
+      "answer": "Use mock data (hardcoded 12-hour arrays) in the component initially. The prototype shows: incoming = [2,3,5,4,6,7,5,8,6,7,9,6] and completed = [1,2,3,4,5,5,6,6,7,6,7,8]. Add a net summary (inTotal - doneTotal) in the CardHeader. Future enhancement: create a server endpoint GET /api/stats/throughput-timeseries.",
+      "confidence": "medium",
+      "rationale": "The design prototype uses hardcoded arrays (lines 125-128 in page-actions.jsx). No existing API endpoint provides this data. The prototype shows 'Throughput (12h)' with in/done/net counts in the header. Mock data is acceptable for v1 to unblock UI development; server-side endpoint can be added when real throughput tracking is available."
+    },
+    {
+      "id": "throughput-card-replacement",
+      "question": "How should the existing ThroughputCard be replaced?",
+      "answer": "Replace the ThroughputCard component (lines 172-198) with a new Card that uses MultiLineChart. Header: 'Throughput (12h)' title + inline counts (in/done/net with color coding). Content: <MultiLineChart height={68} xLabels={...} series={...} /> with two series: 'Incoming actions' (#ff6a2b) and 'Completion rate' (#9ad08a).",
+      "confidence": "high",
+      "rationale": "The design prototype shows a dedicated Card with divided CardHeader containing title + stats, and CardContent with the MultiLineChart. The existing ThroughputCard is a StatCard showing efficiency_peak with a Sparkline. The new design has richer data: two series showing incoming vs completion rate, plus aggregate counts. Card structure matches the prototype exactly: CardHeader with flexDirection row + justifyContent space-between, stats in Mono with color coding (orange for incoming, green for completed)."
+    },
+    {
+      "id": "filter-tuning-section",
+      "question": "Should filter tuning tasks section be added?",
+      "answer": "Yes. Add a conditional section above the throughput chart that renders when fb.openTasks().length > 0. Use FilterTuningCard component for each task. Section header: 'Filter Tuning ({count})'. Cards show task.filterId, description, proposed prompt, and two actions: 'Auto-apply update' (primary) and 'I'll do it manually' (ghost).",
+      "confidence": "high",
+      "rationale": "The design prototype includes a 'Filter Tuning' section (lines 141-150) that displays tuning tasks from the feedback store. This is part of the closed-loop learning system for adaptive noise filtering. The FilterTuningCard component is defined in the prototype (lines 68-93) and integrates with WBFeedback store. This is a new pattern across the v3 design for surfacing LLM-generated prompt refinements based on user corrections."
+    },
+    {
+      "id": "feedback-store-implementation",
+      "question": "How should the feedback store be integrated?",
+      "answer": "Create /home/anshulverma/workspace/workbench/ui/src/lib/feedback-store.ts as a TypeScript adaptation of the prototype's feedback.js. Export a singleton store with subscribe/addOverride/removeOverride/autoApply/dismissTask methods, plus a React hook useFeedbackStore() that subscribes and forces re-render. The store manages overrides[], tasks[], and promptPatches{} in module-level state.",
+      "confidence": "medium",
+      "rationale": "The prototype uses a plain JS feedback store (feedback.js) loaded before React. The TypeScript codebase needs an equivalent. The store is a pub/sub singleton that tracks user corrections to filter classifications, generates tuning tasks with refinedPrompt(), and allows auto-applying prompt patches. The useFeedbackStore() hook (used in ActionsPage line 99) is a simple subscribe wrapper that returns the API object and forces re-render on state changes."
+    },
+    {
+      "id": "new-components",
+      "question": "What new components need to be created?",
+      "answer": "Create: (1) MultiLineChart.tsx - multi-series SVG chart with smooth curves, HTML axis overlay, hover tooltip; (2) FilterTuningCard.tsx - card showing a tuning task with proposed prompt and apply/dismiss actions; (3) SectionHeader.tsx - mono uppercase micro-label section header (already exists in primitives.jsx, verify in codebase).",
+      "confidence": "high",
+      "rationale": "The prototype references these components. MultiLineChart is a new chart type not in the existing codebase. FilterTuningCard is specific to the feedback loop pattern. SectionHeader appears in the prototype's primitives.jsx as a shared component. All three are needed to implement the design as specified."
+    },
+    {
+      "id": "new-types",
+      "question": "What new TypeScript types/interfaces are needed?",
+      "answer": "Define: FeedbackOverride (itemId, itemSummary, filterId, filterPrompt, fromOutcome, fromLabel, toOutcome, toLabel, at), FilterTuningTask (extends FeedbackOverride + id, kind, status, proposedPrompt), ThroughputDataPoint (hour offset + value), MultiLineChartSeries (name, color, data[]).",
+      "confidence": "high",
+      "rationale": "The feedback store state shape is defined in the prototype (feedback.js lines 7, 31-40). The MultiLineChart component prop types are inferred from the prototype usage (lines 162-165). These types don't exist in the current codebase and are needed for the new functionality."
+    },
+    {
+      "id": "api-endpoints",
+      "question": "What new API endpoints are needed (server-side)?",
+      "answer": "None immediately required. The feedback store is client-side only (no persistence). Throughput chart uses mock data. Future enhancement: (1) GET /api/stats/throughput-timeseries?window=12h to replace mock data; (2) POST /api/filter-rules/{id}/prompt to persist auto-applied prompt patches.",
+      "confidence": "medium",
+      "rationale": "The design prototype shows all feedback store operations as client-side only (no API calls in feedback.js). The throughput data is hardcoded. The prototype is a design artifact, not a production implementation. For production: throughput needs a real endpoint, and prompt patches need persistence. But for v1 UI implementation, no server changes are required - just client-side state and mock data."
+    },
+    {
+      "id": "tanstack-query-hooks",
+      "question": "What new TanStack Query hooks are needed?",
+      "answer": "None for v1. The feedback store uses a custom pub/sub pattern (useFeedbackStore hook), not TanStack Query. If throughput endpoint is added later, create useThroughputTimeseries(window, bucket) hook following the pattern in useStats.ts.",
+      "confidence": "high",
+      "rationale": "The feedback store is client-side mutable state that doesn't fit the server-state caching model of TanStack Query. The prototype implements it as a singleton with subscribe() pattern. Throughput uses mock data initially. Only if/when a real throughput API is added would a Query hook be needed."
+    },
+    {
+      "id": "existing-mods-throughput",
+      "question": "What modifications are needed to the existing ThroughputCard?",
+      "answer": "Delete the existing ThroughputCard component (lines 172-198). Replace its usage (line 432) with a new inline Card implementation in the main ActionItems return statement, using MultiLineChart and the throughput mock data pattern from the prototype.",
+      "confidence": "high",
+      "rationale": "The existing ThroughputCard is a StatCard showing efficiency_peak with a single Sparkline. The new design is structurally different: a full Card with multi-series line chart and aggregate stats in the header. The prototype shows this as an inline Card definition (page-actions.jsx lines 152-167), not a separate component. Simplest approach: delete old component, inline the new Card at the usage site."
+    },
+    {
+      "id": "existing-mods-grid",
+      "question": "What changes are needed to the two-column stat grid?",
+      "answer": "Remove the grid (line 431-434). The throughput chart becomes a full-width Card above the bucketed sections. Delete the WorkModeCard from the grid. The filter tuning section (if present) appears above the throughput card.",
+      "confidence": "high",
+      "rationale": "The prototype has no two-column grid. Layout is: header -> optional filter tuning section -> full-width throughput card -> bucketed action sections. The existing grid (sm:grid-cols-2) holds ThroughputCard and WorkModeCard. Both are removed/replaced."
+    },
+    {
+      "id": "testing-strategy",
+      "question": "What testing strategy should be used?",
+      "answer": "Add unit tests: (1) MultiLineChart.test.tsx - test rendering with series data, hover interaction, tooltip positioning; (2) FilterTuningCard.test.tsx - test rendering task data, onApply/onDismiss callbacks; (3) feedback-store.test.ts - test addOverride, autoApply, dismissTask, subscribe/emit. Update ActionItems.test.tsx to verify Work Mode removal, throughput card rendering, filter tuning section conditional rendering.",
+      "confidence": "high",
+      "rationale": "The existing codebase has comprehensive test coverage (all pages and components have .test.tsx files). New components need matching tests. The feedback store is a non-trivial state manager that needs unit tests for its pub/sub and state mutation logic. The MultiLineChart has interactive hover behavior that should be tested. Following the existing test patterns in src/components/*.test.tsx and src/pages/*.test.tsx."
+    },
+    {
+      "id": "a11y-considerations",
+      "question": "What accessibility considerations are needed?",
+      "answer": "MultiLineChart: add aria-label with data summary, ensure tooltip is keyboard-accessible (add focus/blur handlers to trigger hover state), ensure color is not the only differentiator (legend labels). FilterTuningCard: ensure buttons have clear labels, task description is programmatically exposed. Filter tuning section: use semantic <section> with aria-label.",
+      "confidence": "medium",
+      "rationale": "The existing codebase shows strong a11y practices (aria-labels on action rows, semantic HTML, focus management). The prototype's MultiLineChart has mouse-only hover interaction - keyboard users need an equivalent. Color-coding alone is insufficient per WCAG (legend text provides the secondary indicator). The FilterTuningCard buttons are adequately labeled in the prototype. The filter tuning section should follow the existing SectionHeader pattern with proper semantics."
+    },
+    {
+      "id": "performance-concerns",
+      "question": "Are there any performance concerns?",
+      "answer": "Monitor: (1) MultiLineChart smoothPath() calculation on every mousemove - consider debouncing or memoizing the path string; (2) useFeedbackStore causing re-renders across all subscribed components - ensure listeners only subscribe to relevant state slices; (3) Rendering large task lists in filter tuning section - add virtualization if >20 tasks. For v1, these are acceptable; optimize if metrics show issues.",
+      "confidence": "medium",
+      "rationale": "The prototype's MultiLineChart calculates smoothPath() and tooltip position on every mousemove (charts.jsx lines 293-298). For small datasets (12 points), this is fine. The feedback store emits to all listeners on any state change (feedback.js line 9) - if multiple components subscribe, they all re-render. The prototype is a single-page app with no optimization, suitable for design validation but may need refinement for production. React's built-in batching should handle the re-render storm from feedback store updates. No virtual scrolling in the prototype - fine for expected task counts (<10)."
+    },
+    {
+      "id": "header-layout",
+      "question": "What changes are needed to the page header?",
+      "answer": "Keep the existing header (lines 414-429): h1 with count, category filter dropdown, spacing. No 'New action' button in the header - the FAB at bottom-right remains. Match the prototype's header structure exactly (page-actions.jsx lines 132-139).",
+      "confidence": "high",
+      "rationale": "The prototype header (lines 132-139) matches the existing implementation: h1 + count, category select, 'New action' button with marginLeft: auto. The existing implementation has the button in the header AND a FAB. The prototype shows the button in the header but ALSO has the FAB (not shown in the Actions page code but present in the shell). Keeping both is acceptable; the header button provides discoverable access, the FAB provides thumb-zone access."
+    },
+    {
+      "id": "chart-colors",
+      "question": "What colors should the throughput chart series use?",
+      "answer": "Incoming actions: #ff6a2b (CHART_COLORS.primary, orange). Completion rate: #9ad08a (CHART_COLORS.green). These match the prototype (page-actions.jsx lines 163-164) and align with the chart theme (ADR 0038).",
+      "confidence": "high",
+      "rationale": "The prototype explicitly sets these colors. Orange (#ff6a2b) for incoming aligns with the 'alert' semantic (new work arriving). Green (#9ad08a) for completion aligns with the 'success' semantic (work finished). Both colors are already in CHART_COLORS. The prototype also uses these colors in the header stats (line 156: #ff6a2b for inTotal, line 157: #9ad08a for doneTotal)."
+    },
+    {
+      "id": "sectionheader-component",
+      "question": "Does SectionHeader component exist or need to be created?",
+      "answer": "Verify existence at /home/anshulverma/workspace/workbench/ui/src/components/SectionHeader.tsx. If missing, create it: mono uppercase micro-label (text-xs font-mono uppercase tracking-wide text-muted-foreground) with optional right slot. Matches prototype primitives.jsx SectionHeader (no code shown but referenced in page-actions line 143).",
+      "confidence": "medium",
+      "rationale": "The prototype references <SectionHeader> in page-actions.jsx but the actual component definition isn't in the provided primitives.jsx excerpt. The existing codebase has section headers as plain h2 elements (e.g., ActionItems.tsx line 449). The prototype's usage (line 143) suggests it's a simple wrapper. If it doesn't exist, it's trivial to create. The pattern is used in the existing bucketed sections, so extracting it to a component makes sense."
+    }
+  ],
+  "harden": {
+    "enabled": true,
+    "max_passes": 20,
+    "current_pass": 7,
+    "convergence_status": "oscillation",
+    "passes": [
+      {
+        "pass": 1,
+        "verdict": "NOT CONVERGED",
+        "changes": 13,
+        "gaps": 3,
+        "rationale": "The specification requires 13 material clarifications before implementation can begin: (1) Settings nested routes pattern with Outlet component in App.tsx needs explicit description; (2) useSearchItems hook placement conflicts with plan (should be in Slice 13, not Slice 12), and existing useSearch.ts hook interaction is undefined; (3) new /api/items/search endpoint distinction from existing /api/search must be documented with result structure differences; (4) nav restructure breaks a11y.test.tsx assertions (8 links \u2192 7) but spec only mentions updating a11y test partially; (5) Stores.__init__ parameter pattern incorrectly specifies `*` separator when existing code uses keyword args; (6) migration table naming inconsistent (feedback_tasks vs filter_tuning_tasks vs funnel_order vs funnel_stages); (7) ItemFunnelDialog API incompatible between spec (FunnelItem prop) and plan (itemId-based fetch); (8) custom CSS classes `.wb-rail-nav` break Tailwind-only pattern without explicit acknowledgment; (9) TriageTheme type location mistakenly listed as new file vs existing useTriage.ts addition; (10) file count mismatch (40 vs 39); (11) Breadcrumb /filters routing goes to Overview instead of Ingestion; (12) Signal Velocity replacement description imprecise; (13) HotFeed click handler lacks funnel data. Three primary gaps remain: (1) existing /api/search endpoint conflict unacknowledged, (2) missing guidance on useSearchItems/useSearch interaction, (3) a11y.test.tsx new-route setup not specified. Codebase shows App.tsx using flat Routes (no nesting), Settings.tsx without Outlet import, and existing Sources/Messenger pages not yet embedded in Settings sub-tabs. System cannot proceed to implementation without resolving these conflicts.\""
+      },
+      {
+        "pass": 2,
+        "verdict": "NOT CONVERGED",
+        "changes": 13,
+        "gaps": 2,
+        "rationale": "Pass 2 has not converged. 13 material changes remain unresolved: React Router pathname handling with HashRouter, /api/items/search endpoint collision, navigation restructure breaking a11y.test.tsx, Stores keyword-only parameter clarification, FilterRule Optional[str] migration handling, file inventory discrepancies (spec/plan counts diverge), ItemFunnelDialog component interface mismatch (FunnelItem vs itemId), CSS positioning issue for rail nav, non-existent wb-main-inner reference, missing #9a7af0 purple color in theme, useSearchItems.ts file placement error, SourceFlow hover re-proportioning limitation, and database table naming inconsistency. Additionally, 2 explicit open gaps remain: missing test file handling strategy and /api/search endpoint collision unaddressed. Multiple other unfilled gaps exist: LogStream removal, useItemFunnel error handling, WORK_MODE_KEY references, queue stats duplication, and SectionHeader component conflicts. Convergence requires material_changes=0 AND open_gaps=0; current state is far from this threshold."
+      },
+      {
+        "pass": 3,
+        "verdict": "NOT CONVERGED",
+        "changes": 13,
+        "gaps": 0,
+        "rationale": "Pass 3 has not converged. There are 13 material changes remaining that must be addressed:\n\n1. Missing @radix-ui/react-tabs npm dependency - must be added to package.json before components/ui/tabs.tsx can compile\n2. File count discrepancy between spec (40/12/1) and plan (39/13/2) - spec must be updated to 40/13/2\n3. API path collision risk on filter-rules endpoints - requires endpoint renaming/restructuring or routing order specification\n4. TriageTheme type location mismatch - spec says lib/types/triage.ts but plan uses hooks/useTriage.ts; must align\n5. Settings tab routing bug - spec uses window.location.pathname but HashRouter requires useLocation() hook instead\n6. Sidebar logo redundancy - TopBar already has brand mark; sidebar addition creates duplication requiring resolution\n7. Migration numbering - must verify no concurrent migration 009 exists before proceeding\n8. Table naming inconsistency - 'feedback_tasks' table vs 'FilterTuningTask' domain model naming\n9. Timing row null handling contradiction - spec says omit entirely, plan says show \"-- ms\" fallback; must align with spec\n10. ItemFunnelDialog prop interface incompatibility - spec passes item object, plan uses itemId fetch pattern; designs conflict\n11. Settings Outlet routing pattern - current App.tsx Routes/Route pattern must be updated to nested route structure for Outlet to work\n12. useSearchItems.ts placement - currently in Slice 12 but primarily used by Slice 13, breaking parallelism\n13. Duplicate search endpoints - spec adds GET /api/items/search but GET /api/search already exists; need explicit separation note and backward compatibility strategy\n\nAll 13 changes are substantive and affect either correctness (bugs), compatibility, or architectural consistency. Zero gaps have been filled. The specification and plan require revision before implementation can proceed."
+      },
+      {
+        "pass": 4,
+        "verdict": "NOT CONVERGED",
+        "changes": 12,
+        "gaps": 3,
+        "rationale": "The spec and plan for the 2026-06-10 Mission Control UI Redesign have NOT converged. Material changes identified: (1) /api/items/search vs /api/search endpoint collision unresolved; (2) Settings nested routes (App.tsx HashRouter refactor) not explicitly addressed in plan; (3) FilterRule.pattern becoming optional breaks backward compatibility in anthropic.py, scheduler.py, triage.py without migration plan; (4) File inventory count discrepancy (spec: 40/12/1, plan: 39/13/2); (5) NAV array net reduction to 7 items; (6) a11y.test.tsx update timing wrong (Slice 7 vs Slice 15); (7) ItemFunnelDialog prop interface fundamental mismatch (item vs itemId+open); (8) Filter stage toggle endpoint conflict (/api/funnel/stages/{id} vs /api/filter-rules/{filterId}); (9) Table name inconsistency (feedback_tasks vs filter_tuning_tasks); (10) SourceFlow output bucket names do not map to server ItemStatus enum; (11) useSearchItems hook in wrong slice; (12) Dead CSS .wb-rail-item.is-active::before. Open gaps: (1) FilterRule.pattern backward compatibility missing from migration plan; (2) Route conflict between GET /api/filter-rules/{source_type} and new PATCH/DELETE /api/filter-rules/{filterId} unaddressed; (3) ItemFunnelDialog data flow pattern incompatible between spec and plan. Convergence requires material_changes == 0 AND open_gaps == 0; neither condition met."
+      },
+      {
+        "pass": 5,
+        "verdict": "NOT CONVERGED",
+        "changes": 10,
+        "gaps": 3,
+        "rationale": "Plan fails convergence. Material changes: (1) Client file counts incorrect (40 new, 14 modified, 2 deleted not 39/13/2). (2) @radix-ui/react-tabs not in ui/package.json dependencies -- must add npm install step. (3) GET /api/search (grouped envelope, 50-item cap) vs new GET /api/items/search (SearchItem[], 100-item cap) are distinct endpoints but spec doesn't clarify the difference. (4) useSearchItems.ts wrongly placed in Slice 12 (Filters), should be in Slice 13 (Search page). (5) a11y.test.tsx hardcoded nav assertions (lines 64-75 check for 'Sources' and 'Messenger' which Slice 7 removes, and don't check for new 'Search' link). (6) FilterRule domain model breaking change: pattern becomes nullable, prompt becomes required, but PgFilterRuleStore._row_to_rule() still constructs with pattern=row['pattern']. (7) Stores.__init__ close_fn at line 284 is positional parameter -- adding * before it breaks backward compatibility; * must come after close_fn. (8) ItemFunnelDialog props contradictory: spec passes item object, plan passes itemId + open boolean. (9) SourceChip maps phabricator->FileCode (not imported, though available in lucide-react). (10) CSS .wb-rail-nav position: absolute breaks grid layout. Open gaps: (a) Radix Tabs install step missing. (b) a11y.test.tsx nav item assertions need update. (c) FilterRule transition strategy for _row_to_rule() incomplete."
+      },
+      {
+        "pass": 6,
+        "verdict": "NOT CONVERGED",
+        "changes": 10,
+        "gaps": 0,
+        "rationale": "Pass 6 has 10 identified material changes preventing convergence: (1) `/api/items/search` endpoint coexistence with existing `/api/search` not explicitly documented in spec; (2) NAV array sizing inconsistency (spec lists 7, current has 8 items; Sources and Messenger removal must be confirmed); (3) Filter rules API routing conflicts between existing `GET /api/filter-rules/{source_type}` and new `PATCH/DELETE /api/filter-rules/{filterId}`; (4) Settings page requires conversion from flat Routes to nested Route pattern with Outlet, currently spec does not explicitly state this App.tsx change requirement; (5) Hash router pathname semantics: spec references `window.location.pathname.split('/')[2]` but should use React Router's `useLocation().pathname` with HashRouter; (6) ItemFunnelDialog props contradiction: spec defines `item: FunnelItem` but plan's canonical pattern uses `itemId` with internal fetch; (7) Filter tuning task table naming inconsistency: migration transaction order says `feedback_tasks` but domain/API use `filter_tuning_tasks`; (8) Store constructor parameters: plan proposes keyword-only arguments with `*` separator before new params, but existing code uses regular positional params; safer to add as trailing keyword arguments with defaults; (9) Client files count discrepancy: spec states 40 new files but plan lists 39; badge.tsx should be added to modified files list; (10) Feedback store server-vs-localStorage reconciliation: spec does not specify conflict resolution strategy (server authoritative, localStorage cache, merge on mount, optimistic updates). All gaps have been identified; 0 open gaps remain."
+      },
+      {
+        "pass": 7,
+        "verdict": "NOT CONVERGED",
+        "changes": 10,
+        "gaps": 3,
+        "rationale": "Pass 7 shows material divergences between spec and plan that require resolution:\n\nMATERIAL CHANGES (10 identified):\n1. Nested Routes in App.tsx: Spec unclear on nested route syntax; plan needs to explicitly show Routes/Route nesting with Outlet for Settings.\n2. File count discrepancy: Spec lists 40 new client files, plan says 39. Recount shows plan may be at 41 with useSearchItems.ts placement.\n3. Search endpoint separation: Plan should explicitly note /api/items/search is distinct from existing /api/search (command palette).\n4. ItemFunnelDialog prop API: Spec uses item: FunnelItem (non-nullable), plan uses itemId-based approach with internal fetch. Incompatible.\n5. Stores parameter signature: Plan says '* separator after close_fn' but needs clarification on positional vs keyword-only ordering.\n6. CSS grid + absolute positioning conflict: Sidebar position:absolute will break grid layout. Needs nested container or position:fixed approach.\n7. a11y.test.tsx breakage: Test asserts 8 link names; nav restructure yields 7. Plan mentions updating test but not the specific assertion count change.\n8. TriageTheme placement: Spec says lib/types/triage.ts, plan says add to useTriage.ts. Spec File Inventory doesn't list triage.ts, confirming plan is correct but spec text is inconsistent.\n9. useSearchItems hook placement: Created in Slice 12 (Filters), but logically belongs in Slice 13 (Search). Creates misleading dependency.\n10. Badge component estimated prop: Spec underspecifies; adding estimated requires Tooltip import and prop destructuring to avoid DOM attribute pollution.\n\nOPEN GAPS (3 remaining):\n1. LogStream component disposition: Spec doesn't specify whether existing LogStream is removed, deprecated, or refactored after LiveTail replaces it in Ingestion page.\n2. FunnelStage timing types: Plan Slice 6 uses TimingInfo | null but TimingInfo type is never defined in spec's type definitions.\n3. Legacy /api/search handling: Spec doesn't address whether existing /api/search _MAX_LIMIT or endpoint behavior changes with new /api/items/search introduction.\n\nConvergence requires: (1) updating plan File Count from 39 to 40, (2) reconciling ItemFunnelDialog prop API, (3) fixing CSS layout approach, (4) explicitly updating a11y.test.tsx assertion count, (5) moving useSearchItems.ts to correct Slice, (6) defining TimingInfo type, (7) clarifying LogStream lifecycle and /api/search coexistence."
+      }
+    ]
+  }
+}
