@@ -419,7 +419,6 @@ describe('WBFeedback', () => {
     const { WBFeedback } = await loadStore()
 
     // Make setItem throw to simulate storage full / blocked.
-    const original = localStorage.setItem.bind(localStorage)
     vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceededError')
     })

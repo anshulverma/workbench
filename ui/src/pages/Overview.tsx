@@ -533,7 +533,11 @@ export function Overview() {
                 source: openItem.source_type,
                 created_at: openItem.created_at,
                 stages: [],
-                verdict: undefined,
+                verdict: {
+                  decision: 'queued',
+                  priority: openItem.priority,
+                  rationale: 'Pending triage — awaiting funnel treatment.',
+                },
               }
             : null
         }

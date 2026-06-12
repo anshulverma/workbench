@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ItemFunnelDialog } from './ItemFunnelDialog'
-import type { FunnelItem, FunnelStage } from '@/lib/types/funnel'
+import type { FunnelItem } from '@/lib/types/funnel'
 import { WBFeedback } from '@/lib/feedback-store'
 
 // ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ describe('ItemFunnelDialog', () => {
   })
 
   it('shows contributing signals in aggregated verdict', () => {
-    const { container } = render(
+    render(
       <ItemFunnelDialog
         item={makeItem()}
         open={true}

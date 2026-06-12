@@ -180,13 +180,10 @@ function ThroughputChartCard() {
   const doneTotal = compData.reduce((a, b) => a + b, 0)
   const net = inTotal - doneTotal
 
-  const xLabels = useMemo(
-    () => Array.from({ length: Math.max(inData.length, compData.length, 1) }, (_, i, arr) => {
-      const len = Math.max(inData.length, compData.length, 1)
-      return `${len - i}h ago`
-    }),
-    [inData.length, compData.length],
-  )
+  const xLabels = useMemo(() => {
+    const len = Math.max(inData.length, compData.length, 1)
+    return Array.from({ length: len }, (_, i) => `${len - i}h ago`)
+  }, [inData.length, compData.length])
 
   return (
     <Card data-testid="throughput-chart-card">

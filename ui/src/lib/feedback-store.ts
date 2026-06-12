@@ -7,7 +7,7 @@
 // Override/task 1:1 relationship: addOverride creates a tuning task,
 // removeOverride dismisses the open task.
 
-import type { FeedbackOverride, FilterTuningTask, TuningTaskStatus } from '@/lib/types/feedback'
+import type { FeedbackOverride, FilterTuningTask } from '@/lib/types/feedback'
 import type { StageOutcome } from '@/lib/types/funnel'
 
 // ---------------------------------------------------------------------------

@@ -108,10 +108,10 @@ describe('useTuningTasks', () => {
 
 describe('useAddCorrection', () => {
   it('posts a correction and invalidates the corrections query', async () => {
-    let posted: unknown = null
+    let posted: Record<string, unknown> | null = null
     server.use(
       http.post('/api/feedback/corrections', async ({ request }) => {
-        posted = await request.json()
+        posted = (await request.json()) as Record<string, unknown>
         return HttpResponse.json({ ...posted, id: 'c-new', created_at: '2026-06-10T12:00:00Z' })
       }),
     )

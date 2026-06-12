@@ -2,14 +2,13 @@ import * as Icons from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { FunnelItem } from '@/lib/types/funnel'
 import type { SearchItem } from '@/lib/types/search'
-import { SRC_ICON, STAGE_META } from '@/lib/funnel-constants'
+import { SRC_ICON } from '@/lib/funnel-constants'
 import { itemLog, stageTimings, ruleById } from '@/lib/funnel-helpers'
 import { ActionChip } from '@/components/ActionChip'
 import { VerdictPill } from '@/components/VerdictPill'
 import { Mono } from '@/components/Mono'
 import { Portal } from '@/components/Portal'
 import { FunnelStage } from '@/components/funnel/FunnelStage'
-import { useFeedbackStore } from '@/hooks/useFeedback'
 
 function getIcon(name: string): LucideIcon | undefined {
   return (Icons as unknown as Record<string, LucideIcon>)[name]
@@ -57,8 +56,6 @@ export function ItemFunnelDialog({
     Array<{ id: string; context: Record<string, string | number | boolean> }>
   >
 }) {
-  const fb = useFeedbackStore()
-
   if (!open || !item) return null
 
   const funnelItem: FunnelItem = {
