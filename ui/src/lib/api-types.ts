@@ -72,6 +72,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/items/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Items
+         * @description Rich full-text search over items.
+         *
+         *     Returns SearchItem results with llm_summary, enriched_context,
+         *     processing_log (funnel_log), verdict, and tags.
+         *     Limit is capped at 100 regardless of what the client requests.
+         */
+        get: operations["search_items_api_items_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/items/{item_id}": {
         parameters: {
             query?: never;
@@ -88,6 +112,23 @@ export interface paths {
         head?: never;
         /** Update Item */
         patch: operations["update_item_api_items__item_id__patch"];
+        trace?: never;
+    };
+    "/api/items/{item_id}/snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Snooze Item */
+        post: operations["snooze_item_api_items__item_id__snooze_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/triage/pending": {
@@ -199,7 +240,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/filter-rules/{source_type}": {
+    "/api/filter-rules/{rule_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -207,13 +248,32 @@ export interface paths {
             cookie?: never;
         };
         /** Get Source Rules */
-        get: operations["get_source_rules_api_filter_rules__source_type__get"];
+        get: operations["get_source_rules_api_filter_rules__rule_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Rule */
+        delete: operations["delete_rule_api_filter_rules__rule_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Rule */
+        patch: operations["update_rule_api_filter_rules__rule_id__patch"];
+        trace?: never;
+    };
+    "/api/filter-rules/{rule_id}/prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Rule Prompt */
+        patch: operations["update_rule_prompt_api_filter_rules__rule_id__prompt_patch"];
         trace?: never;
     };
     "/api/sources/adapter-types": {
@@ -325,7 +385,15 @@ export interface paths {
          */
         get: operations["get_facts_api_memory_facts_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Fact
+         * @description Creates a manual Preference Fact with a distinct 'manual' origin.
+         *
+         *     Manual facts coexist with learned facts and ADR0019 tombstones; the
+         *     synthesis pipeline does not overwrite them (ADR0045). Returns the created
+         *     Fact. Under NoopMemoryLayer -> 501 (consistent with delete/update).
+         */
+        post: operations["create_fact_api_memory_facts_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -505,7 +573,15 @@ export interface paths {
         /** Get Actions */
         get: operations["get_actions_api_actions_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Action
+         * @description Create a manual Action Item (FAB on the Action Items page).
+         *
+         *     Returns the created row in the same shape the GET listing / useActions
+         *     hook consumes. Only named safe fields are serialized (ADR0017
+         *     allowlist-on-output); no config-derived data is exposed.
+         */
+        post: operations["create_action_api_actions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -697,6 +773,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/stats/timeseries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Timeseries
+         * @description Generic derived timeseries (ADR0039), zero-filled full bucket axis.
+         *
+         *     metric ∈ {signal_velocity (items created), throughput (items completed)};
+         *     bucket ∈ {hour, day}. Empty buckets are emitted as count:0, never omitted.
+         */
+        get: operations["timeseries_api_stats_timeseries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stats/queue": {
         parameters: {
             query?: never;
@@ -814,6 +913,417 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/topology": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Topology */
+        get: operations["get_topology_api_topology_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search
+         * @description Global ILIKE search, grouped envelope. Empty/short q -> empty groups.
+         */
+        get: operations["search_api_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback/corrections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Corrections */
+        get: operations["list_corrections_api_feedback_corrections_get"];
+        put?: never;
+        /** Add Correction */
+        post: operations["add_correction_api_feedback_corrections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback/corrections/{correction_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Correction */
+        delete: operations["delete_correction_api_feedback_corrections__correction_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tasks */
+        get: operations["list_tasks_api_feedback_tasks_get"];
+        put?: never;
+        /** Add Task */
+        post: operations["add_task_api_feedback_tasks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Task */
+        delete: operations["delete_task_api_feedback_tasks__task_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Task Status */
+        patch: operations["update_task_status_api_feedback_tasks__task_id__patch"];
+        trace?: never;
+    };
+    "/api/enrichers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Enrichers */
+        get: operations["list_enrichers_api_enrichers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrichers/{enricher_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Enricher */
+        get: operations["get_enricher_api_enrichers__enricher_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrichers/{enricher_id}/samples": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Enricher Samples
+         * @description Return enrichment trace entries for items processed by this enricher.
+         *
+         *     Uses the enrichment trace store filtered by the enricher's stage name.
+         */
+        get: operations["get_enricher_samples_api_enrichers__enricher_id__samples_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/loopbacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Loopbacks */
+        get: operations["list_loopbacks_api_loopbacks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/loopbacks/{loopback_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Loopback */
+        get: operations["get_loopback_api_loopbacks__loopback_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Funnel Order */
+        get: operations["get_funnel_order_api_funnel_order_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Funnel Order */
+        patch: operations["update_funnel_order_api_funnel_order_patch"];
+        trace?: never;
+    };
+    "/api/funnel/stages/{stage_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Toggle Stage */
+        patch: operations["toggle_stage_api_funnel_stages__stage_id__patch"];
+        trace?: never;
+    };
+    "/api/funnel/stages/{stage_id}/toggle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Toggle Stage Post
+         * @description UI alias for the stage toggle (the page POSTs .../toggle).
+         */
+        post: operations["toggle_stage_post_api_funnel_stages__stage_id__toggle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Funnel Items
+         * @description Recent items that carry funnel trace data, in the UI FunnelItem shape.
+         */
+        get: operations["get_funnel_items_api_funnel_items_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/items/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Funnel Item
+         * @description Single item in the UI FunnelItem shape.
+         */
+        get: operations["get_funnel_item_api_funnel_items__item_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/items/{item_id}/funnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Item Funnel
+         * @description Full funnel trace for a single item.
+         *
+         *     Returns funnel_log from the item itself plus any stages recorded
+         *     in the funnel_traces store.
+         */
+        get: operations["get_item_funnel_api_items__item_id__funnel_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/filter-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Funnel Filter Rules
+         * @description All filter rules, ordered by their funnel position.
+         */
+        get: operations["funnel_filter_rules_api_funnel_filter_rules_get"];
+        put?: never;
+        /** Funnel Create Filter Rule */
+        post: operations["funnel_create_filter_rule_api_funnel_filter_rules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/filter-rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Funnel Delete Filter Rule */
+        delete: operations["funnel_delete_filter_rule_api_funnel_filter_rules__rule_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/enrichers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Funnel Enrichers */
+        get: operations["funnel_enrichers_api_funnel_enrichers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/loopbacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Funnel Loopbacks */
+        get: operations["funnel_loopbacks_api_funnel_loopbacks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/funnel/enrichment-samples": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Funnel Enrichment Samples
+         * @description Recent enrichment samples grouped by enricher id.
+         *
+         *     For each enricher, surfaces the most recent traces of its stage as
+         *     {id, summary, context, entities} sample records (UI EnrichmentSample).
+         */
+        get: operations["funnel_enrichment_samples_api_funnel_enrichment_samples_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -831,6 +1341,15 @@ export interface components {
             card_id: string;
             /** Confirm */
             confirm: boolean;
+        };
+        /** CreateActionBody */
+        CreateActionBody: {
+            /** Summary */
+            summary: string;
+            /** @default P2 */
+            priority: components["schemas"]["Priority"];
+            /** Action Category */
+            action_category?: string | null;
         };
         /** CreateSourceBody */
         CreateSourceBody: {
@@ -856,10 +1375,38 @@ export interface components {
             /** Connection */
             connection?: string | null;
         };
+        /** FactCreateBody */
+        FactCreateBody: {
+            /** Content */
+            content: string;
+        };
         /** FactPatchBody */
         FactPatchBody: {
             /** Content */
             content: string;
+        };
+        /**
+         * FeedbackCorrection
+         * @description A user override on a single item's filter/enrichment outcome.
+         */
+        FeedbackCorrection: {
+            /** Id */
+            id?: string;
+            /** Item Id */
+            item_id: string;
+            /** Rule Id */
+            rule_id?: string | null;
+            /** Original Action */
+            original_action: string;
+            /** Corrected Action */
+            corrected_action: string;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
         };
         /** FilterRule */
         FilterRule: {
@@ -868,12 +1415,88 @@ export interface components {
             /** Source Type */
             source_type?: string | null;
             /** Pattern */
-            pattern: string;
+            pattern?: string | null;
+            /** Prompt */
+            prompt?: string | null;
             /** Action */
             action: string;
             priority?: components["schemas"]["Priority"] | null;
             /** Created From Interaction Id */
             created_from_interaction_id?: string | null;
+            /** Sources */
+            sources?: string[];
+            /**
+             * Confidence
+             * @default 50
+             */
+            confidence: number;
+            /**
+             * Origin
+             * @default manual
+             */
+            origin: string;
+            /**
+             * Matched
+             * @default 0
+             */
+            matched: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Label */
+            label?: string | null;
+            /**
+             * Order Index
+             * @default 0
+             */
+            order_index: number;
+        };
+        /** FilterRuleCreate */
+        FilterRuleCreate: {
+            /** Prompt */
+            prompt: string;
+            /** Action */
+            action: string;
+            /**
+             * Sources
+             * @default []
+             */
+            sources: string[];
+        };
+        /**
+         * FilterTuningTask
+         * @description A pending filter prompt refinement derived from feedback corrections.
+         */
+        FilterTuningTask: {
+            /** Id */
+            id?: string;
+            /** Rule Id */
+            rule_id: string;
+            /** Proposed Prompt */
+            proposed_prompt: string;
+            /** Correction Ids */
+            correction_ids?: string[];
+            /**
+             * Status
+             * @default open
+             */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /** Resolved At */
+            resolved_at?: string | null;
+        };
+        /** FunnelOrderUpdate */
+        FunnelOrderUpdate: {
+            /** Entries */
+            entries: {
+                [key: string]: unknown;
+            }[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -931,6 +1554,19 @@ export interface components {
              */
             source_type: string;
         };
+        /** PromptUpdate */
+        PromptUpdate: {
+            /** Prompt */
+            prompt: string;
+        };
+        /** SnoozeBody */
+        SnoozeBody: {
+            /**
+             * Hours
+             * @default 4
+             */
+            hours: number;
+        };
         /** SnoozeRequest */
         SnoozeRequest: {
             /**
@@ -953,6 +1589,48 @@ export interface components {
             adapter_type?: string | null;
             /** Connection */
             connection?: string | null;
+            relevance?: components["schemas"]["SourceRelevanceConfig"] | null;
+        };
+        /**
+         * SourceRelevanceConfig
+         * @description Per-source relevance/noise thresholds (ADR0044, spec §11).
+         *
+         *     Partitions LLM-scored items into auto-include vs triage vs drop. Scores are
+         *     integers 0..100 (matching ``LLMProvider.score_relevance``); a value of
+         *     ``None`` for the whole object means "inherit the global PipelineConfig
+         *     thresholds" so existing sources keep their current routing.
+         *
+         *     Routing (per ``filter.decide_from_score``):
+         *       * relevance >= ``auto_include_threshold`` -> auto-include
+         *       * relevance <  ``drop_below``             -> drop as noise
+         *       * otherwise                               -> send to triage
+         *
+         *     ``triage_threshold`` is the lower edge of the triage band; it is surfaced
+         *     for the UI's three-slider Noise Filter and validated to sit between
+         *     ``drop_below`` and ``auto_include_threshold``. The two routing-controlling
+         *     knobs are ``auto_include_threshold`` and ``drop_below``.
+         */
+        SourceRelevanceConfig: {
+            /**
+             * Auto Include Threshold
+             * @default 70
+             */
+            auto_include_threshold: number;
+            /**
+             * Triage Threshold
+             * @default 30
+             */
+            triage_threshold: number;
+            /**
+             * Drop Below
+             * @default 30
+             */
+            drop_below: number;
+        };
+        /** StageToggle */
+        StageToggle: {
+            /** Enabled */
+            enabled: boolean;
         };
         /** TriageResponse */
         TriageResponse: {
@@ -1078,6 +1756,39 @@ export interface operations {
             };
         };
     };
+    search_items_api_items_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                kind?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     archive_item_api_items__item_id__delete: {
         parameters: {
             query?: never;
@@ -1121,6 +1832,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ItemUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snooze_item_api_items__item_id__snooze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnoozeBody"];
             };
         };
         responses: {
@@ -1347,16 +2093,119 @@ export interface operations {
             };
         };
     };
-    get_source_rules_api_filter_rules__source_type__get: {
+    get_source_rules_api_filter_rules__rule_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                source_type: string;
+                rule_id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_rule_api_filter_rules__rule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_rule_api_filter_rules__rule_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_rule_prompt_api_filter_rules__rule_id__prompt_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptUpdate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -1617,6 +2466,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_fact_api_memory_facts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FactCreateBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1964,6 +2846,39 @@ export interface operations {
             };
         };
     };
+    create_action_api_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateActionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     mark_done_api_actions__item_id__done_post: {
         parameters: {
             query?: never;
@@ -2205,6 +3120,39 @@ export interface operations {
             };
         };
     };
+    timeseries_api_stats_timeseries_get: {
+        parameters: {
+            query: {
+                metric: string;
+                window?: number;
+                bucket?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     queue_api_stats_queue_get: {
         parameters: {
             query?: never;
@@ -2388,6 +3336,789 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_topology_api_topology_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    search_api_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_corrections_api_feedback_corrections_get: {
+        parameters: {
+            query?: {
+                item_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_correction_api_feedback_corrections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackCorrection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_correction_api_feedback_corrections__correction_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                correction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tasks_api_feedback_tasks_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_task_api_feedback_tasks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilterTuningTask"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_task_api_feedback_tasks__task_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_task_status_api_feedback_tasks__task_id__patch: {
+        parameters: {
+            query: {
+                status: string;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_enrichers_api_enrichers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_enricher_api_enrichers__enricher_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                enricher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_enricher_samples_api_enrichers__enricher_id__samples_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                enricher_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_loopbacks_api_loopbacks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_loopback_api_loopbacks__loopback_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                loopback_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_funnel_order_api_funnel_order_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    update_funnel_order_api_funnel_order_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FunnelOrderUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_stage_api_funnel_stages__stage_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stage_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_stage_post_api_funnel_stages__stage_id__toggle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stage_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_funnel_items_api_funnel_items_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                source?: string | null;
+                verdict?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_funnel_item_api_funnel_items__item_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_item_funnel_api_items__item_id__funnel_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    funnel_filter_rules_api_funnel_filter_rules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    funnel_create_filter_rule_api_funnel_filter_rules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilterRuleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    funnel_delete_filter_rule_api_funnel_filter_rules__rule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    funnel_enrichers_api_funnel_enrichers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    funnel_loopbacks_api_funnel_loopbacks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    funnel_enrichment_samples_api_funnel_enrichment_samples_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
