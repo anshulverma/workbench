@@ -4,7 +4,9 @@
 // a conditional dead-letter alert banner, and the five UI State Taxonomy states
 // (loading / error / empty / unauthorized / degraded).
 
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ChevronRight } from 'lucide-react'
 import {
   Area,
   AreaChart,
@@ -26,12 +28,15 @@ import { Mono } from '@/components/Mono'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Topology } from '@/components/Topology'
+import { SourceFlow } from '@/components/SourceFlow'
+import { ItemFunnelDialog } from '@/components/funnel/ItemFunnelDialog'
 import {
   CHART_COLORS,
   CHART_DEFAULTS,
   CHART_PALETTE,
   TOOLTIP_CONTENT_STYLE,
 } from '@/lib/chart-theme'
+import { buildFlowMatrix } from '@/lib/funnel-helpers'
 import { DataTable, type Column } from '@/components/DataTable'
 import { EmptyState } from '@/components/EmptyState'
 import { HealthBadge } from '@/components/HealthBadge'
@@ -44,6 +49,7 @@ import {
   useJobs,
   useMessenger,
   useMetricsTimeseries,
+  useSourcesRollup,
   useStatsOverview,
   type Job,
 } from '@/hooks/useStats'
@@ -84,7 +90,7 @@ const jobColumns: Column<Job>[] = [
 // --- Hero widgets (spec §8). Each fails soft inline: it renders its own
 // loading / empty / error state and never blocks the page-level gates. ---
 
-function HotFeed() {
+function HotFeed({ onOpen }: { onOpen: (item: Item) => void }) {
   const feed = useHotFeed()
   return (
     <Card data-testid="hot-feed" className="flex flex-col">
@@ -107,17 +113,28 @@ function HotFeed() {
             {feed.items.map((it: Item) => (
               <li
                 key={it.id}
-                className="flex items-start gap-2 border-b border-border pb-2 last:border-b-0"
+                className="border-b border-border last:border-b-0"
               >
-                <Badge variant={PRIORITY_VARIANT[it.priority] ?? 'p3'}>
-                  {it.priority}
-                </Badge>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{it.summary}</p>
-                  <p className="font-mono text-xs text-muted-foreground">
-                    {it.source_type} · {relativeTime(it.created_at)}
-                  </p>
-                </div>
+                <button
+                  data-testid={`hot-feed-item-${it.id}`}
+                  onClick={() => onOpen(it)}
+                  className="flex w-full items-start gap-2 rounded pb-2 text-left hover:bg-accent"
+                  style={{ background: 'none', border: 0, cursor: 'pointer' }}
+                >
+                  <Badge variant={PRIORITY_VARIANT[it.priority] ?? 'p3'}>
+                    {it.priority}
+                  </Badge>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">{it.summary}</p>
+                    <p className="font-mono text-xs text-muted-foreground">
+                      {it.source_type} · {relativeTime(it.created_at)}
+                    </p>
+                  </div>
+                  <ChevronRight
+                    size={15}
+                    className="mt-0.5 flex-shrink-0 text-muted-foreground"
+                  />
+                </button>
               </li>
             ))}
           </ul>
@@ -179,6 +196,8 @@ export function Overview() {
   const jobs = useJobs(10)
   const health = useHealth()
   const messenger = useMessenger()
+  const sourcesRollup = useSourcesRollup()
+  const [openItem, setOpenItem] = useState<Item | null>(null)
 
   // unauthorized: any query failing with a 401 (typically the token endpoint).
   const unauthorizedErr = [overview, timeseries, jobs, health, messenger]
@@ -314,7 +333,7 @@ export function Overview() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <HotFeed />
+          <HotFeed onOpen={setOpenItem} />
           <TopologyPanel />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
             <div data-testid="ingestion-success-tile">
@@ -327,6 +346,54 @@ export function Overview() {
           </div>
         </div>
       </section>
+
+      {/* Signal Flow — animated Sankey: sources → WorkBench → outputs */}
+      <Card data-testid="signal-flow-card">
+        <CardHeader className="flex flex-row items-baseline justify-between pb-2">
+          <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Signal Flow
+          </CardTitle>
+          <span className="font-mono text-xs text-muted-foreground">
+            sources → workbench → outputs · hover to isolate
+          </span>
+        </CardHeader>
+        <CardContent>
+          <SourceFlow
+            data={
+              sourcesRollup.data
+                ? buildFlowMatrix(
+                    Object.fromEntries(
+                      sourcesRollup.data.map((s) => [s.adapter_type, s.items_stored]),
+                    ),
+                    {
+                      action_items: data.active_items,
+                      triage_queue: data.pending_triage,
+                      filtered_out: data.in_flight,
+                      errors: data.dead_letters,
+                    },
+                  )
+                : undefined
+            }
+            stalledSources={
+              sourcesRollup.data
+                ? new Set(
+                    sourcesRollup.data
+                      .filter((s) => s.health_status === 'erroring')
+                      .map((s) => s.adapter_type),
+                  )
+                : undefined
+            }
+            ingestRate={metrics?.throughput ?? 0}
+            egressRate={metrics?.signal_velocity ?? 0}
+            error={
+              sourcesRollup.isError
+                ? (sourcesRollup.error as Error).message
+                : undefined
+            }
+            onNavigate={navigate}
+          />
+        </CardContent>
+      </Card>
 
       {data.dead_letters > 0 && (
         <div
@@ -454,6 +521,25 @@ export function Overview() {
           />
         )}
       </div>
+
+      {/* Item funnel dialog — canonical mounting: page holds state, dialog
+          renders at page root with open/onClose. Triggered by Hot Feed items. */}
+      <ItemFunnelDialog
+        item={
+          openItem
+            ? {
+                id: openItem.id,
+                summary: openItem.summary,
+                source: openItem.source_type,
+                created_at: openItem.created_at,
+                stages: [],
+                verdict: undefined,
+              }
+            : null
+        }
+        open={!!openItem}
+        onClose={() => setOpenItem(null)}
+      />
     </div>
   )
 }
