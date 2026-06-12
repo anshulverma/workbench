@@ -1,22 +1,24 @@
 // Triage page — combined 3-column shell (variant A) + keyboard cards (variant B).
 // Spec §9 / ADR0043 (three-column layout) / ADR0027 (interaction stays text replies).
 //
-// LEFT filter rail: Sources checkboxes (+counts) derived from
-// card_content.source_type, Priority filter, and a Time-Window quad
-// (1H/24H/7D/ALL) keyed off card.created_at. ALL filtering is client-side
-// (useMemo) over the fetched pending cards — no new endpoint.
+// LEFT filter rail: "Focus by theme" section (clickable theme cards that filter
+// the feed), Sources checkboxes (+counts) derived from card_content.source_type,
+// Priority filter, and a Time-Window quad (1H/24H/7D/ALL) keyed off
+// card.created_at. ALL filtering is client-side (useMemo) over the fetched
+// pending cards — no new endpoint.
 //
 // CENTER keyboard card feed (variant B): each card = priority/relevance colored
-// left border, Item ID + relevance score, summary, numbered [1][2][3] option
-// buttons, a free-text reply input ("Press Enter"), and J/K navigation. The
-// ADR0027 text-reply interaction is preserved: numbered buttons POST the same
+// left border, Item ID + relevance score, est-priority badge with tooltip,
+// summary (clickable → ItemFunnelDialog), numbered [1][2][3] option buttons,
+// a free-text reply input ("Press Enter"), and J/K navigation. The ADR0027
+// text-reply interaction is preserved: numbered buttons POST the same
 // {card_id, choice}; free-text POSTs {card_id, raw_text}; a destructive
 // free-text response opens the confirm/cancel Dialog driving POST /confirm.
 //
-// RIGHT analytics column: Signal Velocity sparkline + Automation Stats
-// (auto_resolved_pct, avg_triage_seconds, "n/a" on null) + an LLM Insight panel
-// that renders ONLY when the active card carries a real per-option
-// suggestion_reason (no static/fake copy).
+// RIGHT analytics column: Throughput MultiLineChart (3 series: Ingestion,
+// Triage queue, Triaged) + Automation Stats (auto_resolved_pct,
+// avg_triage_seconds, "n/a" on null) + an LLM Insight panel that renders ONLY
+// when the active card carries a real per-option suggestion_reason.
 //
 // Card content is rendered as plain text only — never dangerouslySetInnerHTML.
 // Five UI states preserved: loading / error (X-Request-ID) / unauthorized /
@@ -37,10 +39,12 @@ import {
   useRespond,
   useConfirm,
   type TriageCard,
+  type TriageTheme,
 } from '@/hooks/useTriage'
 import { useMetricsTimeseries, useStatsOverview } from '@/hooks/useStats'
 import { EmptyState } from '@/components/EmptyState'
-import { Sparkline } from '@/components/Sparkline'
+import { MultiLineChart } from '@/components/MultiLineChart'
+import { ItemFunnelDialog } from '@/components/funnel/ItemFunnelDialog'
 import { Mono } from '@/components/Mono'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
@@ -95,12 +99,32 @@ function secs(value: number | null | undefined): string {
   return value == null ? 'n/a' : `${Math.round(value)}s`
 }
 
+// Mock theme data (server-generated later via triageThemes API).
+const MOCK_THEMES: TriageTheme[] = [
+  {
+    id: 'theme-infra',
+    label: 'Infrastructure alerts',
+    summary: 'Service health, deployments, and capacity signals',
+    counts: { alert: 3, diff: 1 },
+    cards: [],
+  },
+  {
+    id: 'theme-review',
+    label: 'Code reviews needing attention',
+    summary: 'Diffs with high risk scores or stale reviewers',
+    counts: { diff: 4 },
+    cards: [],
+  },
+]
+
 function TriageCardItem({
   card,
   active,
+  onOpenItem,
 }: {
   card: TriageCard
   active: boolean
+  onOpenItem: (card: TriageCard) => void
 }) {
   const respond = useRespond()
   const confirm = useConfirm()
@@ -153,12 +177,22 @@ function TriageCardItem({
               </Badge>
             )}
             {card.card_content?.priority && (
-              <Badge variant={PRIORITY_VARIANT[card.card_content.priority] ?? 'p3'}>
+              <Badge
+                variant={PRIORITY_VARIANT[card.card_content.priority] ?? 'p3'}
+                estimated
+              >
                 {card.card_content.priority}
               </Badge>
             )}
           </div>
-          <p className="font-medium">{summary}</p>
+          <button
+            data-testid="card-summary-btn"
+            onClick={() => onOpenItem(card)}
+            className="cursor-pointer border-0 bg-transparent p-0 text-left font-medium text-foreground"
+            style={{ font: 'inherit', fontWeight: 500, lineHeight: 1.45 }}
+          >
+            {summary}
+          </button>
         </div>
         <Link to={`/triage/${card.id}`} className="shrink-0 text-sm underline">
           Review
@@ -227,26 +261,42 @@ function TriageCardItem({
 
 // --- Right analytics column (spec §9). Each widget fails soft inline. ---
 
-function SignalVelocityPanel() {
-  const series = useMetricsTimeseries('signal_velocity', 24, 'hour')
-  const total = series.data?.reduce((s, p) => s + p.count, 0)
+function ThroughputPanel() {
+  const ingestion = useMetricsTimeseries('ingestion_count', 24, 'hour')
+  const triageQueue = useMetricsTimeseries('triage_queue_count', 24, 'hour')
+  const triaged = useMetricsTimeseries('triaged_count', 24, 'hour')
+
+  const isLoading = ingestion.isPending || triageQueue.isPending || triaged.isPending
+  const isError = ingestion.isError || triageQueue.isError || triaged.isError
+
+  const xLabels = Array.from({ length: 24 }, (_, i) => `${24 - i}h ago`)
+
+  const toData = (pts: Array<{ count: number }> | undefined) => {
+    if (!pts || pts.length === 0) return new Array(24).fill(0) as number[]
+    return pts.map((p) => p.count)
+  }
+
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Signal Velocity (24h)
+          Throughput (24h)
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {series.isPending ? (
+        {isLoading ? (
           <Skeleton className="h-8" />
-        ) : series.isError ? (
+        ) : isError ? (
           <p className="font-mono text-xs text-muted-foreground">n/a</p>
         ) : (
-          <>
-            <Mono className="text-lg font-bold">{total ?? '—'}</Mono>
-            <Sparkline data={series.data ?? []} />
-          </>
+          <MultiLineChart
+            xLabels={xLabels}
+            series={[
+              { name: 'Ingestion', color: '#ff6a2b', data: toData(ingestion.data) },
+              { name: 'Triage queue', color: '#9a7af0', data: toData(triageQueue.data) },
+              { name: 'Triaged', color: '#71d2ff', data: toData(triaged.data) },
+            ]}
+          />
         )}
       </CardContent>
     </Card>
@@ -316,6 +366,70 @@ function LlmInsightPanel({ card }: { card: TriageCard | undefined }) {
   )
 }
 
+// Focus by theme section — clickable theme cards that filter the triage feed.
+function ThemeFilterSection({
+  themes,
+  activeTheme,
+  onThemeChange,
+}: {
+  themes: TriageTheme[]
+  activeTheme: string | null
+  onThemeChange: (id: string | null) => void
+}) {
+  if (themes.length === 0) return null
+  return (
+    <section className="space-y-2" data-testid="theme-filter">
+      <h2 className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Focus by theme
+      </h2>
+      <div className="space-y-2">
+        {themes.map((t) => {
+          const on = activeTheme === t.id
+          return (
+            <button
+              key={t.id}
+              data-testid="theme-card"
+              onClick={() => onThemeChange(on ? null : t.id)}
+              className={cn(
+                'w-full cursor-pointer space-y-1.5 rounded-md border p-3 text-left transition-colors',
+                on
+                  ? 'border-primary bg-primary/10'
+                  : 'border-border bg-card hover:border-primary/40',
+              )}
+            >
+              <span className="flex flex-wrap gap-2">
+                {Object.entries(t.counts).map(([k, n]) => (
+                  <span
+                    key={k}
+                    className="font-mono text-[10px] font-bold uppercase tracking-wider text-primary"
+                  >
+                    {n} {k}
+                    {(n as number) > 1 ? 's' : ''}
+                  </span>
+                ))}
+              </span>
+              <span className="block text-[13px] font-semibold leading-snug">
+                {t.label}
+              </span>
+              <span className="block text-[11px] leading-snug text-muted-foreground">
+                {t.summary}
+              </span>
+            </button>
+          )
+        })}
+        {activeTheme && (
+          <button
+            onClick={() => onThemeChange(null)}
+            className="cursor-pointer border-0 bg-transparent text-xs text-muted-foreground underline"
+          >
+            Clear theme
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function Triage() {
   const pending = useTriagePending()
 
@@ -326,8 +440,24 @@ export function Triage() {
   const [excludedPriorities, setExcludedPriorities] = useState<Set<string>>(new Set())
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('ALL')
   const [activeIdx, setActiveIdx] = useState(0)
+  const [themeFilter, setThemeFilter] = useState<string | null>(null)
+
+  // ItemFunnelDialog — canonical mounting pattern: page holds state, click
+  // sets item, dialog rendered at page root.
+  const [funnelItem, setFunnelItem] = useState<TriageCard | null>(null)
 
   const cards = pending.data ?? []
+
+  // Theme data — use mock data for now; will be server-generated later.
+  // Populate card IDs into mock themes from the actual cards for filtering.
+  const themes = useMemo(() => {
+    return MOCK_THEMES.map((t) => ({
+      ...t,
+      // For mock themes with no card IDs yet, associate all cards (theme is
+      // presentation-only until the server generates real groupings).
+      cards: t.cards.length > 0 ? t.cards : cards.map((c) => c.id),
+    }))
+  }, [cards])
 
   // Available source facets with counts, derived (useMemo) from the fetched
   // cards over the STABLE `cards` reference.
@@ -354,7 +484,11 @@ export function Triage() {
   const filtered = useMemo(() => {
     const cutoff =
       timeWindow === 'ALL' ? null : Date.now() - WINDOW_MS[timeWindow]
+    const theme = themeFilter
+      ? themes.find((t) => t.id === themeFilter)
+      : null
     return cards.filter((c) => {
+      if (theme && !theme.cards.includes(c.id)) return false
       const src = c.card_content?.source_type ?? 'unknown'
       if (excludedSources.has(src)) return false
       const prio = c.card_content?.priority
@@ -365,7 +499,7 @@ export function Triage() {
       }
       return true
     })
-  }, [cards, excludedSources, excludedPriorities, timeWindow])
+  }, [cards, excludedSources, excludedPriorities, timeWindow, themeFilter, themes])
 
   // Clamp the active index whenever the filtered length changes. Depends ONLY
   // on the primitive `filtered.length` (never on the `filtered` array identity)
@@ -397,11 +531,12 @@ export function Triage() {
   }, [])
 
   const hasFilters =
-    excludedSources.size > 0 || excludedPriorities.size > 0 || timeWindow !== 'ALL'
+    excludedSources.size > 0 || excludedPriorities.size > 0 || timeWindow !== 'ALL' || themeFilter !== null
   const clearFilters = () => {
     setExcludedSources(new Set())
     setExcludedPriorities(new Set())
     setTimeWindow('ALL')
+    setThemeFilter(null)
   }
 
   const toggle = (
@@ -414,6 +549,12 @@ export function Triage() {
       else next.add(key)
       return next
     })
+
+  // Open ItemFunnelDialog for a triage card — synthesize enough data for the
+  // dialog to render (it accepts FunnelItem | SearchItem).
+  const openItemDialog = (card: TriageCard) => {
+    setFunnelItem(card)
+  }
 
   if (pending.isPending) {
     return (
@@ -453,12 +594,41 @@ export function Triage() {
 
   const activeCard = filtered[activeIdx]
 
+  // Build a minimal FunnelItem / SearchItem for the dialog from the triage card.
+  const dialogItem = funnelItem
+    ? {
+        id: funnelItem.item_id ?? funnelItem.id,
+        summary: funnelItem.card_content?.summary ?? '',
+        source: funnelItem.card_content?.source_type ?? 'unknown',
+        created_at: funnelItem.created_at ?? new Date().toISOString(),
+        stages: [],
+        verdict: {
+          decision: 'queued' as const,
+          priority: funnelItem.card_content?.priority,
+          rationale: 'Pending triage',
+        },
+      }
+    : null
+
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Triage</h1>
+      <div className="space-y-1">
+        <h1 className="text-lg font-semibold">Triage</h1>
+        <p className="text-[13px] text-muted-foreground" data-testid="est-subtitle">
+          Priorities are{' '}
+          <span className="text-primary">estimated</span> by the model from
+          relevance and urgency signals — not user-set.
+        </p>
+      </div>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[14rem_minmax(0,1fr)_16rem]">
         {/* LEFT: filter rail */}
         <aside aria-label="Triage filters" className="space-y-6">
+          <ThemeFilterSection
+            themes={themes}
+            activeTheme={themeFilter}
+            onThemeChange={setThemeFilter}
+          />
+
           <section className="space-y-2">
             <h2 className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Sources
@@ -537,18 +707,30 @@ export function Triage() {
             <EmptyState message="No cards match filters" />
           ) : (
             filtered.map((c, i) => (
-              <TriageCardItem key={c.id} card={c} active={i === activeIdx} />
+              <TriageCardItem
+                key={c.id}
+                card={c}
+                active={i === activeIdx}
+                onOpenItem={openItemDialog}
+              />
             ))
           )}
         </main>
 
         {/* RIGHT: analytics column */}
         <aside aria-label="Triage analytics" className="space-y-4">
-          <SignalVelocityPanel />
+          <ThroughputPanel />
           <AutomationStatsPanel />
           <LlmInsightPanel card={activeCard} />
         </aside>
       </div>
+
+      {/* ItemFunnelDialog — canonical mounting at page root */}
+      <ItemFunnelDialog
+        item={dialogItem}
+        open={funnelItem !== null}
+        onClose={() => setFunnelItem(null)}
+      />
     </div>
   )
 }

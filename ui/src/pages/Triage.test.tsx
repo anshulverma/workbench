@@ -313,11 +313,11 @@ describe('Triage page', () => {
     expect(await screen.findByText(/system harmony|inbox zero/i)).toBeInTheDocument()
   })
 
-  it('renders Signal Velocity and Automation Stats in the analytics column', async () => {
+  it('renders Throughput chart and Automation Stats in the analytics column', async () => {
     server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD])))
     renderPage()
     await screen.findByText('Review auth PR')
-    expect(await screen.findByText(/signal velocity/i)).toBeInTheDocument()
+    expect(await screen.findByText(/throughput/i)).toBeInTheDocument()
     expect(screen.getByText(/automation/i)).toBeInTheDocument()
     // auto_resolved_pct 0.42 → 42%
     expect(await screen.findByText(/42%/)).toBeInTheDocument()
@@ -377,5 +377,46 @@ describe('Triage page', () => {
         'true',
       ),
     )
+  })
+
+  // --- P3: Slice 10 features (est priority, theme filter, card click-through, throughput chart) ---
+
+  it('renders estimated priority badges with "est" prefix', async () => {
+    server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD_BACKED])))
+    renderPage()
+    await screen.findByText('Risky migration diff')
+    // The priority badge should include "est" prefix text
+    const estSpan = screen.getByText('est')
+    expect(estSpan).toBeInTheDocument()
+  })
+
+  it('shows explanatory subtitle about estimated priorities', async () => {
+    server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD])))
+    renderPage()
+    await screen.findByText('Review auth PR')
+    expect(screen.getByTestId('est-subtitle')).toBeInTheDocument()
+    expect(screen.getByText(/estimated/i)).toBeInTheDocument()
+    expect(screen.getByText(/not user-set/i)).toBeInTheDocument()
+  })
+
+  it('renders "Focus by theme" section in the filter rail', async () => {
+    server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD])))
+    renderPage()
+    await screen.findByText('Review auth PR')
+    expect(screen.getByText(/focus by theme/i)).toBeInTheDocument()
+    expect(screen.getAllByTestId('theme-card').length).toBeGreaterThan(0)
+  })
+
+  it('card summary is a clickable button that opens ItemFunnelDialog', async () => {
+    server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD])))
+    renderPage()
+    await screen.findByText('Review auth PR')
+    // Summary should be a button (not plain text)
+    const summaryBtn = screen.getByTestId('card-summary-btn')
+    expect(summaryBtn).toBeInTheDocument()
+    expect(summaryBtn.tagName).toBe('BUTTON')
+    // Clicking opens the funnel dialog
+    await userEvent.click(summaryBtn)
+    expect(await screen.findByTestId('funnel-dialog')).toBeInTheDocument()
   })
 })

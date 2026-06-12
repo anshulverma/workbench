@@ -2,6 +2,12 @@ import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 
 import { cn } from '@/lib/utils'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 const badgeVariants = cva(
   'inline-flex items-center rounded-sm border px-2.5 py-0.5 font-mono text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
@@ -33,11 +39,35 @@ const badgeVariants = cva(
 
 export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof badgeVariants> {}
+    VariantProps<typeof badgeVariants> {
+  /**
+   * When true, prefix the badge content with "est" and wrap in a tooltip
+   * explaining the priority is model-estimated, not user-set.
+   */
+  estimated?: boolean
+}
 
-function Badge({ className, variant, ...props }: BadgeProps) {
+function Badge({ className, variant, estimated, children, ...props }: BadgeProps) {
+  const inner = (
+    <div className={cn(badgeVariants({ variant }), className)} {...props}>
+      {estimated && (
+        <span className="mr-1 font-normal opacity-80">est</span>
+      )}
+      {children}
+    </div>
+  )
+
+  if (!estimated) return inner
+
   return (
-    <div className={cn(badgeVariants({ variant }), className)} {...props} />
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{inner}</TooltipTrigger>
+        <TooltipContent>
+          Estimated priority — model-scored from relevance + urgency signals, not user-set
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
