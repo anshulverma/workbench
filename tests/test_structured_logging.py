@@ -56,7 +56,8 @@ def test_console_output_format(capsys):
 
 def test_stdlib_logger_gets_structlog_processing(capsys):
     """Existing logging.getLogger() (stdlib/foreign) records go through the FULL
-    pipeline via foreign_pre_chain — level/logger/file:line/timestamp, not just event."""
+    pipeline via foreign_pre_chain — level/logger/file:line/timestamp, not just event.
+    """
     setup_logging(log_format="json", log_dir=None)
     logger = logging.getLogger("legacy.module")
     logger.warning("legacy message %s", "arg1")
@@ -78,6 +79,7 @@ def test_file_handler_preserved(tmp_path):
     logger = structlog.get_logger("test")
     logger.info("file_test")
     import os
+
     assert os.path.exists(log_dir)
     log_files = os.listdir(log_dir)
     assert len(log_files) >= 1
@@ -103,6 +105,44 @@ async def test_correlation_id_middleware():
     assert request_id is not None
     uuid.UUID(request_id)  # valid UUID
     assert resp.json()["request_id"] == request_id
+
+
+@pytest.mark.asyncio
+async def test_failed_request_is_logged_with_status_and_request_id():
+    """A request that resolves to a non-2xx response (e.g. a 404 for an
+    unmatched route) is logged by CorrelationIdMiddleware with method, path,
+    status_code, and the same request_id returned in the X-Request-ID header.
+
+    Guards the observability gap where 4xx/5xx responses that never reach an
+    endpoint's own try/except were invisible in the logs."""
+    from starlette.testclient import TestClient
+    from fastapi import FastAPI
+
+    setup_logging(log_format="json")
+    lines, detach = _attach_capture()
+    try:
+        app = FastAPI()
+        app.add_middleware(CorrelationIdMiddleware)
+
+        @app.get("/exists")
+        async def handler():
+            return {"ok": True}
+
+        client = TestClient(app)
+        resp = client.get("/api/funnel/filter-rules")  # unmatched -> 404
+        assert resp.status_code == 404
+        request_id = resp.headers["X-Request-ID"]
+    finally:
+        detach()
+
+    recs = [json.loads(ln) for ln in lines()]
+    matches = [r for r in recs if r.get("status_code") == 404]
+    assert matches, f"no request log line with status_code=404 found in {recs}"
+    rec = matches[-1]
+    assert rec["method"] == "GET"
+    assert rec["path"] == "/api/funnel/filter-rules"
+    assert rec["request_id"] == request_id
+    assert rec["level"] == "warning"  # 4xx -> warning so failures are visible
 
 
 def test_callsite_fields_present_in_json():
@@ -140,6 +180,7 @@ def test_unknown_format_falls_back_to_json():
 
 def test_json_is_default_format():
     from workbench.config import LoggingConfig
+
     assert LoggingConfig().format == "json"
 
 
@@ -147,7 +188,9 @@ def test_sanitizer_excludes_callsite_fields():
     from workbench.config import PrivacyConfig
     from workbench.telemetry.privacy import SanitizingProcessor
 
-    config = PrivacyConfig(max_content_in_logs=5, redact_emails=True, redact_phones=True)
+    config = PrivacyConfig(
+        max_content_in_logs=5, redact_emails=True, redact_phones=True
+    )
     p = SanitizingProcessor(config)
     out = p(
         None,
