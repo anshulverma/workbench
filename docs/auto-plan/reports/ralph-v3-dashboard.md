@@ -10,7 +10,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 | S2 T275571242 server foundation domain + migration 009 + storage | 2 | — | DONE | 596 tests pass; 6 new files, 11 modified; migration 009 verified |
 | S3 T275571262 server API endpoints | 3 | S2 | DONE | 620 tests; 4 new routers, 27 new test cases |
 | S4 T275571286 shared UI primitives | 4 | S1 | DONE | 292 vitest; 9 components, 56 new tests |
-| S5 T275571313 feedback store + hook | 5 | S1,S3 | TODO | |
+| S5 T275571313 feedback store + hook | 5 | S1,S3 | DONE | 318 vitest; feedback-store.ts + useFeedback.ts, 26 new tests |
 | S7 T275571257 shell changes (nav, breadcrumbs, hover-expand) | 7 | S4 | TODO | |
 | S6 T275571237 funnel core (FunnelStage, ItemFunnelDialog, MultiLineChart) | 6 | S1,S4,S5 | TODO | |
 | S8 T275571278 settings sub-tabs | 8 | S4,S7 | TODO | |
@@ -42,6 +42,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 - Wave 7: S15
 
 ## Log
+- iter 5: S5 DONE — feedback-store.ts (WBFeedback singleton, pub/sub, localStorage+fallback, cross-tab sync, refinedPrompt), useFeedback.ts (useFeedbackStore via useSyncExternalStore + TanStack Query hooks). 26 new tests, 318 total.
 - iter 4: S4 DONE — 9 components (Portal, SectionHeader, ActionChip, ConfidenceBar, VerdictPill, StateDot, SourceChip, Breadcrumb, ui/tabs). 56 new tests, 292 total pass. Tabs uses HTML+ARIA (no Radix dep).
 - iter 3: S3 DONE — 4 new routers (feedback 8ep, enrichers 3ep, loopbacks 2ep, funnel 5ep), filter_rules gains PATCH/DELETE, items gains search+snooze. 27 new tests, 620 total pass.
 - iter 2: S2 DONE — domain/feedback.py (FeedbackCorrection, FilterTuningTask), enrichment.py gains EnricherConfig+LoopBackConfig, FilterRule+Item extended, migration 009 (pg_trgm, 6 tables, columns, GIN index), 5 new storage ABCs + PG impls (feedback/enrichers/loopbacks/funnel_traces/funnel_order), FilterRuleStore gains update/delete/reorder. 596 tests pass.
