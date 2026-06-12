@@ -9,7 +9,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 | S1 T275571224 client foundation types + constants + helpers | 1 | — | DONE | 21 tests pass; 3 type modules, funnel-constants, funnel-helpers, TriageTheme |
 | S2 T275571242 server foundation domain + migration 009 + storage | 2 | — | DONE | 596 tests pass; 6 new files, 11 modified; migration 009 verified |
 | S3 T275571262 server API endpoints | 3 | S2 | DONE | 620 tests; 4 new routers, 27 new test cases |
-| S4 T275571286 shared UI primitives | 4 | S1 | TODO | |
+| S4 T275571286 shared UI primitives | 4 | S1 | DONE | 292 vitest; 9 components, 56 new tests |
 | S5 T275571313 feedback store + hook | 5 | S1,S3 | TODO | |
 | S7 T275571257 shell changes (nav, breadcrumbs, hover-expand) | 7 | S4 | TODO | |
 | S6 T275571237 funnel core (FunnelStage, ItemFunnelDialog, MultiLineChart) | 6 | S1,S4,S5 | TODO | |
@@ -42,6 +42,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 - Wave 7: S15
 
 ## Log
+- iter 4: S4 DONE — 9 components (Portal, SectionHeader, ActionChip, ConfidenceBar, VerdictPill, StateDot, SourceChip, Breadcrumb, ui/tabs). 56 new tests, 292 total pass. Tabs uses HTML+ARIA (no Radix dep).
 - iter 3: S3 DONE — 4 new routers (feedback 8ep, enrichers 3ep, loopbacks 2ep, funnel 5ep), filter_rules gains PATCH/DELETE, items gains search+snooze. 27 new tests, 620 total pass.
 - iter 2: S2 DONE — domain/feedback.py (FeedbackCorrection, FilterTuningTask), enrichment.py gains EnricherConfig+LoopBackConfig, FilterRule+Item extended, migration 009 (pg_trgm, 6 tables, columns, GIN index), 5 new storage ABCs + PG impls (feedback/enrichers/loopbacks/funnel_traces/funnel_order), FilterRuleStore gains update/delete/reorder. 596 tests pass.
 - iter 1: S1 DONE — 3 type modules (funnel.ts, feedback.ts, search.ts), funnel-constants.ts (ACTION_META/STAGE_META/SRC_ICON/SOURCE_COLORS/OUTPUT_COLORS), funnel-helpers.ts (ruleById/enricherStageFor/itemLog/stageDuration/stageTimings/buildFlowMatrix), TriageTheme in useTriage.ts. 21 tests pass. Fixed buildFlowMatrix bug (sources.map used tuple destructuring on objects).
