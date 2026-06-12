@@ -53,6 +53,40 @@ function renderPage() {
   )
 }
 
+describe('Messenger page — embedded prop', () => {
+  it('hides the h1 when embedded is true', async () => {
+    server.use(http.get('/api/messenger', () => HttpResponse.json(CONFIGURED)))
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Messenger embedded />
+          <Toaster />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByText('GoogleChatMessenger')
+    const h1s = screen.queryAllByRole('heading', { level: 1 })
+    const messengerH1 = h1s.filter((h) =>
+      /^messenger$/i.test(h.textContent ?? ''),
+    )
+    expect(messengerH1).toHaveLength(0)
+  })
+
+  it('shows the h1 when embedded is not set', async () => {
+    server.use(http.get('/api/messenger', () => HttpResponse.json(CONFIGURED)))
+    renderPage()
+    await screen.findByText('GoogleChatMessenger')
+    const h1s = screen.queryAllByRole('heading', { level: 1 })
+    const messengerH1 = h1s.filter((h) =>
+      /^messenger$/i.test(h.textContent ?? ''),
+    )
+    expect(messengerH1).toHaveLength(1)
+  })
+})
+
 describe('Messenger page', () => {
   it('renders the loading state while the query is pending', () => {
     server.use(http.get('/api/messenger', () => new Promise(() => {})))

@@ -24,7 +24,13 @@ export default function App() {
           <Route path="/sources" element={<Sources />} />
           <Route path="/knowledge" element={<Knowledge />} />
           <Route path="/messenger" element={<Messenger />} />
+          {/* Settings sub-tab routes (Slice 8) */}
           <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/sources" element={<Settings />} />
+          <Route path="/settings/messenger" element={<Settings />} />
+          {/* V3 route aliases */}
+          <Route path="/search" element={<Knowledge />} />
+          <Route path="/filters" element={<Ingestion />} />
         </Routes>
       </ErrorBoundary>
     </AppShell>

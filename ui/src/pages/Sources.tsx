@@ -61,7 +61,7 @@ function humanSchedule(cron: string | null): string {
   return SCHEDULE_LABELS[cron] ?? cron
 }
 
-export function Sources() {
+export function Sources({ embedded }: { embedded?: boolean } = {}) {
   const stats = useSourceStats()
   const toggle = useToggleSource()
   const poll = usePollSource()
@@ -122,9 +122,11 @@ export function Sources() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Sources</h1>
-      </div>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-semibold">Sources</h1>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div data-testid="stat-active-pipes">

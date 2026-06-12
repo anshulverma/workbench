@@ -160,7 +160,7 @@ function EditConfigForm({ data }: { data: MessengerInfo }) {
   )
 }
 
-export function Messenger() {
+export function Messenger({ embedded }: { embedded?: boolean } = {}) {
   const m = useMessenger()
   // Only probe the pending count when there is no messenger to send through.
   const pending = usePendingCount(m.data?.configured === false)
@@ -198,7 +198,7 @@ export function Messenger() {
     const count = (pending.data ?? []).length
     return (
       <div className="space-y-4">
-        <h1 className="text-lg font-semibold">Messenger</h1>
+        {!embedded && <h1 className="text-lg font-semibold">Messenger</h1>}
         <Card
           role="status"
           className="border-primary/40 bg-primary/5"
@@ -228,7 +228,7 @@ export function Messenger() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Messenger</h1>
+      {!embedded && <h1 className="text-lg font-semibold">Messenger</h1>}
 
       <Card>
         <CardHeader divided className="flex-row items-center gap-2 space-y-0">

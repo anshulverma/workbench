@@ -88,6 +88,36 @@ function renderSources() {
   )
 }
 
+describe('Sources page — embedded prop', () => {
+  it('hides the h1 when embedded is true', async () => {
+    server.use(...baseHandlers([ROW]))
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Sources embedded />
+          <Toaster />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByText('github')
+    const h1s = screen.queryAllByRole('heading', { level: 1 })
+    const sourcesH1 = h1s.filter((h) => /sources/i.test(h.textContent ?? ''))
+    expect(sourcesH1).toHaveLength(0)
+  })
+
+  it('shows the h1 when embedded is not set', async () => {
+    server.use(...baseHandlers([ROW]))
+    renderSources()
+    await screen.findByText('github')
+    const h1s = screen.queryAllByRole('heading', { level: 1 })
+    const sourcesH1 = h1s.filter((h) => /sources/i.test(h.textContent ?? ''))
+    expect(sourcesH1).toHaveLength(1)
+  })
+})
+
 describe('Sources page', () => {
   it('renders the loading state while sources are pending', () => {
     server.use(http.get('/api/stats/sources', () => new Promise(() => {})))
