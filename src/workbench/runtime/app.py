@@ -367,11 +367,15 @@ def create_app() -> FastAPI:
         config as config_api,
         connections,
         debug,
+        enrichers,
+        feedback,
         filter_rules,
+        funnel,
         health,
         identity,
         items,
         jobs,
+        loopbacks,
         memory,
         messenger,
         process,
@@ -404,6 +408,10 @@ def create_app() -> FastAPI:
         connections.router,
         topology.router,
         search.router,
+        feedback.router,
+        enrichers.router,
+        loopbacks.router,
+        funnel.router,
     ]:
         app.include_router(r)
 
