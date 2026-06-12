@@ -7,7 +7,7 @@ export interface Hunk {
   file: string
   header: string
   code: string
-  annotation: string
+  annotation?: string
   rank: number
 }
 

@@ -11,6 +11,7 @@ import { Knowledge } from '@/pages/Knowledge'
 import { Messenger } from '@/pages/Messenger'
 import { Settings } from '@/pages/Settings'
 import { Filters } from '@/pages/Filters'
+import { Search } from '@/pages/Search'
 
 export default function App() {
   return (
@@ -30,7 +31,7 @@ export default function App() {
           <Route path="/settings/sources" element={<Settings />} />
           <Route path="/settings/messenger" element={<Settings />} />
           {/* V3 route aliases */}
-          <Route path="/search" element={<Knowledge />} />
+          <Route path="/search" element={<Search />} />
           <Route path="/filters" element={<Filters />} />
         </Routes>
       </ErrorBoundary>
