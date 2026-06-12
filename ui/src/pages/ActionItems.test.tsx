@@ -1,9 +1,10 @@
-// Action Items page tests (spec Design Section 2.3).
+// Action Items page tests (spec Design Section 2.3, v3 design upgrade).
 //
 // Mirrors Sources.test.tsx: a local render helper with QueryClientProvider +
 // MemoryRouter + Toaster, driven through MSW. Covers the five UI states plus the
 // three lifecycle mutations (mark-done POST, change-priority POST, snooze POST)
-// each hitting MSW and showing a sonner toast.
+// each hitting MSW and showing a sonner toast. Work Mode was removed in v3;
+// throughput chart and filter tuning section are tested instead.
 
 import {
   describe,
@@ -22,6 +23,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { ActionItems } from './ActionItems'
 import { _resetToken } from '@/lib/api'
+import { WBFeedback } from '@/lib/feedback-store'
 
 const HOUR = 3600_000
 const now = Date.now()
@@ -132,17 +134,29 @@ function overviewBody(efficiencyPeak: number | null = 0.42) {
   }
 }
 
+function timeseriesBody(counts: number[]) {
+  return counts.map((c, i) => ({
+    bucket: iso((counts.length - i) * HOUR),
+    count: c,
+  }))
+}
+
 function baseHandlers() {
   return [
     http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok' })),
     http.get('/api/actions', () => HttpResponse.json(ACTIONS)),
     http.get('/api/stats/overview', () => HttpResponse.json(overviewBody())),
-    http.get('/api/stats/timeseries', () =>
-      HttpResponse.json([
-        { bucket: iso(2 * HOUR), count: 1 },
-        { bucket: iso(1 * HOUR), count: 2 },
-      ]),
-    ),
+    http.get('/api/stats/timeseries', ({ request }) => {
+      const url = new URL(request.url)
+      const metric = url.searchParams.get('metric')
+      if (metric === 'incoming_actions') {
+        return HttpResponse.json(timeseriesBody([2, 3, 5, 4, 6, 7, 5, 8, 6, 7, 9, 6]))
+      }
+      if (metric === 'completion_rate') {
+        return HttpResponse.json(timeseriesBody([1, 2, 3, 4, 5, 5, 6, 6, 7, 6, 7, 8]))
+      }
+      return HttpResponse.json(timeseriesBody([1, 2]))
+    }),
   ]
 }
 
@@ -289,81 +303,61 @@ describe('Action Items page', () => {
     expect(within(later).getByText(/Low P3 task/)).toBeInTheDocument()
   })
 
-  it('renders the Throughput card with efficiency_peak as a percent', async () => {
-    renderActions()
-    const card = await screen.findByTestId('throughput-card')
-    expect(within(card).getByText(/throughput/i)).toBeInTheDocument()
-    // efficiency_peak 0.42 -> 42% (overview query resolves async)
-    expect(await within(card).findByText('42%')).toBeInTheDocument()
-  })
-
-  it('renders n/a for efficiency_peak when null', async () => {
-    server.use(
-      http.get('/api/stats/overview', () =>
-        HttpResponse.json(overviewBody(null)),
-      ),
-    )
-    renderActions()
-    const card = await screen.findByTestId('throughput-card')
-    expect(within(card).getByText('n/a')).toBeInTheDocument()
-  })
-
   it('does not render a hollow active_sessions stat', async () => {
     renderActions()
     await screen.findByText('Fix bug')
     expect(screen.queryByText(/active sessions/i)).not.toBeInTheDocument()
   })
 
-  it('toggles Work Mode and persists it to localStorage', async () => {
-    const user = userEvent.setup()
+  // --- Work Mode removed in v3 ---
+
+  it('does not render Work Mode toggle or Terminal Focus', async () => {
     renderActions()
-    const toggle = await screen.findByRole('switch', { name: /work mode/i })
-    expect(localStorage.getItem('workbench.workMode')).not.toBe('true')
-    await user.click(toggle)
-    await waitFor(() =>
-      expect(localStorage.getItem('workbench.workMode')).toBe('true'),
-    )
+    await screen.findByText('Fix bug')
+    expect(screen.queryByRole('switch', { name: /work mode/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/terminal focus/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/WORK_MODE_ON/i)).not.toBeInTheDocument()
   })
 
-  it('focuses on the top active vector and hides chrome when Work Mode is on', async () => {
-    localStorage.setItem('workbench.workMode', 'true')
-    server.use(http.get('/api/actions', () => HttpResponse.json(GROUPED)))
+  // --- Throughput chart ---
+
+  it('renders the throughput chart card with MultiLineChart', async () => {
     renderActions()
-    // Top active P0 vector remains visible.
-    expect(await screen.findByText(/Sev0 outage/)).toBeInTheDocument()
-    // Non-critical groups + widgets hidden while focused.
-    expect(screen.queryByText(/Low P3 task/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Mid P2 task/)).not.toBeInTheDocument()
-    expect(screen.queryByTestId('throughput-card')).not.toBeInTheDocument()
+    const card = await screen.findByTestId('throughput-chart-card')
+    expect(within(card).getByText(/throughput/i)).toBeInTheDocument()
+    // Wait for the timeseries data to load and render the chart
+    expect(await within(card).findByTestId('multi-line-chart')).toBeInTheDocument()
   })
 
-  it('shows a focused empty state when Work Mode is on and nothing is active', async () => {
-    localStorage.setItem('workbench.workMode', 'true')
-    server.use(
-      http.get('/api/actions', () =>
-        HttpResponse.json({
-          categories: {
-            review: [
-              {
-                id: 'low',
-                summary: 'Low P3 task',
-                priority: 'P3',
-                parent_item: null,
-                action_source: 'manual',
-                action_category: 'review',
-                created_at: iso(1 * HOUR),
-              },
-            ],
-          },
-          total: 1,
-        }),
-      ),
-    )
+  // --- Filter Tuning section ---
+
+  it('does not render filter tuning section when no open tasks exist', async () => {
     renderActions()
-    expect(await screen.findByText(/nothing critical/i)).toBeInTheDocument()
+    await screen.findByText('Fix bug')
+    expect(screen.queryByTestId('filter-tuning-section')).not.toBeInTheDocument()
   })
 
-  it('creates a manual action via the FAB (POST /api/actions)', async () => {
+  it('renders filter tuning section when feedback store has open tasks', async () => {
+    // Seed the feedback store with an open tuning task
+    WBFeedback.addOverride({
+      itemId: 'item-1',
+      itemSummary: 'Test item',
+      filterId: 'filter-spam',
+      filterPrompt: 'Drop spam items',
+      fromOutcome: 'drop',
+      fromLabel: 'drop',
+      toOutcome: 'include',
+      toLabel: 'include',
+    })
+    renderActions()
+    const section = await screen.findByTestId('filter-tuning-section')
+    expect(section).toBeInTheDocument()
+    expect(within(section).getByTestId('filter-tuning-card')).toBeInTheDocument()
+  })
+
+  // --- New action button (header, not FAB) ---
+
+  it('creates a manual action via the header button (POST /api/actions)', async () => {
     const user = userEvent.setup()
     let posted: Record<string, unknown> | null = null
     server.use(
@@ -392,7 +386,7 @@ describe('Action Items page', () => {
     expect(await screen.findByText(/action created/i)).toBeInTheDocument()
   })
 
-  it('surfaces a 422 (blank summary) inline from the FAB', async () => {
+  it('surfaces a 422 (blank summary) inline from the create dialog', async () => {
     const user = userEvent.setup()
     server.use(
       http.post('/api/actions', () =>

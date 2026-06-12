@@ -1,17 +1,13 @@
-// Action Items page (spec §10).
+// Action Items page (spec section 10, v3 design upgrade).
 //
-// Replaces the flat DataTable with three priority-bucketed sections
-// (ACTIVE NOW / TODAY / LATER), a Throughput card (bar/sparkline +
-// efficiency_peak), a Terminal Focus / Work Mode card (client-only localStorage
-// toggle, ADR 0042), and an orange FAB that creates a manual Action Item via
-// POST /api/actions. Preserves the existing category filter and the three
-// lifecycle controls exactly (set-priority <select>, Done, Snooze 4h).
+// Priority-bucketed sections (ACTIVE NOW / TODAY / LATER), a full-width
+// MultiLineChart showing incoming actions vs completion rate (12h), a
+// conditional Filter Tuning section (from the feedback store), and a
+// header-level "New action" button + dialog. Category filter preserved.
 //
-// Render-loop safety (per task guardrails): buckets are derived with useMemo
-// over the STABLE actions array + a single render-time `now` primitive; no
-// effect computes arrays/Sets and feeds them back into setState. Work Mode is
-// read once in a useState initializer (in useWorkMode) and synced via a
-// storage-event effect with EMPTY deps + cleanup.
+// Render-loop safety: buckets are derived with useMemo over the STABLE
+// actions array + a single render-time `now` primitive; no effect computes
+// arrays/Sets and feeds them back into setState.
 
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
@@ -23,16 +19,15 @@ import {
   useSnooze,
   type Action,
 } from '@/hooks/useActions'
-import { useWorkMode } from '@/hooks/useWorkMode'
-import { useMetricsTimeseries, useStatsOverview } from '@/hooks/useStats'
-import { StatCard } from '@/components/StatCard'
-import { Sparkline } from '@/components/Sparkline'
+import { useFeedbackStore } from '@/hooks/useFeedback'
+import { useMetricsTimeseries } from '@/hooks/useStats'
+import { MultiLineChart } from '@/components/MultiLineChart'
+import { FilterTuningCard } from '@/components/FilterTuningCard'
 import { Mono } from '@/components/Mono'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -66,8 +61,8 @@ const PRIORITY_VARIANT: Record<string, 'p0' | 'p1' | 'p2' | 'p3'> = {
   P3: 'p3',
 }
 
-// Left-border accent per priority (spec §10 colored left-border rows). Uses the
-// same hue tokens as the Badge priority variants (ADR 0046 contrast contract).
+// Left-border accent per priority (spec section 10 colored left-border rows).
+// Same hue tokens as the Badge priority variants (ADR 0046 contrast contract).
 const PRIORITY_BORDER: Record<string, string> = {
   P0: 'border-l-[#ffb4ab]',
   P1: 'border-l-[#ff6a2b]',
@@ -81,7 +76,7 @@ const DAY_MS = 24 * HOUR_MS
 type Bucket = 'ACTIVE NOW' | 'TODAY' | 'LATER'
 
 /**
- * Bucket an action by priority + age (spec §10):
+ * Bucket an action by priority + age (spec section 10):
  *  - ACTIVE NOW = P0, or (P1 & age < 24h)
  *  - TODAY      = remaining P1, or (P2 & age < 7d)
  *  - LATER      = P3, or anything older/snoozed
@@ -97,11 +92,6 @@ function bucketOf(action: Action, now: number): Bucket {
 }
 
 const BUCKET_ORDER: Bucket[] = ['ACTIVE NOW', 'TODAY', 'LATER']
-
-/** Render a 0..1 ratio metric as a whole-number percent, or "n/a" when null. */
-function pct(value: number | null | undefined): string {
-  return value == null ? 'n/a' : `${Math.round(value * 100)}%`
-}
 
 function ActionRow({
   action,
@@ -169,57 +159,78 @@ function ActionRow({
   )
 }
 
-function ThroughputCard() {
-  const series = useMetricsTimeseries('throughput', 8, 'hour')
-  const overview = useStatsOverview()
-  const efficiency = overview.data?.metrics?.efficiency_peak
+/** Full-width throughput chart: incoming actions vs completion rate (12h). */
+function ThroughputChartCard() {
+  const incoming = useMetricsTimeseries('incoming_actions', 12, 'hour')
+  const completion = useMetricsTimeseries('completion_rate', 12, 'hour')
 
-  return (
-    <div data-testid="throughput-card">
-      <StatCard
-        label="Throughput (8h)"
-        value={
-          overview.isError ? (
-            'n/a'
-          ) : (
-            <Mono>{pct(overview.isPending ? null : efficiency)}</Mono>
-          )
-        }
-        sub={
-          series.isPending ? (
-            <Skeleton className="h-8" />
-          ) : series.isError ? null : (
-            <Sparkline data={series.data ?? []} />
-          )
-        }
-      />
-    </div>
+  const isPending = incoming.isPending || completion.isPending
+  const isError = incoming.isError && completion.isError
+
+  const inData = useMemo(
+    () => (incoming.data ?? []).map((p) => p.count),
+    [incoming.data],
   )
-}
+  const compData = useMemo(
+    () => (completion.data ?? []).map((p) => p.count),
+    [completion.data],
+  )
 
-function WorkModeCard({
-  workMode,
-  setWorkMode,
-}: {
-  workMode: boolean
-  setWorkMode: (next: boolean) => void
-}) {
+  const inTotal = inData.reduce((a, b) => a + b, 0)
+  const doneTotal = compData.reduce((a, b) => a + b, 0)
+  const net = inTotal - doneTotal
+
+  const xLabels = useMemo(
+    () => Array.from({ length: Math.max(inData.length, compData.length, 1) }, (_, i, arr) => {
+      const len = Math.max(inData.length, compData.length, 1)
+      return `${len - i}h ago`
+    }),
+    [inData.length, compData.length],
+  )
+
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card data-testid="throughput-chart-card">
+      <CardHeader className="flex flex-row items-baseline justify-between pb-2">
         <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Terminal Focus
+          Throughput (12h)
         </CardTitle>
+        {!isPending && !isError && (
+          <span className="flex gap-4 font-mono text-xs text-muted-foreground">
+            <span>
+              <span className="font-bold text-[#ff6a2b]">{inTotal}</span> in
+            </span>
+            <span>
+              <span className="font-bold text-[#9ad08a]">{doneTotal}</span> done
+            </span>
+            <span>
+              net{' '}
+              <Mono
+                className={`font-bold ${net > 0 ? 'text-[var(--brand)]' : 'text-[var(--success)]'}`}
+              >
+                {net > 0 ? '+' : ''}
+                {net}
+              </Mono>
+            </span>
+          </span>
+        )}
       </CardHeader>
-      <CardContent className="flex items-center justify-between gap-3">
-        <span className="font-mono text-sm">
-          {workMode ? 'WORK_MODE_ON' : 'WORK_MODE_OFF'}
-        </span>
-        <Switch
-          aria-label="Work Mode"
-          checked={workMode}
-          onCheckedChange={setWorkMode}
-        />
+      <CardContent>
+        {isPending ? (
+          <Skeleton className="h-[132px] w-full" />
+        ) : isError ? (
+          <p className="text-sm text-muted-foreground">
+            Unable to load throughput data
+          </p>
+        ) : (
+          <MultiLineChart
+            height={132}
+            xLabels={xLabels}
+            series={[
+              { name: 'Incoming actions', color: '#ff6a2b', data: inData },
+              { name: 'Completion rate', color: '#9ad08a', data: compData },
+            ]}
+          />
+        )}
       </CardContent>
     </Card>
   )
@@ -317,14 +328,15 @@ function CreateActionDialog({
 export function ActionItems() {
   const [filter, setFilter] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const { workMode, setWorkMode } = useWorkMode()
   const actions = useActions(filter || undefined)
   const markDone = useMarkDone()
   const changePriority = useChangePriority()
   const snooze = useSnooze()
+  const feedback = useFeedbackStore()
+  const tuningTasks = feedback.openTasks()
 
   // STABLE input: the flat list of actions. Derived during render via useMemo
-  // keyed on the data reference only — never recomputed into an effect+setState.
+  // keyed on the data reference only -- never recomputed into an effect+setState.
   const rows = useMemo<Action[]>(
     () =>
       actions.data ? Object.values(actions.data.categories).flat() : [],
@@ -376,37 +388,6 @@ export function ActionItems() {
   const onDone = (id: string) => markDone.mutate(id)
   const onSnooze = (id: string) => snooze.mutate({ id, hours: 4 })
 
-  // --- Work Mode (ADR 0042): collapse to the top active "vector", hide
-  // non-critical widgets, dim chrome. Does NOT mute notifications. ---
-  if (workMode) {
-    const active = grouped['ACTIVE NOW']
-    return (
-      <div className="space-y-4 opacity-95">
-        <div className="flex items-center gap-3">
-          <h1 className="font-mono text-lg font-semibold uppercase tracking-wide">
-            Terminal Focus
-          </h1>
-          <WorkModeCard workMode={workMode} setWorkMode={setWorkMode} />
-        </div>
-        {active.length === 0 ? (
-          <EmptyState message="// Nothing critical — you are clear" />
-        ) : (
-          <div className="space-y-2">
-            {active.map((action) => (
-              <ActionRow
-                key={action.id}
-                action={action}
-                onChangePriority={onChangePriority}
-                onDone={onDone}
-                onSnooze={onSnooze}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
-
   const total = actions.data.total
 
   return (
@@ -426,12 +407,38 @@ export function ActionItems() {
             </option>
           ))}
         </select>
+        <Button
+          size="sm"
+          className="ml-auto"
+          aria-label="New action"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="mr-1 size-4" />
+          New action
+        </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <ThroughputCard />
-        <WorkModeCard workMode={workMode} setWorkMode={setWorkMode} />
-      </div>
+      {/* Filter Tuning section -- conditional on open tuning tasks */}
+      {tuningTasks.length > 0 && (
+        <section data-testid="filter-tuning-section" className="space-y-2">
+          <h2 className="font-mono text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Filter Tuning ({tuningTasks.length})
+          </h2>
+          <div className="space-y-2">
+            {tuningTasks.map((task) => (
+              <FilterTuningCard
+                key={task.id}
+                task={task}
+                onApply={(id) => feedback.autoApply(id)}
+                onDismiss={(id) => feedback.dismissTask(id)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Full-width throughput chart */}
+      <ThroughputChartCard />
 
       {rows.length === 0 ? (
         <EmptyState message="No action items. You are all caught up." />
@@ -465,15 +472,6 @@ export function ActionItems() {
           })}
         </div>
       )}
-
-      <button
-        type="button"
-        aria-label="New action"
-        onClick={() => setCreateOpen(true)}
-        className="fixed bottom-6 right-6 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-colors hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-      >
-        <Plus className="size-6" />
-      </button>
 
       <CreateActionDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
