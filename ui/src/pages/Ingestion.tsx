@@ -1,11 +1,8 @@
-// Ingestion activity page (spec Design Section 2.4).
+// Ingestion activity page (spec Design Section 2.4, V3 restructure).
 //
-// Per-source panels (adapter type, enabled badge, schedule, last-run, qualified
-// Ingested Counts, Source Health Status, recent-items expander), an activity
-// feed, a job-history DataTable with status filter + offset pagination, and a
-// queue-health panel with a dead-letter DataTable (per-row Retry + Purge, where
-// Purge is behind a confirm dialog). Implements the five UI States (loading /
-// error w/ X-Request-ID / empty / unauthorized / degraded).
+// V3 layout: top stat cards (queue stats promoted), LiveTail replacing LogStream,
+// Warnings section (dead letters promoted), job history, queue chart, and a
+// placeholder for the embedded IngestionFunnel (Slice 12).
 
 import { useMemo, useState } from 'react'
 import {
@@ -17,8 +14,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -31,10 +26,11 @@ import {
 import { StatCard } from '@/components/StatCard'
 import { DataTable, type Column } from '@/components/DataTable'
 import { EmptyState } from '@/components/EmptyState'
-import { HealthBadge } from '@/components/HealthBadge'
 import { ChartCard } from '@/components/ChartCard'
-import { LogStream, type LogLine } from '@/components/LogStream'
+import { LiveTail, type TailEntry } from '@/components/LiveTail'
+import { ItemFunnelDialog } from '@/components/funnel/ItemFunnelDialog'
 import { Mono } from '@/components/Mono'
+import { SectionHeader } from '@/components/SectionHeader'
 import {
   CHART_COLORS,
   CHART_DEFAULTS,
@@ -54,14 +50,24 @@ import {
   type ActivityItem,
   type DeadLetterEntry,
   type Job,
-  type SourceRollup,
 } from '@/hooks/useStats'
+
+// TODO(slice-12): Replace this placeholder with the real IngestionFunnel component
+// once Slice 12 builds it. Expected import:
+//   const IngestionFunnel = lazy(() =>
+//     import('@/pages/Filters').then(m => ({ default: m.IngestionFunnel ?? m.default }))
+//   )
+function IngestionFunnelPlaceholder() {
+  return (
+    <div className="flex h-48 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
+      Ingestion funnel visualization — coming in Slice 12
+    </div>
+  )
+}
 
 const JOB_STATUSES = ['queued', 'pending', 'running', 'completed', 'failed']
 const PAGE_SIZE = 25
-// Cap the LIVE INGESTION LOG so an unbounded poll history never grows without
-// bound; LogStream keeps the most recent (chronological) tail pinned to bottom.
-const LOG_CAP = 200
+const TAIL_CAP = 60
 
 function isUnauthorized(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401
@@ -71,129 +77,36 @@ function requestIdOf(err: unknown): string | null {
   return err instanceof ApiError ? err.requestId : null
 }
 
-// Uppercase mono micro-label section header (spec §5 token system).
-function SectionHeader({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
-      {children}
-    </h2>
-  )
+/** Map an ActivityItem into a TailEntry for the LiveTail component. */
+function activityToTailEntry(item: ActivityItem, index: number): TailEntry {
+  return {
+    key: `${item.id}-${index}`,
+    timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
+    itemId: item.id,
+    source: item.source_type ?? '?',
+    funnelStage: item.status ?? 'unknown',
+    outcome: statusToOutcome(item.status),
+    summary: item.summary ?? undefined,
+  }
 }
 
-// Render one ActivityItem as a single mono terminal line:
-//   "10:30:00  github      active    PR opened: fix the thing"
-function activityLogLine(item: ActivityItem): LogLine {
-  const when = item.created_at
-    ? new Date(item.created_at).toLocaleTimeString([], { hour12: false })
-    : '--:--:--'
-  const source = (item.source_type ?? '?').padEnd(10).slice(0, 10)
-  const status = (item.status ?? '?').padEnd(9).slice(0, 9)
-  const summary = item.summary ?? '(no summary)'
-  return { id: item.id, text: `${when}  ${source} ${status} ${summary}` }
+function statusToOutcome(status: string | null): TailEntry['outcome'] {
+  switch (status) {
+    case 'active':
+    case 'completed':
+      return 'include'
+    case 'failed':
+    case 'error':
+      return 'drop'
+    case 'filtered':
+      return 'drop'
+    case 'pending':
+    case 'queued':
+      return 'pass'
+    default:
+      return 'pass'
+  }
 }
-
-function SourcePanel({ source }: { source: SourceRollup }) {
-  const [open, setOpen] = useState(false)
-  const recent = useActivity(50)
-  const recentForSource = (recent.data ?? []).filter(
-    (i) => i.source_type === source.adapter_type,
-  )
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base font-semibold">
-            {source.adapter_type}
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge variant={source.enabled ? 'default' : 'secondary'}>
-              {source.enabled ? 'enabled' : 'disabled'}
-            </Badge>
-            <HealthBadge status={source.health_status} />
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <div className="grid grid-cols-2 gap-1 text-muted-foreground">
-          <span>Schedule</span>
-          <Mono className="text-right text-foreground">
-            {source.schedule ?? '—'}
-          </Mono>
-          <span>Last run</span>
-          <span className="text-right text-foreground">
-            {relativeTime(source.last_run)}
-          </span>
-        </div>
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
-            <Mono className="block text-lg font-bold">{source.items_stored}</Mono>
-            <div className="text-xs text-muted-foreground">stored</div>
-          </div>
-          <div>
-            <Mono className="block text-lg font-bold">{source.raw_enqueued}</Mono>
-            <div className="text-xs text-muted-foreground">raw enqueued</div>
-          </div>
-          <div>
-            <Mono className="block text-lg font-bold">{source.in_flight}</Mono>
-            <div className="text-xs text-muted-foreground">in flight</div>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="text-xs text-primary underline"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? 'Hide recent items' : 'Show recent items'}
-        </button>
-        {open && (
-          <ul className="space-y-1 border-t pt-2 text-xs">
-            {recentForSource.length === 0 ? (
-              <li className="text-muted-foreground">No recent items.</li>
-            ) : (
-              recentForSource.slice(0, 5).map((i) => (
-                <li key={i.id} className="truncate">
-                  {i.summary ?? '(no summary)'}
-                </li>
-              ))
-            )}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-const activityColumns: Column<ActivityItem>[] = [
-  {
-    key: 'source_type',
-    header: 'Source',
-    render: (i) => <span className="font-mono text-xs">{i.source_type}</span>,
-  },
-  { key: 'status', header: 'Status', render: (i) => i.status },
-  { key: 'summary', header: 'Summary', render: (i) => i.summary ?? '—' },
-  {
-    key: 'created_at',
-    header: 'When',
-    render: (i) => relativeTime(i.created_at),
-  },
-]
-
-const jobColumns: Column<Job>[] = [
-  {
-    key: 'id',
-    header: 'ID',
-    render: (j) => <span className="font-mono text-xs">{j.id}</span>,
-  },
-  { key: 'trigger', header: 'Trigger', render: (j) => j.trigger },
-  { key: 'status', header: 'Status', render: (j) => j.status },
-  { key: 'items_extracted', header: 'Items', render: (j) => j.items_extracted },
-  {
-    key: 'created_at',
-    header: 'Created',
-    render: (j) => relativeTime(j.created_at),
-  },
-]
 
 function DeadLetterTable() {
   const deadLetters = useDeadLetters()
@@ -295,26 +208,60 @@ function DeadLetterTable() {
   )
 }
 
+const jobColumns: Column<Job>[] = [
+  {
+    key: 'id',
+    header: 'ID',
+    render: (j) => <span className="font-mono text-xs">{j.id}</span>,
+  },
+  { key: 'trigger', header: 'Trigger', render: (j) => j.trigger },
+  { key: 'status', header: 'Status', render: (j) => j.status },
+  { key: 'items_extracted', header: 'Items', render: (j) => j.items_extracted },
+  {
+    key: 'created_at',
+    header: 'Created',
+    render: (j) => relativeTime(j.created_at),
+  },
+]
+
 export function Ingestion() {
   const [statusFilter, setStatusFilter] = useState('')
   const [offset, setOffset] = useState(0)
+  const [tailLive, setTailLive] = useState(true)
+  const [tailItemId, setTailItemId] = useState<string | null>(null)
 
   const sources = useSourcesRollup()
   const activity = useActivity(50)
   const jobs = useJobs(PAGE_SIZE, offset, statusFilter || undefined)
   const queue = useQueueStats()
+  const deadLetters = useDeadLetters()
 
-  // LIVE INGESTION LOG lines (spec §11): each polled ActivityItem -> one mono
-  // line. Derived with useMemo over the stable query data + a primitive cap so
-  // we never re-create the array identity on unrelated renders (render-loop
-  // guardrail #1). Declared before any early return to keep hook order stable.
-  // LogStream owns fixed-height scroll + autoscroll.
-  const logLines = useMemo<LogLine[]>(
-    () => (activity.data ?? []).slice(0, LOG_CAP).map(activityLogLine),
+  // Map activity items into TailEntry objects for LiveTail, capped at TAIL_CAP.
+  const tailEntries = useMemo<TailEntry[]>(
+    () => (activity.data ?? []).slice(0, TAIL_CAP).map(activityToTailEntry),
     [activity.data],
   )
 
-  // unauthorized: any query failing with a 401 (typically the token endpoint).
+  // Build a minimal FunnelItem-compatible object for ItemFunnelDialog from the
+  // clicked activity item. The dialog degrades gracefully with minimal data.
+  const tailItem = useMemo(() => {
+    if (!tailItemId) return null
+    const act = (activity.data ?? []).find((a) => a.id === tailItemId)
+    if (!act) return null
+    return {
+      id: act.id,
+      summary: act.summary ?? '(no summary)',
+      source: act.source_type ?? 'unknown',
+      created_at: act.created_at ?? new Date().toISOString(),
+      stages: [],
+      verdict: {
+        decision: 'queued' as const,
+        rationale: `Activity status: ${act.status}`,
+      },
+    }
+  }, [tailItemId, activity.data])
+
+  // unauthorized: any query failing with a 401.
   const unauthorizedErr = [sources, activity, jobs, queue]
     .map((q) => q.error)
     .find(isUnauthorized)
@@ -333,9 +280,9 @@ export function Ingestion() {
   if (sources.isPending) {
     return (
       <div data-testid="ingestion-loading" className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-48" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-28" />
           ))}
         </div>
         <Skeleton className="h-48" />
@@ -354,63 +301,149 @@ export function Ingestion() {
     )
   }
 
-  const sourceList = sources.data
   const queueData = queue.data
   const queueChart = queueData
     ? Object.entries(queueData.by_status).map(([name, value]) => ({ name, value }))
     : []
-  // degraded: queue stats failed to load but the page still renders.
   const queueDegraded = queue.isError
+  const deadCount = deadLetters.data?.length ?? 0
 
   const total = jobs.data?.total ?? 0
   const canPrev = offset > 0
   const canNext = offset + PAGE_SIZE < total
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Ingestion</h1>
+    <div className="space-y-7">
+      <div>
+        <h1 className="text-2xl font-semibold">Ingestion</h1>
+        <p className="mt-1 text-[13px] text-muted-foreground">
+          Live pipeline state, warnings, and the ingestion funnel every item flows through.
+        </p>
+      </div>
 
-      {/* LIVE INGESTION LOG — useActivity (15s poll) streamed through LogStream */}
-      <section className="space-y-2" aria-label="live ingestion log">
-        <SectionHeader>Live Ingestion Log</SectionHeader>
-        <LogStream lines={logLines} />
-      </section>
+      {/* 1 — Top-level queue stat cards (promoted from Queue Health section) */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="In Queue"
+          value={
+            queueDegraded ? '—' : (
+              <span className="flex items-baseline gap-2">
+                <Mono className="text-2xl font-bold">{queueData?.queued ?? 0}</Mono>
+                <span className="text-xs text-muted-foreground">
+                  +{queueData?.processing ?? 0} processing
+                </span>
+              </span>
+            )
+          }
+        />
+        <StatCard label="Processing" value={queueDegraded ? '—' : (queueData?.processing ?? 0)} />
+        <StatCard
+          label="Dead Letters"
+          value={queueDegraded ? '—' : (queueData?.dead_letter ?? 0)}
+          danger={(queueData?.dead_letter ?? 0) > 0}
+        />
+        <StatCard
+          label="Sources"
+          value={sources.data?.length ?? 0}
+          delta={`${sources.data?.filter((s) => s.enabled).length ?? 0} enabled`}
+        />
+      </div>
 
-      {/* Per-source panels */}
-      <section className="space-y-2" aria-label="sources">
-        <SectionHeader>Sources</SectionHeader>
-        {sourceList.length === 0 ? (
-          <EmptyState message="No sources configured yet" />
-        ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {sourceList.map((s) => (
-              <SourcePanel key={s.id} source={s} />
-            ))}
+      {/* 2 — LiveTail + Queue chart side by side */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <section className="space-y-2.5" aria-label="live funnel tail">
+          <SectionHeader
+            right={
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded border border-border bg-transparent px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent"
+                onClick={() => setTailLive((v) => !v)}
+                aria-pressed={tailLive}
+                style={tailLive ? { borderColor: 'color-mix(in srgb, var(--success, #22c55e) 40%, transparent)', background: 'color-mix(in srgb, var(--success, #22c55e) 12%, transparent)', color: 'var(--success, #22c55e)' } : undefined}
+              >
+                <span
+                  className="inline-block h-[7px] w-[7px] rounded-full"
+                  style={{
+                    background: tailLive ? 'var(--success, #22c55e)' : 'var(--muted-foreground)',
+                    animation: tailLive ? 'wb-pulse 1.6s ease infinite' : 'none',
+                  }}
+                />
+                {tailLive ? 'live' : 'paused'}
+              </button>
+            }
+          >
+            Live Funnel Tail
+          </SectionHeader>
+          <LiveTail
+            entries={tailEntries}
+            live={tailLive}
+            onToggleLive={() => setTailLive((v) => !v)}
+            onOpenItem={setTailItemId}
+            error={activity.isError ? `Failed to load activity: ${(activity.error as Error).message}` : undefined}
+          />
+        </section>
+
+        <section className="space-y-2.5" aria-label="queue by status">
+          <SectionHeader>Queue by Status</SectionHeader>
+          {queueDegraded ? (
+            <p className="text-sm text-amber-600">
+              Queue stats unavailable — showing partial data.
+            </p>
+          ) : (
+            <ChartCard title="Queue by status" empty={queueChart.length === 0}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={queueChart}>
+                  <CartesianGrid
+                    stroke={CHART_DEFAULTS.grid.stroke}
+                    strokeDasharray={CHART_DEFAULTS.grid.strokeDasharray}
+                  />
+                  <XAxis
+                    dataKey="name"
+                    stroke={CHART_DEFAULTS.axis.stroke}
+                    fontSize={CHART_DEFAULTS.axis.fontSize}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    stroke={CHART_DEFAULTS.axis.stroke}
+                    fontSize={CHART_DEFAULTS.axis.fontSize}
+                  />
+                  <Tooltip
+                    contentStyle={TOOLTIP_CONTENT_STYLE}
+                    cursor={{ fill: 'transparent' }}
+                  />
+                  <Bar dataKey="value" fill={CHART_COLORS.primary} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          )}
+        </section>
+      </div>
+
+      {/* 3 — Warnings: dead letters promoted to prominent position */}
+      <section className="space-y-2.5" aria-label="warnings">
+        <SectionHeader
+          right={
+            deadCount > 0 ? (
+              <span className="font-mono text-[11px] text-error-text">
+                {deadCount} need attention
+              </span>
+            ) : null
+          }
+        >
+          Warnings
+        </SectionHeader>
+        {deadCount > 0 && (
+          <div
+            role="alert"
+            className="flex items-center gap-2.5 rounded border border-destructive/50 bg-destructive/10 px-3.5 py-2.5 text-[13px] text-error-text"
+          >
+            <Mono className="font-bold">{deadCount}</Mono> dead letter{deadCount === 1 ? '' : 's'} — items that exhausted their retries. Retry or purge below.
           </div>
         )}
+        <DeadLetterTable />
       </section>
 
-      {/* Activity feed */}
-      <section className="space-y-2">
-        <SectionHeader>Recent Activity</SectionHeader>
-        {activity.isPending ? (
-          <Skeleton className="h-48" />
-        ) : activity.isError ? (
-          <p className="text-sm text-destructive">
-            Failed to load activity: {(activity.error as Error).message}
-          </p>
-        ) : (activity.data?.length ?? 0) === 0 ? (
-          <EmptyState message="No recent activity" />
-        ) : (
-          <DataTable
-            columns={activityColumns}
-            rows={activity.data!}
-            rowKey={(i) => i.id}
-          />
-        )}
-      </section>
-
-      {/* Job history */}
+      {/* 4 — Job history */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <SectionHeader>Job History</SectionHeader>
@@ -472,59 +505,28 @@ export function Ingestion() {
         )}
       </section>
 
-      {/* Queue health + dead letters */}
-      <section className="space-y-2">
-        <SectionHeader>Queue Health</SectionHeader>
-        {queueDegraded ? (
-          <p className="text-sm text-amber-600">
-            Queue stats unavailable — showing partial data.
-          </p>
-        ) : queueData ? (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="grid grid-cols-3 gap-4">
-              <StatCard label="Queued" value={queueData.queued} />
-              <StatCard label="Processing" value={queueData.processing} />
-              <StatCard
-                label="Dead Letters"
-                value={queueData.dead_letter}
-                danger={queueData.dead_letter > 0}
-              />
-            </div>
-            <ChartCard title="Queue by status" empty={queueChart.length === 0}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={queueChart}>
-                  <CartesianGrid
-                    stroke={CHART_DEFAULTS.grid.stroke}
-                    strokeDasharray={CHART_DEFAULTS.grid.strokeDasharray}
-                  />
-                  <XAxis
-                    dataKey="name"
-                    stroke={CHART_DEFAULTS.axis.stroke}
-                    fontSize={CHART_DEFAULTS.axis.fontSize}
-                  />
-                  <YAxis
-                    allowDecimals={false}
-                    stroke={CHART_DEFAULTS.axis.stroke}
-                    fontSize={CHART_DEFAULTS.axis.fontSize}
-                  />
-                  <Tooltip
-                    contentStyle={TOOLTIP_CONTENT_STYLE}
-                    cursor={{ fill: 'transparent' }}
-                  />
-                  <Bar dataKey="value" fill={CHART_COLORS.primary} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartCard>
-          </div>
-        ) : (
-          <Skeleton className="h-24" />
-        )}
+      {/* 5 — Embedded Ingestion Funnel (Slice 12 placeholder) */}
+      {/* TODO(slice-12): IngestionFunnel component — replace Suspense fallback
+          once src/pages/Filters.tsx exports IngestionFunnel. */}
+      <section className="space-y-2.5" aria-label="ingestion funnel">
+        <SectionHeader
+          right={
+            <span className="font-mono text-[11px] text-muted-foreground">
+              enrichers + filters, in order
+            </span>
+          }
+        >
+          Ingestion Funnel
+        </SectionHeader>
+        <IngestionFunnelPlaceholder />
       </section>
 
-      <section className="space-y-2">
-        <SectionHeader>Dead Letters</SectionHeader>
-        <DeadLetterTable />
-      </section>
+      {/* ItemFunnelDialog — opened by clicking a LiveTail row */}
+      <ItemFunnelDialog
+        item={tailItem}
+        open={!!tailItem}
+        onClose={() => setTailItemId(null)}
+      />
     </div>
   )
 }

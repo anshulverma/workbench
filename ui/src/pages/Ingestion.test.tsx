@@ -191,17 +191,15 @@ function renderIngestion() {
 }
 
 describe('Ingestion page', () => {
-  it('renders per-source panels from /api/stats/sources', async () => {
+  it('renders top-level queue stat cards (V3 promoted layout)', async () => {
     renderIngestion()
-    await screen.findByText('42') // items_stored — waits for sources to load
-    const sourcesRegion = screen.getByRole('region', { name: 'sources' })
-    expect(within(sourcesRegion).getByText('github')).toBeInTheDocument()
-    expect(within(sourcesRegion).getByText('email')).toBeInTheDocument()
-    // qualified ingested counts
-    expect(within(sourcesRegion).getByText('42')).toBeInTheDocument()
-    // health badges
-    expect(within(sourcesRegion).getByText('healthy')).toBeInTheDocument()
-    expect(within(sourcesRegion).getAllByText('disabled').length).toBeGreaterThan(0)
+    // Wait for queue stats to resolve — the "In Queue" card shows queued count.
+    await screen.findByText('3') // queued count
+    // Dead Letters stat card shows the count with danger styling.
+    expect(screen.getByText('Dead Letters')).toBeInTheDocument()
+    // Sources stat card shows total count with enabled delta.
+    expect(screen.getByText('Sources')).toBeInTheDocument()
+    expect(screen.getByText('1 enabled')).toBeInTheDocument()
   })
 
   it('renders the activity feed from /api/activity', async () => {
@@ -279,19 +277,18 @@ describe('Ingestion page', () => {
     expect(await screen.findByText(/token unavailable/i)).toBeInTheDocument()
   })
 
-  it('renders the LIVE INGESTION LOG with one mono line per activity item', async () => {
+  it('renders the LiveTail with activity items as structured rows', async () => {
     renderIngestion()
-    // Wait for activity to land.
-    await screen.findByText('PR opened: fix the thing')
+    // Wait for activity data to arrive — LiveTail renders item IDs.
+    await screen.findByText('item-1')
     const log = screen.getByRole('log')
-    // Each ActivityItem becomes one mono log line containing source_type,
-    // status, and the summary.
+    // Each ActivityItem maps to a TailEntry row with source and summary.
     expect(within(log).getByText(/github/)).toBeInTheDocument()
     expect(within(log).getByText(/PR opened: fix the thing/)).toBeInTheDocument()
     expect(within(log).getByText(/Weekly digest/)).toBeInTheDocument()
   })
 
-  it('shows the no-activity terminal line when the activity feed is empty', async () => {
+  it('shows the empty tail state when the activity feed is empty', async () => {
     server.resetHandlers(
       http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok-123' })),
       http.get('/api/stats/sources', () => HttpResponse.json(SOURCES)),
@@ -301,9 +298,9 @@ describe('Ingestion page', () => {
       http.get('/api/queue/dead-letter', () => HttpResponse.json(DEAD_LETTERS)),
     )
     renderIngestion()
-    // Sources still render.
-    await screen.findByText('42')
+    // Wait for sources to load (signals data queries resolved).
+    await screen.findByText('Sources')
     const log = screen.getByRole('log')
-    expect(within(log).getByText('// no activity')).toBeInTheDocument()
+    expect(within(log).getByText(/Waiting for events/)).toBeInTheDocument()
   })
 })
