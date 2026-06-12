@@ -5,6 +5,12 @@ import pytest
 TEST_DSN = "postgres://workbench:workbench@localhost:5432/workbench"
 
 TABLES = [
+    "funnel_stages",
+    "funnel_order",
+    "feedback_corrections",
+    "filter_tuning_tasks",
+    "enrichers",
+    "loopbacks",
     "ingestion_runs",
     "ingestion_queue",
     "config",

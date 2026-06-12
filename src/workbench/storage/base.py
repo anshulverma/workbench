@@ -5,13 +5,17 @@ from datetime import datetime
 
 from workbench.storage.ingestion_runs import IngestionRunStore
 from workbench.domain import (
+    EnricherConfig,
     EnrichmentTrace,
+    FeedbackCorrection,
     FilterRule,
+    FilterTuningTask,
     IngestionQueueEntry,
     InteractionEntry,
     Item,
     ItemFilters,
     ItemUpdate,
+    LoopBackConfig,
     PipelineJob,
     RawItem,
     Plan,
@@ -164,6 +168,14 @@ class FilterRuleStore(ABC):
     async def add_rule(self, rule: FilterRule) -> FilterRule: ...
     @abstractmethod
     async def get_source_rules(self, source_type: str) -> list[FilterRule]: ...
+    @abstractmethod
+    async def update_rule(self, rule_id: str, updates: dict) -> FilterRule: ...
+    @abstractmethod
+    async def delete_rule(self, rule_id: str) -> None: ...
+    @abstractmethod
+    async def reorder_rules(self, rule_ids: list[str]) -> None:
+        """Set order_index for each rule based on position in the list."""
+        ...
 
 
 class EnrichmentTraceStore(ABC):
@@ -266,6 +278,67 @@ class IngestionQueueStore(ABC):
         ...
 
 
+class FeedbackStore(ABC):
+    @abstractmethod
+    async def get_corrections(
+        self, item_id: str | None = None
+    ) -> list[FeedbackCorrection]: ...
+    @abstractmethod
+    async def add_correction(
+        self, correction: FeedbackCorrection
+    ) -> FeedbackCorrection: ...
+    @abstractmethod
+    async def delete_correction(self, correction_id: str) -> None: ...
+    @abstractmethod
+    async def get_tasks(self, status: str | None = None) -> list[FilterTuningTask]: ...
+    @abstractmethod
+    async def add_task(self, task: FilterTuningTask) -> FilterTuningTask: ...
+    @abstractmethod
+    async def update_task(self, task_id: str, status: str) -> FilterTuningTask: ...
+    @abstractmethod
+    async def delete_task(self, task_id: str) -> None: ...
+
+
+class EnrichersStore(ABC):
+    @abstractmethod
+    async def get_enrichers(self) -> list[EnricherConfig]: ...
+    @abstractmethod
+    async def get_enricher(self, enricher_id: str) -> EnricherConfig | None: ...
+    @abstractmethod
+    async def upsert_enricher(self, enricher: EnricherConfig) -> EnricherConfig: ...
+    @abstractmethod
+    async def delete_enricher(self, enricher_id: str) -> None: ...
+
+
+class LoopBacksStore(ABC):
+    @abstractmethod
+    async def get_loopbacks(self) -> list[LoopBackConfig]: ...
+    @abstractmethod
+    async def get_loopback(self, loopback_id: str) -> LoopBackConfig | None: ...
+    @abstractmethod
+    async def upsert_loopback(self, loopback: LoopBackConfig) -> LoopBackConfig: ...
+    @abstractmethod
+    async def delete_loopback(self, loopback_id: str) -> None: ...
+
+
+class FunnelTracesStore(ABC):
+    @abstractmethod
+    async def get_stages(self, item_id: str) -> list[dict]: ...
+    @abstractmethod
+    async def log_stage(self, item_id: str, stage: dict) -> None: ...
+    @abstractmethod
+    async def delete_older_than(self, days: int) -> int: ...
+
+
+class FunnelOrderStore(ABC):
+    @abstractmethod
+    async def get_order(self) -> list[dict]: ...
+    @abstractmethod
+    async def set_order(self, entries: list[dict]) -> None: ...
+    @abstractmethod
+    async def toggle_stage(self, stage_id: str, enabled: bool) -> None: ...
+
+
 class Stores:
     def __init__(
         self,
@@ -282,6 +355,12 @@ class Stores:
         ingestion_queue: IngestionQueueStore,
         ingestion_runs: IngestionRunStore,
         close_fn=None,
+        *,
+        feedback: FeedbackStore | None = None,
+        enrichers: EnrichersStore | None = None,
+        loopbacks: LoopBacksStore | None = None,
+        funnel_traces: FunnelTracesStore | None = None,
+        funnel_order: FunnelOrderStore | None = None,
     ):
         self.items = items
         self.triage = triage
@@ -296,6 +375,11 @@ class Stores:
         self.ingestion_queue = ingestion_queue
         self.ingestion_runs = ingestion_runs
         self._close_fn = close_fn
+        self.feedback = feedback
+        self.enrichers = enrichers
+        self.loopbacks = loopbacks
+        self.funnel_traces = funnel_traces
+        self.funnel_order = funnel_order
 
     async def close(self):
         if self._close_fn:

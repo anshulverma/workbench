@@ -13,9 +13,10 @@ not a back-compat shim — there is no `workbench.models`).
 - `pipeline.py` — PipelineJob, IngestionQueueEntry, IngestionRun.
 - `triage.py` — TriageOption, TriageCard, TriageResponse, TriageResponseResult, CardLink, CardSection, ThreadHunk, CardMessage, ChangeContext.
 - `diff.py` — DiffMetadata, DiffRisk, DiffHunkSection, DiffCardContent.
-- `filters.py` — FilterRule.
+- `feedback.py` — FeedbackCorrection, FilterTuningTask.
+- `filters.py` — FilterRule (extended with prompt, sources, confidence, origin, matched, enabled, label, order_index).
 - `preferences.py` — InteractionEntry, PreferenceSummary, Fact, EntityKnowledge, Relationship, SystemAction, UserTodo, InterpretedResponse.
-- `enrichment.py` — EnrichmentTrace, TraceFilters, EnrichmentBudget.
+- `enrichment.py` — EnrichmentTrace, TraceFilters, EnrichmentBudget, EnricherConfig, LoopBackConfig.
 - `sources.py` — SourceRelevanceConfig, SourceConfig, SourceConfigUpdate.
 - `plans.py` — Plan, PlanFilters, PlanUpdate.
 

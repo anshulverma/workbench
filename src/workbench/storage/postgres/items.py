@@ -46,9 +46,13 @@ class PgItemStore(ItemStore):
                (id, source_type, source_id, summary, category, origin,
                 priority, status, raw_data, created_at, updated_at,
                 parent_item_id, action_source, action_category,
-                snoozed_until, completed_at)
+                snoozed_until, completed_at,
+                tags, llm_summary, enriched_context, funnel_log,
+                verdict_action, verdict_priority, verdict_confidence)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11,
-                       $12, $13, $14, $15, $16)""",
+                       $12, $13, $14, $15, $16,
+                       $17::jsonb, $18, $19::jsonb, $20::jsonb,
+                       $21, $22, $23)""",
             item.id,
             item.source_type,
             item.source_id,
@@ -65,6 +69,13 @@ class PgItemStore(ItemStore):
             item.action_category,
             item.snoozed_until,
             item.completed_at,
+            json.dumps(item.tags),
+            item.llm_summary,
+            json.dumps(item.enriched_context),
+            json.dumps(item.funnel_log),
+            item.verdict_action,
+            item.verdict_priority,
+            item.verdict_confidence,
         )
         return item
 
@@ -207,6 +218,19 @@ class PgItemStore(ItemStore):
         raw = row["raw_data"]
         if isinstance(raw, str):
             raw = json.loads(raw)
+
+        tags = row.get("tags")
+        if isinstance(tags, str):
+            tags = json.loads(tags)
+
+        enriched_context = row.get("enriched_context")
+        if isinstance(enriched_context, str):
+            enriched_context = json.loads(enriched_context)
+
+        funnel_log = row.get("funnel_log")
+        if isinstance(funnel_log, str):
+            funnel_log = json.loads(funnel_log)
+
         return Item(
             id=row["id"],
             source_type=row["source_type"],
@@ -222,4 +246,11 @@ class PgItemStore(ItemStore):
             parent_item_id=row.get("parent_item_id"),
             action_source=row.get("action_source"),
             action_category=row.get("action_category"),
+            tags=tags if tags else [],
+            llm_summary=row.get("llm_summary"),
+            enriched_context=enriched_context if enriched_context else {},
+            funnel_log=funnel_log if funnel_log else [],
+            verdict_action=row.get("verdict_action"),
+            verdict_priority=row.get("verdict_priority"),
+            verdict_confidence=row.get("verdict_confidence"),
         )

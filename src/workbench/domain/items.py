@@ -49,6 +49,13 @@ class Item(BaseModel):
     action_category: str | None = None
     snoozed_until: datetime | None = None
     completed_at: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    llm_summary: str | None = None
+    enriched_context: dict = Field(default_factory=dict)
+    funnel_log: list[dict] = Field(default_factory=list)
+    verdict_action: str | None = None
+    verdict_priority: str | None = None
+    verdict_confidence: int | None = None
 
 
 class ItemUpdate(BaseModel):

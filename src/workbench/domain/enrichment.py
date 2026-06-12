@@ -9,6 +9,8 @@ __all__ = [
     "EnrichmentTrace",
     "TraceFilters",
     "EnrichmentBudget",
+    "EnricherConfig",
+    "LoopBackConfig",
 ]
 
 
@@ -30,3 +32,29 @@ class TraceFilters(BaseModel):
 class EnrichmentBudget(BaseModel):
     max_api_calls: int = 3
     max_seconds: int = 10
+
+
+class EnricherConfig(BaseModel):
+    """Configuration for an enrichment stage in the pipeline."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    stage: str  # e.g. "context", "summary", "risk"
+    provider: str
+    enabled: bool = True
+    config: dict = Field(default_factory=dict)
+    order_index: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LoopBackConfig(BaseModel):
+    """Configuration for a loopback (re-processing) stage."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    trigger: str  # condition that triggers re-processing
+    target_stage: str  # which stage to loop back to
+    max_iterations: int = 3
+    enabled: bool = True
+    config: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

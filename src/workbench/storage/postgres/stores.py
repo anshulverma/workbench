@@ -1,12 +1,16 @@
 from workbench.storage.base import Stores
 from workbench.storage.postgres.config import PgConfigStore
+from workbench.storage.postgres.enrichers import PgEnrichersStore
 from workbench.storage.postgres.enrichment import PgEnrichmentTraceStore
+from workbench.storage.postgres.feedback import PgFeedbackStore
 from workbench.storage.postgres.filter_rules import PgFilterRuleStore
+from workbench.storage.postgres.funnel import PgFunnelOrderStore, PgFunnelTracesStore
 from workbench.storage.ingestion_runs import PgIngestionRunStore
 from workbench.storage.postgres.ingestion_queue import PgIngestionQueueStore
 from workbench.storage.postgres.interactions import PgInteractionStore
 from workbench.storage.postgres.items import PgItemStore
 from workbench.storage.postgres.jobs import PgJobStore
+from workbench.storage.postgres.loopbacks import PgLoopBacksStore
 from workbench.storage.postgres.plans import PgPlanStore
 from workbench.storage.postgres.pool import create_pool
 from workbench.storage.postgres.processed import PgProcessedStore
@@ -34,4 +38,9 @@ async def create_postgres_stores(dsn: str) -> Stores:
         ingestion_queue=PgIngestionQueueStore(pool),
         ingestion_runs=PgIngestionRunStore(pool),
         close_fn=close,
+        feedback=PgFeedbackStore(pool),
+        enrichers=PgEnrichersStore(pool),
+        loopbacks=PgLoopBacksStore(pool),
+        funnel_traces=PgFunnelTracesStore(pool),
+        funnel_order=PgFunnelOrderStore(pool),
     )
