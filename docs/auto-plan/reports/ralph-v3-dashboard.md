@@ -15,7 +15,7 @@ Read the design prototype files at `/tmp/design_v3/workbench/project/app/` for v
 | S6 T275571237 funnel core (FunnelStage, ItemFunnelDialog, MultiLineChart) | 6 | S1,S4,S5 | DONE | 49 new tests; 4 components + smoothPath helper |
 | S8 T275571278 settings sub-tabs | 8 | S4,S7 | DONE | 389 vitest; tab container + SettingsSystem extraction |
 | S9 T275571301 action items changes | 9 | S5,S6 | DONE | 385 vitest; removed Work Mode, added throughput+filter tuning |
-| S10 T275571322 triage changes | 10 | S6,S4 | TODO | |
+| S10 T275571322 triage changes | 10 | S6,S4 | DONE | 389 vitest; est badges, themes, card click, throughput chart |
 | S11 T275571279 ingestion + LiveTail | 11 | S6,S10,S7 | TODO | |
 | S12 T275571308 ingestion funnel page (filters) | 12 | S4,S5,S6,S10 | TODO | |
 | S13 T275571331 search page | 13 | S4,S6,S12 | TODO | |
