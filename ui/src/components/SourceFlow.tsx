@@ -672,7 +672,7 @@ function SourceFlowInner({
               }}
             >
               <img
-                src="/wb-icon.svg"
+                src={`${import.meta.env.BASE_URL}wb-icon.svg`}
                 alt="WorkBench"
                 width="34"
                 height="34"

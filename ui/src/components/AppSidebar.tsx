@@ -70,7 +70,7 @@ export function AppSidebar({ className }: { className?: string }) {
         className="relative mb-3 flex h-11 w-full items-center text-foreground"
       >
         <span className="flex w-16 min-w-[64px] items-center justify-center">
-          <img src="/wb-icon.svg" alt="" width={34} height={34} />
+          <img src={`${import.meta.env.BASE_URL}wb-icon.svg`} alt="" width={34} height={34} />
         </span>
         <span className="wb-rail-label font-display text-sm font-semibold">
           WorkBench
