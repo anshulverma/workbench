@@ -543,7 +543,10 @@ function SourceFlowInner({
   )
 
   return (
-    <div data-testid="source-flow" style={{ width: '100%' }}>
+    <div
+      data-testid="source-flow"
+      style={{ maxWidth: 1100, margin: '0 auto' }}
+    >
       <svg
         viewBox={`0 0 ${W} ${H}`}
         width="100%"

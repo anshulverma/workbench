@@ -266,15 +266,7 @@ export function Overview() {
             sources → workbench → outputs · hover to isolate
           </span>
         </CardHeader>
-        <CardContent
-          style={{
-            padding: '12px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
+        <CardContent style={{ padding: '12px 16px 28px' }}>
           <SourceFlow
             data={
               sourcesRollup.data
