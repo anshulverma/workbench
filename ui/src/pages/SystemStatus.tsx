@@ -1,0 +1,1056 @@
+// SystemStatus page — full-page live system status diagram (v4).
+//
+// A left-to-right lane-based SVG diagram showing connectors, ingestion edge,
+// core, services, and storage. Node cards show icon, label, status, ping, and
+// utilization. Clicking a node opens a searchable log viewer dialog.
+
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  Activity,
+  ArrowLeftRight,
+  Boxes,
+  Brain,
+  Chrome,
+  Database,
+  Github,
+  GitPullRequestArrow,
+  HardDrive,
+  Hexagon,
+  MessageCircle,
+  Search,
+  Sparkles,
+  TriangleAlert,
+  Workflow,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
+import { StatCard } from '@/components/StatCard'
+import { Mono } from '@/components/Mono'
+import { Portal } from '@/components/Portal'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useHealth } from '@/hooks/useStats'
+import { ApiError } from '@/lib/api'
+
+// ---- Status + role vocabularies (matching design prototype) ---- //
+
+const SYS_STATUS: Record<string, { color: string; label: string }> = {
+  healthy: { color: '#9ad08a', label: 'operational' },
+  degraded: { color: '#ff6a2b', label: 'degraded' },
+  unhealthy: { color: '#e5484d', label: 'down' },
+  disabled: { color: '#71717a', label: 'paused' },
+  planned: { color: '#71717a', label: 'planned' },
+}
+
+const ROLE_TONE: Record<string, string> = {
+  connector: '#71d2ff',
+  service: '#b79cf7',
+  core: '#ff6a2b',
+  storage: '#9ad08a',
+}
+
+// ---- Icon lookup by string name ---- //
+
+const ICON_MAP: Record<string, LucideIcon> = {
+  Activity,
+  ArrowLeftRight,
+  Boxes,
+  Brain,
+  Chrome,
+  Database,
+  Github,
+  GitPullRequestArrow,
+  HardDrive,
+  Hexagon,
+  MessageCircle,
+  Search,
+  Sparkles,
+  Workflow,
+  X,
+}
+
+function IconByName({ name, size }: { name: string; size: number }) {
+  const Comp = ICON_MAP[name] ?? Activity
+  return <Comp size={size} />
+}
+
+// ---- Data types ---- //
+
+export interface SystemNode {
+  id: string
+  lane: number
+  label: string
+  icon: string
+  role: string
+  caps?: string[]
+  status: string
+  latency?: number | null
+  util?: number | null
+  lastPing?: number | null
+  sub?: string
+}
+
+export interface SystemEdge {
+  from: string
+  to: string
+  dir?: string
+  kind?: string
+}
+
+export interface SystemStatusData {
+  nodes: SystemNode[]
+  edges: SystemEdge[]
+  lanes: string[]
+  summary: { version: string }
+}
+
+export interface LogLine {
+  t: string
+  level: string
+  msg: string
+}
+
+export type SystemLogs = Record<string, LogLine[]>
+
+// ---- Default mock data (used when no API is available) ---- //
+
+const DEFAULT_SYSTEM_STATUS: SystemStatusData = {
+  lanes: ['Connectors', 'Ingest', 'Core', 'Services', 'Storage'],
+  summary: { version: '0.4.0' },
+  nodes: [
+    { id: 'phabricator', lane: 0, label: 'Phabricator', icon: 'GitPullRequestArrow', role: 'connector', caps: ['in', 'out'], status: 'healthy', latency: 120, util: 34, lastPing: 2 },
+    { id: 'gchat', lane: 0, label: 'Google Chat', icon: 'MessageCircle', role: 'connector', caps: ['in', 'out'], status: 'healthy', latency: 85, util: 22, lastPing: 1 },
+    { id: 'github', lane: 0, label: 'GitHub', icon: 'Github', role: 'connector', caps: ['in'], status: 'planned', latency: null, util: null, lastPing: null },
+    { id: 'browser', lane: 0, label: 'Browser Ext', icon: 'Chrome', role: 'connector', caps: ['in'], status: 'planned', latency: null, util: null, lastPing: null },
+    { id: 'ingest-queue', lane: 1, label: 'Ingest Queue', icon: 'Boxes', role: 'service', status: 'healthy', latency: 15, util: 41, lastPing: 1 },
+    { id: 'scorer', lane: 1, label: 'Queue Scorer', icon: 'Sparkles', role: 'service', status: 'healthy', latency: 210, util: 58, lastPing: 3 },
+    { id: 'workbench', lane: 2, label: 'WorkBench Core', icon: 'Hexagon', role: 'core', status: 'healthy', latency: 8, util: 27, lastPing: 1 },
+    { id: 'llm', lane: 3, label: 'LLM Provider', icon: 'Sparkles', role: 'service', status: 'healthy', latency: 680, util: 72, lastPing: 2 },
+    { id: 'memory', lane: 3, label: 'Memory (Zep)', icon: 'Brain', role: 'service', status: 'degraded', latency: 1200, util: 89, lastPing: 8 },
+    { id: 'enrichment', lane: 3, label: 'Enrichment', icon: 'Workflow', role: 'service', status: 'healthy', latency: 340, util: 45, lastPing: 2 },
+    { id: 'postgres', lane: 4, label: 'PostgreSQL', icon: 'Database', role: 'storage', status: 'healthy', latency: 4, util: 18, lastPing: 1 },
+    { id: 'disk', lane: 4, label: 'Disk Cache', icon: 'HardDrive', role: 'storage', status: 'healthy', latency: 1, util: 12, lastPing: 1 },
+  ],
+  edges: [
+    { from: 'phabricator', to: 'ingest-queue', dir: 'right' },
+    { from: 'gchat', to: 'ingest-queue', dir: 'right' },
+    { from: 'github', to: 'ingest-queue', dir: 'right' },
+    { from: 'browser', to: 'ingest-queue', dir: 'right' },
+    { from: 'ingest-queue', to: 'scorer', dir: 'down' },
+    { from: 'scorer', to: 'workbench', dir: 'right' },
+    { from: 'ingest-queue', to: 'workbench', dir: 'right' },
+    { from: 'workbench', to: 'llm', dir: 'right' },
+    { from: 'workbench', to: 'memory', dir: 'right' },
+    { from: 'workbench', to: 'enrichment', dir: 'right' },
+    { from: 'workbench', to: 'postgres', dir: 'right' },
+    { from: 'workbench', to: 'disk', dir: 'right' },
+    { from: 'workbench', to: 'gchat', dir: 'left', kind: 'reply' },
+    { from: 'workbench', to: 'phabricator', dir: 'left', kind: 'reply' },
+  ],
+}
+
+const DEFAULT_SYSTEM_LOGS: SystemLogs = {
+  phabricator: [
+    { t: '2026-06-10T09:00:01Z', level: 'INFO', msg: 'polling phabricator for new diffs' },
+    { t: '2026-06-10T09:00:02Z', level: 'INFO', msg: 'fetched 12 diffs, 3 new since last run' },
+    { t: '2026-06-10T09:00:03Z', level: 'WARN', msg: 'rate limit approaching: 80/100 calls used' },
+  ],
+  gchat: [
+    { t: '2026-06-10T09:01:00Z', level: 'INFO', msg: 'connected to google chat webhook' },
+    { t: '2026-06-10T09:01:05Z', level: 'INFO', msg: 'sent triage card to space "WorkBench"' },
+  ],
+  'ingest-queue': [
+    { t: '2026-06-10T09:00:04Z', level: 'INFO', msg: 'enqueued 3 items from phabricator' },
+    { t: '2026-06-10T09:00:05Z', level: 'INFO', msg: 'queue depth: 7 items' },
+  ],
+  scorer: [
+    { t: '2026-06-10T09:00:06Z', level: 'INFO', msg: 'scored item phab-1234: urgency=0.82' },
+    { t: '2026-06-10T09:00:07Z', level: 'INFO', msg: 'scored item phab-1235: urgency=0.31' },
+  ],
+  workbench: [
+    { t: '2026-06-10T09:00:10Z', level: 'INFO', msg: 'processing batch of 3 items' },
+    { t: '2026-06-10T09:00:12Z', level: 'INFO', msg: 'extraction complete: 2 action items, 1 informational' },
+    { t: '2026-06-10T09:00:13Z', level: 'WARN', msg: 'enrichment budget exceeded for item phab-1236' },
+  ],
+  llm: [
+    { t: '2026-06-10T09:00:11Z', level: 'INFO', msg: 'plugboard request: extraction prompt (680ms)' },
+    { t: '2026-06-10T09:00:14Z', level: 'INFO', msg: 'plugboard request: triage prompt (520ms)' },
+  ],
+  memory: [
+    { t: '2026-06-10T09:00:15Z', level: 'WARN', msg: 'zep server latency spike: 1200ms' },
+    { t: '2026-06-10T09:00:16Z', level: 'ERROR', msg: 'failed to write preference fact: connection timeout' },
+    { t: '2026-06-10T09:00:17Z', level: 'INFO', msg: 'queued write for retry (attempt 2/3)' },
+  ],
+  enrichment: [
+    { t: '2026-06-10T09:00:18Z', level: 'INFO', msg: 'shallow enrichment for phab-1234 (340ms)' },
+  ],
+  postgres: [
+    { t: '2026-06-10T09:00:19Z', level: 'INFO', msg: 'stored 2 items, 1 triage card created' },
+  ],
+  disk: [
+    { t: '2026-06-10T09:00:20Z', level: 'INFO', msg: 'cache hit for diff hunks phab-1234' },
+  ],
+}
+
+// ---- SystemDiagram component ---- //
+
+function SystemDiagram({
+  data,
+  onSelect,
+  selectedId,
+}: {
+  data: SystemStatusData
+  onSelect: (id: string | null) => void
+  selectedId: string | null
+}) {
+  const W = 1080
+  const laneCount = data.lanes.length
+  const padX = 90
+  const padTop = 52
+  const padBot = 24
+  const rowH = 74
+  const nodeW = 156
+  const nodeH = 52
+
+  const byLane = data.lanes.map((_, i) => data.nodes.filter((n) => n.lane === i))
+  const maxRows = Math.max(...byLane.map((c) => c.length))
+  const H = padTop + padBot + maxRows * rowH
+
+  const laneX = (lane: number) =>
+    padX + lane * ((W - padX * 2 - nodeW) / (laneCount - 1))
+
+  const pos: Record<string, { x: number; y: number }> = {}
+  byLane.forEach((col, lane) => {
+    const colH = col.length * rowH
+    const top = padTop + (maxRows * rowH - colH) / 2
+    col.forEach((n, i) => {
+      pos[n.id] = { x: laneX(lane), y: top + i * rowH + (rowH - nodeH) / 2 }
+    })
+  })
+
+  const cy = (id: string) => pos[id].y + nodeH / 2
+  const anchor = (id: string, side: 'l' | 'r') => ({
+    x: pos[id].x + (side === 'r' ? nodeW : 0),
+    y: cy(id),
+  })
+
+  const edgePath = (e: SystemEdge) => {
+    const a = pos[e.from]
+    const b = pos[e.to]
+    const fromRight = a.x <= b.x
+    const s = anchor(e.from, fromRight ? 'r' : 'l')
+    const t = anchor(e.to, fromRight ? 'l' : 'r')
+    const mx = (s.x + t.x) / 2
+    return `M${s.x},${s.y} C${mx},${s.y} ${mx},${t.y} ${t.x},${t.y}`
+  }
+
+  const nodeStatus = (n: SystemNode) => SYS_STATUS[n.status] || SYS_STATUS.disabled
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      height="auto"
+      style={{ display: 'block' }}
+      role="img"
+      aria-label="WorkBench system diagram"
+      data-testid="system-diagram"
+    >
+      {/* lane labels */}
+      {data.lanes.map((lab, i) => (
+        <text
+          key={lab}
+          x={laneX(i) + nodeW / 2}
+          y={26}
+          textAnchor="middle"
+          fontFamily="var(--font-mono)"
+          fontSize="11"
+          fontWeight="700"
+          letterSpacing="1.5"
+          fill="var(--muted-foreground)"
+          style={{ textTransform: 'uppercase' }}
+        >
+          {lab}
+        </text>
+      ))}
+
+      {/* edges */}
+      {data.edges.map((e, i) => {
+        const d = edgePath(e)
+        const reply = e.kind === 'reply'
+        const dim = selectedId && e.from !== selectedId && e.to !== selectedId
+        const stroke = reply ? '#b79cf7' : 'var(--border)'
+        return (
+          <g
+            key={i}
+            style={{
+              opacity: dim ? 0.18 : 1,
+              transition: 'opacity .15s ease',
+            }}
+          >
+            <path
+              d={d}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={reply ? 1.5 : 2}
+              strokeDasharray={reply ? '5 4' : undefined}
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
+        )
+      })}
+
+      {/* nodes */}
+      {data.nodes.map((n) => {
+        const st = nodeStatus(n)
+        const planned = n.status === 'planned'
+        const off = n.status === 'disabled' || planned
+        const sel = selectedId === n.id
+        const tone = planned ? '#71717a' : (ROLE_TONE[n.role] || '#71d2ff')
+        const p = pos[n.id]
+        return (
+          <g
+            key={n.id}
+            transform={`translate(${p.x},${p.y})`}
+            style={{ cursor: 'pointer' }}
+            onClick={() => onSelect(sel ? null : n.id)}
+            data-testid={`system-node-${n.id}`}
+            role="button"
+            aria-label={`${n.label} node`}
+          >
+            <rect
+              width={nodeW}
+              height={nodeH}
+              rx="8"
+              fill="var(--card)"
+              stroke={sel ? tone : 'var(--border)'}
+              strokeWidth={sel ? 2 : 1}
+              strokeDasharray={planned ? '4 3' : undefined}
+              style={{ opacity: off ? 0.6 : 1 }}
+            />
+            <rect
+              x="0"
+              y="0"
+              width="3"
+              height={nodeH}
+              rx="1.5"
+              fill={st.color}
+              style={{ opacity: off ? 0.6 : 1 }}
+            />
+            <foreignObject x="0" y="0" width={nodeW} height={nodeH}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  height: '100%',
+                  padding: '0 11px 0 13px',
+                  boxSizing: 'border-box',
+                  opacity: off ? 0.7 : 1,
+                }}
+              >
+                <span
+                  style={{
+                    flexShrink: 0,
+                    width: 30,
+                    height: 30,
+                    borderRadius: 7,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: `color-mix(in srgb, ${tone} 16%, transparent)`,
+                    color: tone,
+                  }}
+                >
+                  <IconByName name={n.icon} size={16} />
+                </span>
+                <span
+                  style={{
+                    display: 'grid',
+                    gap: 2,
+                    minWidth: 0,
+                    flex: 1,
+                    lineHeight: 1.1,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      color: 'var(--foreground)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {n.label}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 9,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: st.color,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '.03em',
+                      }}
+                    >
+                      {st.label}
+                    </span>
+                    {!off && n.lastPing != null && (
+                      <span style={{ color: 'var(--muted-foreground)' }}>
+                        {' '}
+                        · {n.lastPing}s · {n.util}%
+                      </span>
+                    )}
+                  </span>
+                </span>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 3,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: 9999,
+                      background: st.color,
+                    }}
+                  />
+                  {n.role === 'connector' && n.caps && n.caps.includes('out') && (
+                    <span
+                      title="bidirectional"
+                      style={{ color: '#b79cf7', display: 'flex' }}
+                    >
+                      <ArrowLeftRight size={10} />
+                    </span>
+                  )}
+                </span>
+              </div>
+            </foreignObject>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+// ---- SystemLogViewer component ---- //
+
+const LVL_COLOR: Record<string, string> = {
+  INFO: 'var(--muted-foreground)',
+  DEBUG: 'var(--muted-foreground)',
+  WARN: 'var(--brand)',
+  ERROR: 'var(--destructive)',
+}
+
+function SystemLogViewer({
+  node,
+  logs,
+  onClose,
+}: {
+  node: SystemNode | null
+  logs: SystemLogs
+  onClose: () => void
+}) {
+  const [q, setQ] = useState('')
+  const [level, setLevel] = useState('all')
+  const scroller = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (scroller.current) {
+      scroller.current.scrollTop = scroller.current.scrollHeight
+    }
+  }, [node])
+
+  // Reset search/filter when node changes
+  useEffect(() => {
+    setQ('')
+    setLevel('all')
+  }, [node?.id])
+
+  if (!node) return null
+
+  const st = SYS_STATUS[node.status] || SYS_STATUS.disabled
+  const tone = ROLE_TONE[node.role] || '#71d2ff'
+  const raw = logs[node.id] || []
+  const query = q.trim().toLowerCase()
+  const lines = raw.filter(
+    (l) =>
+      (level === 'all' || l.level === level) &&
+      (!query ||
+        l.msg.toLowerCase().includes(query) ||
+        l.level.toLowerCase().includes(query)),
+  )
+  const counts = raw.reduce<Record<string, number>>((a, l) => {
+    a[l.level] = (a[l.level] || 0) + 1
+    return a
+  }, {})
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString([], { hour12: false })
+
+  return (
+    <Portal>
+      <div
+        className="wb-overlay"
+        style={{ alignItems: 'center', paddingTop: 0, zIndex: 120 }}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose()
+        }}
+        data-testid="log-viewer-overlay"
+      >
+        <div
+          className="wb-dialog-card"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${node.label} logs`}
+          style={{
+            width: 'min(760px, 94vw)',
+            padding: 0,
+            overflow: 'hidden',
+            maxHeight: '86vh',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          {/* header */}
+          <div
+            style={{
+              padding: '16px 18px',
+              borderBottom: '1px solid var(--border)',
+              display: 'grid',
+              gap: 12,
+            }}
+          >
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+            >
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  background: `color-mix(in srgb, ${tone} 16%, transparent)`,
+                  color: tone,
+                }}
+              >
+                <IconByName name={node.icon} size={17} />
+              </span>
+              <div style={{ display: 'grid', lineHeight: 1.2 }}>
+                <span style={{ fontSize: 15, fontWeight: 600 }}>
+                  {node.label}{' '}
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 11,
+                      fontWeight: 400,
+                      color: 'var(--muted-foreground)',
+                    }}
+                  >
+                    logs
+                  </span>
+                </span>
+                {node.sub && (
+                  <span
+                    style={{ fontSize: 11, color: 'var(--muted-foreground)' }}
+                  >
+                    {node.sub}
+                  </span>
+                )}
+              </div>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginLeft: 'auto',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                  color: st.color,
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 9999,
+                    background: st.color,
+                  }}
+                />
+                {st.label}
+                {node.latency != null ? ` · ${node.latency}ms` : ''}
+              </span>
+              <button
+                className="wb-iconbtn"
+                style={{ width: 28, height: 28 }}
+                aria-label="Close"
+                onClick={onClose}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flex: 1,
+                  minWidth: 180,
+                  padding: '6px 10px',
+                  borderRadius: 'var(--radius-control,4px)',
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface-lowest)',
+                }}
+              >
+                <Search
+                  size={14}
+                  style={{ color: 'var(--muted-foreground)' }}
+                />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Filter logs…"
+                  aria-label="Filter logs"
+                  data-testid="log-search-input"
+                  style={{
+                    flex: 1,
+                    background: 'transparent',
+                    border: 0,
+                    outline: 'none',
+                    color: 'var(--foreground)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                  }}
+                />
+                {q && (
+                  <button
+                    className="wb-iconbtn"
+                    style={{ width: 22, height: 22 }}
+                    aria-label="Clear"
+                    onClick={() => setQ('')}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 4 }} data-testid="level-tabs">
+                {['all', 'INFO', 'WARN', 'ERROR'].map((lv) => (
+                  <button
+                    key={lv}
+                    onClick={() => setLevel(lv)}
+                    data-testid={`level-tab-${lv}`}
+                    style={{
+                      padding: '5px 9px',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 11,
+                      borderRadius: 'var(--radius-control,4px)',
+                      border: '1px solid',
+                      borderColor:
+                        level === lv
+                          ? LVL_COLOR[lv] || 'var(--primary)'
+                          : 'var(--border)',
+                      background:
+                        level === lv
+                          ? `color-mix(in srgb, ${LVL_COLOR[lv] || 'var(--primary)'} 14%, transparent)`
+                          : 'transparent',
+                      color:
+                        level === lv
+                          ? LVL_COLOR[lv] || 'var(--foreground)'
+                          : 'var(--muted-foreground)',
+                    }}
+                  >
+                    {lv}
+                    {lv !== 'all' && counts[lv] ? ` ${counts[lv]}` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* scrollable log body */}
+          <div
+            ref={scroller}
+            className="wb-log"
+            data-testid="log-lines"
+            style={{
+              flex: 1,
+              height: 'auto',
+              minHeight: 240,
+              maxHeight: '58vh',
+              border: 0,
+              borderRadius: 0,
+              overflow: 'auto',
+              padding: '8px 18px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+            }}
+          >
+            {lines.length === 0 ? (
+              <div
+                style={{
+                  padding: 24,
+                  textAlign: 'center',
+                  color: 'var(--muted-foreground)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                }}
+              >
+                // no matching log lines
+              </div>
+            ) : (
+              lines.map((l, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    gap: 12,
+                    padding: '2px 0',
+                    alignItems: 'baseline',
+                  }}
+                  data-testid="log-line"
+                >
+                  <span style={{ color: 'var(--muted-foreground)', flexShrink: 0 }}>
+                    {fmt(l.t)}
+                  </span>
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      width: 44,
+                      fontWeight: 700,
+                      color: LVL_COLOR[l.level] || 'var(--muted-foreground)',
+                    }}
+                  >
+                    {l.level}
+                  </span>
+                  <span
+                    style={{
+                      color:
+                        l.level === 'ERROR'
+                          ? 'var(--error-text)'
+                          : 'var(--foreground)',
+                    }}
+                  >
+                    {l.msg}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* footer */}
+          <div
+            style={{
+              padding: '8px 18px',
+              borderTop: '1px solid var(--border)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              color: 'var(--muted-foreground)',
+            }}
+            data-testid="log-footer"
+          >
+            <span>
+              {lines.length} / {raw.length} lines
+            </span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 9999,
+                  background: st.color,
+                  animation: 'wb-pulse 1.6s ease infinite',
+                }}
+              />
+              streaming
+            </span>
+          </div>
+        </div>
+      </div>
+    </Portal>
+  )
+}
+
+// ---- Main page component ---- //
+
+function isUnauthorized(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401
+}
+
+export function SystemStatus() {
+  const health = useHealth()
+  const [logNode, setLogNode] = useState<SystemNode | null>(null)
+
+  // In a real implementation these would come from an API hook.
+  // For now use the built-in defaults.
+  const systemData = DEFAULT_SYSTEM_STATUS
+  const systemLogs = DEFAULT_SYSTEM_LOGS
+
+  // Derive page-level states from the health query
+  const isUnauth = health.isError && isUnauthorized(health.error)
+
+  if (isUnauth) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 p-10 text-center text-muted-foreground">
+        <p className="text-lg font-medium">token unavailable</p>
+        <p className="text-sm">
+          Check that the SSH tunnel is up and the server is bound to loopback.
+        </p>
+      </div>
+    )
+  }
+
+  if (health.isPending) {
+    return (
+      <div data-testid="system-loading" className="space-y-4">
+        <Skeleton className="h-8 w-48" />
+        <div className="grid grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-24" />
+          ))}
+        </div>
+        <Skeleton className="h-96" />
+      </div>
+    )
+  }
+
+  if (health.isError) {
+    const reqId =
+      health.error instanceof ApiError ? health.error.requestId : null
+    return (
+      <div className="p-6 text-destructive" data-testid="system-error">
+        <p>Failed to load system status: {(health.error as Error).message}</p>
+        {reqId && (
+          <p className="text-xs">Request ID: {reqId}</p>
+        )}
+      </div>
+    )
+  }
+
+  const all = systemData.nodes
+  const up = all.filter((n) => n.status === 'healthy').length
+  const deg = all.filter((n) => n.status === 'degraded').length
+  const down = all.filter((n) => n.status === 'unhealthy').length
+  const live = all.filter((n) => n.status !== 'disabled' && n.status !== 'planned').length
+  const overall = down > 0 ? 'unhealthy' : deg > 0 ? 'degraded' : 'healthy'
+  const ov = SYS_STATUS[overall]
+  const conns = all.filter((n) => n.role === 'connector')
+  const isDegraded = deg > 0
+
+  return (
+    <div className="space-y-5 wb-enter" data-testid="system-status-page">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold">System Status</h1>
+          <p className="text-sm text-muted-foreground">
+            Live map of every connector, service, and store. Data flows left
+            &rarr; right into WorkBench; replies flow back out through two-way
+            connectors.
+          </p>
+        </div>
+        <span
+          className="inline-flex items-center gap-2 rounded-md px-3 py-1.5"
+          style={{
+            border: `1px solid color-mix(in srgb, ${ov.color} 45%, transparent)`,
+            background: `color-mix(in srgb, ${ov.color} 12%, transparent)`,
+          }}
+          data-testid="overall-status"
+        >
+          <span
+            className="size-2 rounded-full"
+            style={{
+              background: ov.color,
+              animation: 'wb-pulse 1.6s ease infinite',
+            }}
+          />
+          <Mono className="text-xs font-bold uppercase tracking-wider" style={{ color: ov.color }}>
+            {ov.label}
+          </Mono>
+        </span>
+      </div>
+
+      <div className="grid grid-cols-4 gap-4" data-testid="stat-cards">
+        <StatCard label="Operational" value={`${up}/${live}`} />
+        <StatCard label="Degraded" value={deg} danger={deg > 0} />
+        <StatCard label="Connectors" value={conns.length} />
+        <StatCard
+          label="Config Version"
+          value={<Mono>{systemData.summary.version}</Mono>}
+        />
+      </div>
+
+      {isDegraded && (
+        <div
+          role="status"
+          className="flex items-center gap-2.5 rounded-md border px-3.5 py-2.5 text-sm"
+          style={{
+            borderColor: 'color-mix(in srgb, var(--primary) 45%, transparent)',
+            background: 'color-mix(in srgb, var(--primary) 8%, transparent)',
+          }}
+          data-testid="degraded-banner"
+        >
+          <TriangleAlert size={15} style={{ color: 'var(--brand)' }} />
+          <span>
+            Memory layer (Zep) is degraded — preference-fact writes are queued.
+            Triage and ingestion are unaffected.
+          </span>
+        </div>
+      )}
+
+      <Card>
+        <CardHeader className="border-b border-border px-4 py-3.5">
+          <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            System Diagram
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4">
+          <SystemDiagram
+            data={systemData}
+            onSelect={(id) =>
+              setLogNode(id ? all.find((n) => n.id === id) ?? null : null)
+            }
+            selectedId={logNode?.id ?? null}
+          />
+          {/* Legend */}
+          <div
+            className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5 border-t border-border pt-3"
+            data-testid="diagram-legend"
+          >
+            {Object.entries(ROLE_TONE).map(([role, tone]) => (
+              <span
+                key={role}
+                className="inline-flex items-center gap-1.5 text-[11px] capitalize text-muted-foreground"
+              >
+                <span
+                  className="size-2.5 rounded-sm"
+                  style={{ background: tone }}
+                  data-testid={`legend-${role}`}
+                />
+                {role}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span
+                style={{
+                  width: 14,
+                  height: 0,
+                  borderTop: '1.5px dashed #b79cf7',
+                }}
+              />
+              reply path
+            </span>
+            <span
+              className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+              data-testid="legend-planned"
+            >
+              <span
+                className="size-2.5 rounded-sm"
+                style={{ border: '1px dashed var(--muted-foreground)' }}
+              />
+              planned &middot; not live
+            </span>
+            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+              click a node to view its logs
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <SystemLogViewer
+        node={logNode}
+        logs={systemLogs}
+        onClose={() => setLogNode(null)}
+      />
+    </div>
+  )
+}
+
+// ---- Compact summary widget for Overview page ---- //
+
+export function SystemStatusSummary() {
+  const systemData = DEFAULT_SYSTEM_STATUS
+
+  const byRole: Record<string, { total: number; healthy: number }> = {}
+  for (const n of systemData.nodes) {
+    const lane = systemData.lanes[n.lane] ?? 'Other'
+    if (!byRole[lane]) byRole[lane] = { total: 0, healthy: 0 }
+    byRole[lane].total++
+    if (n.status === 'healthy') byRole[lane].healthy++
+  }
+
+  return (
+    <Card data-testid="system-summary-widget">
+      <CardHeader className="pb-2">
+        <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          System Status
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-3">
+          {Object.entries(byRole).map(([lane, { total, healthy }]) => (
+            <span
+              key={lane}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 font-mono text-xs"
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{
+                  background:
+                    healthy === total ? '#9ad08a' : '#ff6a2b',
+                }}
+              />
+              {lane}:{' '}
+              <strong>
+                {healthy}/{total}
+              </strong>
+            </span>
+          ))}
+        </div>
+        <Link
+          to="/system"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          data-testid="system-diagram-link"
+        >
+          View system diagram &rarr;
+        </Link>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Re-export for testing
+export { DEFAULT_SYSTEM_STATUS, DEFAULT_SYSTEM_LOGS, SYS_STATUS, ROLE_TONE }

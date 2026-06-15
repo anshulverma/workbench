@@ -23,7 +23,6 @@ import {
 } from 'recharts'
 import { StatCard } from '@/components/StatCard'
 import { ChartCard } from '@/components/ChartCard'
-import { Sparkline } from '@/components/Sparkline'
 import { Mono } from '@/components/Mono'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -48,13 +47,13 @@ import {
   useIngestionTimeseries,
   useJobs,
   useMessenger,
-  useMetricsTimeseries,
   useSourcesRollup,
   useStatsOverview,
   type Job,
 } from '@/hooks/useStats'
 import { useHotFeed, type Item } from '@/hooks/useItems'
 import { useTopology } from '@/hooks/useTopology'
+import { SystemStatusSummary } from '@/pages/SystemStatus'
 
 const PRIORITY_ORDER = ['P0', 'P1', 'P2', 'P3']
 const CATEGORY_ORDER = ['action_item', 'meeting', 'plan_seed', 'informational']
@@ -167,25 +166,6 @@ function TopologyPanel() {
         )}
       </CardContent>
     </Card>
-  )
-}
-
-function SignalVelocityTile() {
-  const series = useMetricsTimeseries('signal_velocity', 24, 'hour')
-  return (
-    <StatCard
-      label="Signal Velocity (24h)"
-      value={
-        series.isError ? 'n/a' : <Mono>{series.data?.reduce((s, p) => s + p.count, 0) ?? '—'}</Mono>
-      }
-      sub={
-        series.isPending ? (
-          <Skeleton className="h-8" />
-        ) : series.isError ? null : (
-          <Sparkline data={series.data ?? []} />
-        )
-      }
-    />
   )
 }
 
@@ -332,18 +312,17 @@ export function Overview() {
           </a>
         </div>
 
+        <HotFeed onOpen={setOpenItem} />
+
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <HotFeed onOpen={setOpenItem} />
           <TopologyPanel />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div data-testid="ingestion-success-tile">
-              <StatCard
-                label="Ingestion Success Rate (7d)"
-                value={<Mono>{pct(ingestionRate)}</Mono>}
-              />
-            </div>
-            <SignalVelocityTile />
+          <div data-testid="ingestion-success-tile">
+            <StatCard
+              label="Ingestion Success Rate (7d)"
+              value={<Mono>{pct(ingestionRate)}</Mono>}
+            />
           </div>
+          <SystemStatusSummary />
         </div>
       </section>
 

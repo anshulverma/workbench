@@ -571,7 +571,7 @@ describe('accessibility', () => {
     const nav = screen.getByRole('navigation', { name: /primary/i })
     const links = nav.querySelectorAll('a[aria-label]')
 
-    // Logo + 7 routes = 8 labeled links
-    expect(links.length).toBe(8)
+    // Logo + 8 routes = 9 labeled links
+    expect(links.length).toBe(9)
   })
 })

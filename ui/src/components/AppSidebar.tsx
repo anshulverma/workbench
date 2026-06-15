@@ -1,4 +1,5 @@
 import {
+  Activity,
   BookOpen,
   CircleCheckBig,
   LayoutDashboard,
@@ -33,6 +34,7 @@ const NAV: NavItem[] = [
   { to: '/ingestion', label: 'Ingestion', icon: Workflow },
   { to: '/knowledge', label: 'Knowledge', icon: BookOpen },
   { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/system', label: 'System Status', icon: Activity },
 ]
 
 /** Check if a route matches a nav item. */
@@ -72,8 +74,9 @@ export function AppSidebar({ className }: { className?: string }) {
         <span className="flex w-16 min-w-[64px] items-center justify-center">
           <img src={`${import.meta.env.BASE_URL}wb-icon.svg`} alt="" width={34} height={34} />
         </span>
-        <span className="wb-rail-label font-display text-sm font-semibold">
-          WorkBench
+        <span className="wb-rail-label font-display text-sm font-semibold tracking-tight">
+          <span className="text-foreground">Work</span>
+          <span className="text-primary">Bench</span>
         </span>
       </NavLink>
 

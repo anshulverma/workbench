@@ -1,7 +1,8 @@
 // AppSidebar tests (V3 shell restructure, Slice 7).
 //
-// Asserts the nav rail renders 7 items in the correct order, with Search at
-// position 2, and that the removed items (Sources, Messenger) are absent.
+// Asserts the nav rail renders 8 items in the correct order, with Search at
+// position 2, System Status at position 8, and that the removed items
+// (Sources, Messenger) are absent.
 
 import { describe, it, expect } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
@@ -24,11 +25,11 @@ describe('AppSidebar', () => {
     ).toBeInTheDocument()
   })
 
-  it('renders exactly 7 nav items', () => {
+  it('renders exactly 8 nav items', () => {
     renderSidebar()
     const nav = screen.getByRole('navigation', { name: /primary/i })
     const items = within(nav).getAllByRole('listitem')
-    expect(items).toHaveLength(7)
+    expect(items).toHaveLength(8)
   })
 
   it('has Search at position 2 (index 1)', () => {
@@ -54,6 +55,7 @@ describe('AppSidebar', () => {
       'Ingestion',
       'Knowledge',
       'Settings',
+      'System Status',
     ])
   })
 

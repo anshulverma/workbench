@@ -1,5 +1,5 @@
 import { Component } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Command } from 'lucide-react'
 import { useHealth } from '@/hooks/useStats'
 import { Mono } from '@/components/Mono'
@@ -28,6 +28,7 @@ const ROUTE_LABELS: ReadonlyArray<readonly [string, string]> = [
   ['/knowledge', 'KNOWLEDGE.FACTS'],
   ['/messenger', 'MESSENGER'],
   ['/settings', 'SETTINGS'],
+  ['/system', 'SYSTEM.STATUS'],
   ['/', 'OVERVIEW'],
 ]
 
@@ -64,11 +65,18 @@ function SyncStatusInner() {
 }
 
 function SyncDot({ status }: { status: string }) {
+  const navigate = useNavigate()
   return (
-    <span
-      className="inline-flex items-center gap-2 text-xs text-muted-foreground"
-      aria-label={`Sync status: ${status}`}
-      role="status"
+    <button
+      type="button"
+      onClick={() => navigate('/system')}
+      className={cn(
+        'inline-flex items-center gap-2 text-xs text-muted-foreground',
+        'transition-colors hover:text-foreground',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+      )}
+      aria-label={`Sync status: ${status}. Click to view system status.`}
+      title="View system status"
     >
       <span
         aria-hidden="true"
@@ -78,7 +86,7 @@ function SyncDot({ status }: { status: string }) {
         )}
       />
       <Mono className="hidden uppercase sm:inline">{status}</Mono>
-    </span>
+    </button>
   )
 }
 

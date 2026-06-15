@@ -254,11 +254,55 @@
   animation: wb-tail-flash 1.1s ease-out 1;
 }
 
-/* ---- prefers-reduced-motion: disable rail + tail animations --------------- */
+/* ---- System status animations (V4) --------------------------------------- */
+@keyframes wb-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes wb-flowdown {
+  0% { opacity: 0; transform: translateY(-8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.wb-enter {
+  animation: wb-flowdown 0.3s ease-out 1;
+}
+
+/* ---- System status overlay + dialog -------------------------------------- */
+.wb-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding-top: 64px;
+}
+.wb-dialog-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 6px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+.wb-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  border-radius: var(--radius-sm, 2px);
+  transition: color 0.1s ease;
+}
+.wb-iconbtn:hover {
+  color: var(--foreground);
+}
+
+/* ---- prefers-reduced-motion: disable rail + tail + system animations ----- */
 @media (prefers-reduced-motion: reduce) {
   .wb-rail-nav { transition: none; }
   .wb-rail-label { transition: none; }
   .wb-tail-new { animation: none; }
+  .wb-enter { animation: none; }
 }
 
 /* Priority badge tokens (P0–P3) with WCAG AA contrast in both light and dark
