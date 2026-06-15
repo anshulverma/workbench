@@ -118,6 +118,7 @@ export function TopBar({
   onOpenCommandPalette?: () => void
 }) {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const label = contextLabel(pathname)
 
   return (
@@ -128,18 +129,23 @@ export function TopBar({
         className,
       )}
     >
-      {/* Brand mark */}
-      <div className="flex items-center gap-2">
+      {/* Brand wordmark — two-tone "WorkBench" (icon lives in the rail). */}
+      <button
+        type="button"
+        onClick={() => navigate('/')}
+        aria-label="WorkBench home"
+        className="flex items-center"
+        style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+      >
         <span
-          aria-hidden="true"
-          className="inline-flex size-7 items-center justify-center rounded-md bg-primary font-display text-sm font-bold text-primary-foreground"
+          className="font-display"
+          style={{ fontSize: 15, letterSpacing: '-.01em', color: 'var(--foreground)' }}
         >
-          W
+          <span style={{ fontWeight: 700 }}>Work</span>
+          <span style={{ fontWeight: 700, color: 'var(--primary)' }}>B</span>
+          <span style={{ fontWeight: 500 }}>ench</span>
         </span>
-        <span className="font-display text-sm font-semibold tracking-tight">
-          Workbench
-        </span>
-      </div>
+      </button>
 
       {/* Mono route → context label */}
       <Mono className="truncate text-xs uppercase text-muted-foreground">
