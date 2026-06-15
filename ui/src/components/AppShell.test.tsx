@@ -38,9 +38,12 @@ describe('AppShell', () => {
       screen.getByRole('navigation', { name: /primary/i }),
     ).toBeInTheDocument()
     expect(screen.getByText('page-body')).toBeInTheDocument()
-    // TopBar brand mark renders "Workbench" (the sidebar also has "WorkBench"
-    // in the hover-expand logo label, so we assert at least one match).
-    expect(screen.getAllByText(/workbench/i).length).toBeGreaterThanOrEqual(1)
+    // Brand mark: the two-tone "WorkBench" wordmark is split across spans
+    // (Work / B / ench), so assert via the brand button's accessible name
+    // ("WorkBench home" — present in both the top bar and the sidebar logo).
+    expect(
+      screen.getAllByRole('button', { name: /workbench home/i }).length,
+    ).toBeGreaterThanOrEqual(1)
   })
 
   it('renders a single scrollable <main> as the content region', () => {

@@ -93,11 +93,13 @@ describe('theme tokens (spec §1, contrast contract §13)', () => {
     expect(html).not.toMatch(/<html[^>]*class="dark"/)
   })
 
-  it('mounts the next-themes ThemeProvider (class attr, system default)', () => {
+  it('mounts the next-themes ThemeProvider (class attr, dark default)', () => {
     expect(mainTsx).toMatch(/from ['"]next-themes['"]/)
     expect(mainTsx).toMatch(/<ThemeProvider/)
     expect(mainTsx).toMatch(/attribute=["']class["']/)
-    expect(mainTsx).toMatch(/defaultTheme=["']system["']/)
+    // Dark is the design baseline (the prototype ships <html class="dark">), so
+    // the app defaults to dark rather than following the OS preference.
+    expect(mainTsx).toMatch(/defaultTheme=["']dark["']/)
     expect(mainTsx).toMatch(/enableSystem/)
   })
 })

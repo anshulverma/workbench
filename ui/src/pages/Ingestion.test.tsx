@@ -1,9 +1,10 @@
-// Ingestion page tests (spec Design Section 2.4).
+// Ingestion page tests (spec Design Section 2.4, V3 restructure).
 //
 // Mirrors Overview.test.tsx: mocks Recharts ResponsiveContainer (jsdom has no
 // ResizeObserver), stubs ResizeObserver, and drives the page through MSW.
-// Covers: per-source panels, activity feed, job-history table + status filter,
-// dead-letter retry (POST) / purge (DELETE) with toast, loading and error states.
+// Covers: queue stat cards, LiveTail activity feed, dead-letter retry (POST) /
+// purge (DELETE) with toast, loading and error states. The Job History section
+// (table + status filter + pagination) was removed in the V3 restructure.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
@@ -78,43 +79,6 @@ const ACTIVITY = [
   },
 ]
 
-const JOBS_ALL = {
-  jobs: [
-    {
-      id: 'job-aaa',
-      trigger: 'poll',
-      status: 'completed',
-      items_extracted: 5,
-      created_at: '2026-06-05T10:00:00+00:00',
-    },
-    {
-      id: 'job-bbb',
-      trigger: 'manual',
-      status: 'failed',
-      items_extracted: 0,
-      created_at: '2026-06-05T09:00:00+00:00',
-    },
-  ],
-  total: 2,
-  limit: 25,
-  offset: 0,
-}
-
-const JOBS_FAILED = {
-  jobs: [
-    {
-      id: 'job-bbb',
-      trigger: 'manual',
-      status: 'failed',
-      items_extracted: 0,
-      created_at: '2026-06-05T09:00:00+00:00',
-    },
-  ],
-  total: 1,
-  limit: 25,
-  offset: 0,
-}
-
 const QUEUE = {
   by_status: { queued: 3, processing: 1, dead_letter: 2 },
   by_source: { github: 3, email: 1 },
@@ -148,11 +112,6 @@ function handlers() {
     http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok-123' })),
     http.get('/api/stats/sources', () => HttpResponse.json(SOURCES)),
     http.get('/api/activity', () => HttpResponse.json(ACTIVITY)),
-    http.get('/api/jobs', ({ request }) => {
-      const url = new URL(request.url)
-      const status = url.searchParams.get('status')
-      return HttpResponse.json(status === 'failed' ? JOBS_FAILED : JOBS_ALL)
-    }),
     http.get('/api/stats/queue', () => HttpResponse.json(QUEUE)),
     http.get('/api/queue/dead-letter', () => HttpResponse.json(DEAD_LETTERS)),
     http.post('/api/queue/dead-letter/:id/retry', () => {
@@ -208,17 +167,14 @@ describe('Ingestion page', () => {
     expect(screen.getByText('Weekly digest')).toBeInTheDocument()
   })
 
-  it('renders the job-history table and filters by status', async () => {
-    const user = userEvent.setup()
+  it('does NOT render the removed Job History section', async () => {
     renderIngestion()
-    expect(await screen.findByText('job-aaa')).toBeInTheDocument()
-    expect(screen.getByText('job-bbb')).toBeInTheDocument()
-
-    const filter = screen.getByLabelText(/job status filter/i)
-    await user.selectOptions(filter, 'failed')
-
-    await waitFor(() => expect(screen.queryByText('job-aaa')).not.toBeInTheDocument())
-    expect(screen.getByText('job-bbb')).toBeInTheDocument()
+    // Wait for the page to settle.
+    await screen.findByText('Sources')
+    expect(screen.queryByText('Job History')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/job status filter/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /previous/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /next/i })).not.toBeInTheDocument()
   })
 
   it('retries a dead letter via POST and shows a toast', async () => {
@@ -256,7 +212,6 @@ describe('Ingestion page', () => {
         ),
       ),
       http.get('/api/activity', () => HttpResponse.json(ACTIVITY)),
-      http.get('/api/jobs', () => HttpResponse.json(JOBS_ALL)),
       http.get('/api/stats/queue', () => HttpResponse.json(QUEUE)),
       http.get('/api/queue/dead-letter', () => HttpResponse.json(DEAD_LETTERS)),
     )
@@ -269,7 +224,6 @@ describe('Ingestion page', () => {
       http.get('/api/auth/token', () => new HttpResponse(null, { status: 401 })),
       http.get('/api/stats/sources', () => HttpResponse.json(SOURCES)),
       http.get('/api/activity', () => HttpResponse.json(ACTIVITY)),
-      http.get('/api/jobs', () => HttpResponse.json(JOBS_ALL)),
       http.get('/api/stats/queue', () => HttpResponse.json(QUEUE)),
       http.get('/api/queue/dead-letter', () => HttpResponse.json(DEAD_LETTERS)),
     )
@@ -293,7 +247,6 @@ describe('Ingestion page', () => {
       http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok-123' })),
       http.get('/api/stats/sources', () => HttpResponse.json(SOURCES)),
       http.get('/api/activity', () => HttpResponse.json([])),
-      http.get('/api/jobs', () => HttpResponse.json(JOBS_ALL)),
       http.get('/api/stats/queue', () => HttpResponse.json(QUEUE)),
       http.get('/api/queue/dead-letter', () => HttpResponse.json(DEAD_LETTERS)),
     )

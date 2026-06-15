@@ -1,12 +1,17 @@
 // Overview page tests (spec Design Section 2.1).
 //
-// Recharts renders inside a ResponsiveContainer that measures its parent via
-// ResizeObserver, which jsdom does not implement (it reports 0x0 and the chart
-// never paints). We mock ResponsiveContainer to a fixed-size <div> so the chart
-// SVG renders deterministically. We also stub ResizeObserver defensively.
+// The Overview page mirrors the design prototype: a compact clickable status
+// strip, the Signal Flow Sankey hero, and a full-width Hot Feed. The legacy
+// topology / charts / recent-jobs / stat-grid sections were removed. Five UI
+// states are preserved (loading / error / empty / unauthorized / degraded).
+//
+// Recharts (used by SourceFlow) renders inside a ResponsiveContainer that
+// measures its parent via ResizeObserver, which jsdom does not implement. We
+// mock ResponsiveContainer to a fixed-size <div> and stub ResizeObserver.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -66,38 +71,31 @@ const OVERVIEW = {
   },
 }
 
-const TIMESERIES = [
-  { date: '2026-05-23T00:00:00+00:00', count: 3 },
-  { date: '2026-05-24T00:00:00+00:00', count: 5 },
-  { date: '2026-05-25T00:00:00+00:00', count: 2 },
+// /api/stats/sources — per-source rollup feeding the Signal Flow Sankey.
+const SOURCES_ROLLUP = [
+  {
+    id: 'src-gh',
+    adapter_type: 'github',
+    enabled: true,
+    schedule: '*/15 * * * *',
+    last_run: '2026-06-08T11:00:00+00:00',
+    items_stored: 42,
+    raw_enqueued: 50,
+    in_flight: 3,
+    health_status: 'healthy',
+  },
+  {
+    id: 'src-email',
+    adapter_type: 'email',
+    enabled: true,
+    schedule: '0 * * * *',
+    last_run: '2026-06-08T10:00:00+00:00',
+    items_stored: 12,
+    raw_enqueued: 14,
+    in_flight: 1,
+    health_status: 'healthy',
+  },
 ]
-
-// /api/stats/timeseries (signal velocity sparkline) — {bucket, count}.
-const METRIC_TIMESERIES = [
-  { bucket: '2026-06-08T08:00:00+00:00', count: 2 },
-  { bucket: '2026-06-08T09:00:00+00:00', count: 5 },
-  { bucket: '2026-06-08T10:00:00+00:00', count: 3 },
-]
-
-// /api/topology — node-link graph composed from live health probes.
-const TOPOLOGY = {
-  nodes: [
-    { id: 'app', label: 'Workbench', kind: 'app', status: 'healthy' },
-    { id: 'storage', label: 'PostgreSQL', kind: 'storage', status: 'healthy' },
-    {
-      id: 'memory',
-      label: 'Memory Service',
-      kind: 'memory_service',
-      status: 'not_configured',
-    },
-    { id: 'github', label: 'github', kind: 'adapter', status: 'degraded' },
-  ],
-  edges: [
-    { from: 'app', to: 'storage', kind: 'connection' },
-    { from: 'app', to: 'memory', kind: 'connection' },
-    { from: 'app', to: 'github', kind: 'adapter' },
-  ],
-}
 
 // /api/items?status=pending_triage — HOT FEED source (filtered to P0/P1).
 const ITEMS = [
@@ -139,28 +137,6 @@ const ITEMS = [
   },
 ]
 
-const JOBS = {
-  jobs: [
-    {
-      id: 'job-abc123',
-      trigger: 'poll',
-      status: 'completed',
-      items_extracted: 5,
-      created_at: '2026-06-05T10:00:00+00:00',
-    },
-    {
-      id: 'job-def456',
-      trigger: 'manual',
-      status: 'failed',
-      items_extracted: 0,
-      created_at: '2026-06-05T09:00:00+00:00',
-    },
-  ],
-  total: 2,
-  limit: 10,
-  offset: 0,
-}
-
 const HEALTH = {
   status: 'healthy',
   version: '0.1.0',
@@ -176,22 +152,19 @@ const MESSENGER = {
 }
 
 function handlers(
-  overrides: { overview?: object; deadLetters?: number } = {},
+  overrides: { overview?: object; deadLetters?: number; messenger?: object } = {},
 ) {
   const overview = overrides.deadLetters
     ? { ...OVERVIEW, dead_letters: overrides.deadLetters, queue: { ...OVERVIEW.queue, dead_letters: overrides.deadLetters } }
     : overrides.overview ?? OVERVIEW
+  const messenger = overrides.messenger ?? MESSENGER
   return [
     http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok-123' })),
     http.get('/api/stats/overview', () => HttpResponse.json(overview)),
-    http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json(TIMESERIES)),
-    http.get('/api/stats/timeseries', () => HttpResponse.json(METRIC_TIMESERIES)),
-    http.get('/api/topology', () => HttpResponse.json(TOPOLOGY)),
-    http.get('/api/stats/sources', () => HttpResponse.json([])),
+    http.get('/api/stats/sources', () => HttpResponse.json(SOURCES_ROLLUP)),
     http.get('/api/items', () => HttpResponse.json(ITEMS)),
-    http.get('/api/jobs', () => HttpResponse.json(JOBS)),
     http.get('/health', () => HttpResponse.json(HEALTH)),
-    http.get('/api/messenger', () => HttpResponse.json(MESSENGER)),
+    http.get('/api/messenger', () => HttpResponse.json(messenger)),
   ]
 }
 
@@ -218,63 +191,116 @@ function renderOverview() {
 }
 
 describe('Overview page', () => {
-  it('renders all six stat cards from the mocked endpoints', async () => {
-    renderOverview()
-    expect(await screen.findByText('Pending Triage')).toBeInTheDocument()
-    expect(screen.getByText('Ingestion Queue')).toBeInTheDocument()
-    expect(screen.getByText('Dead Letters')).toBeInTheDocument()
-    expect(screen.getByText('Active Items')).toBeInTheDocument()
-    expect(screen.getByText('Sources')).toBeInTheDocument()
-    expect(screen.getByText('Messenger')).toBeInTheDocument()
+  // --- Status strip ---
 
-    // values — scoped to the stat-card grid (the hero header also shows some
-    // of these counts, so query within the grid to stay unambiguous).
-    const grid = await screen.findByTestId('stat-grid')
-    const within = (re: RegExp | string) =>
-      Array.from(grid.querySelectorAll('*')).some((el) =>
-        el.childElementCount === 0 &&
-        (typeof re === 'string' ? el.textContent === re : re.test(el.textContent ?? '')),
-      )
-    await waitFor(() => expect(within('4')).toBe(true)) // pending
-    expect(within('7')).toBe(true) // in_flight
-    expect(within('12')).toBe(true) // active items
-    expect(within('2 / 3')).toBe(true) // sources enabled/total
+  it('renders the status strip with its navigable tiles', async () => {
+    renderOverview()
+    const strip = await screen.findByTestId('status-strip')
+    expect(strip).toBeInTheDocument()
+    // Tiles present in the strip.
+    expect(within(strip).getByText('Ingestion Queue')).toBeInTheDocument()
+    expect(within(strip).getByText('Ingest Rate')).toBeInTheDocument()
+    expect(within(strip).getByText('Active Items')).toBeInTheDocument()
+    expect(within(strip).getByText('Sources')).toBeInTheDocument()
+    expect(within(strip).getByText('Messenger')).toBeInTheDocument()
+    // Sources tile shows enabled/total.
+    expect(within(strip).getByText('2/3')).toBeInTheDocument()
+    // Ingest Rate tile renders the success rate as a percent.
+    expect(within(strip).getByText('97%')).toBeInTheDocument()
   })
 
-  it('renders the four chart cards by title', async () => {
+  it('renders the Initiate Triage primary tile with pending + P0 counts', async () => {
     renderOverview()
-    expect(await screen.findByText('Ingestion (14 days)')).toBeInTheDocument()
-    expect(screen.getByText('Items by Priority')).toBeInTheDocument()
-    expect(screen.getByText('Items by Source')).toBeInTheDocument()
-    expect(screen.getByText('Items by Category')).toBeInTheDocument()
+    const strip = await screen.findByTestId('status-strip')
+    const tile = within(strip).getByText(/Initiate Triage/i).closest('button')!
+    expect(tile).toBeInTheDocument()
+    // pending_triage = 4, by_priority.P0 = 1
+    expect(tile).toHaveTextContent(/4/)
+    expect(tile).toHaveTextContent(/pending/i)
+    expect(tile).toHaveTextContent(/1 P0 active/i)
   })
 
-  it('renders the recent jobs table', async () => {
+  it('renders "GChat" in the Messenger tile when configured', async () => {
     renderOverview()
-    expect(await screen.findByText('Recent Jobs')).toBeInTheDocument()
-    expect(await screen.findByText('job-abc123')).toBeInTheDocument()
-    expect(screen.getByText('job-def456')).toBeInTheDocument()
+    const strip = await screen.findByTestId('status-strip')
+    expect(within(strip).getByText('GChat')).toBeInTheDocument()
   })
 
-  it('does NOT show the dead-letter banner when dead_letters is 0', async () => {
+  it('renders "Unset" in the Messenger tile when not configured', async () => {
+    server.resetHandlers(...handlers({ messenger: { configured: false } }))
     renderOverview()
-    await screen.findByText('Pending Triage')
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    const strip = await screen.findByTestId('status-strip')
+    expect(within(strip).getByText('Unset')).toBeInTheDocument()
   })
 
-  it('shows the dead-letter banner only when dead_letters > 0', async () => {
+  it('omits the Dead Letters tile when dead_letters is 0', async () => {
+    renderOverview()
+    const strip = await screen.findByTestId('status-strip')
+    expect(within(strip).queryByText('Dead Letters')).not.toBeInTheDocument()
+  })
+
+  it('shows the Dead Letters tile only when dead_letters > 0', async () => {
     server.resetHandlers(...handlers({ deadLetters: 3 }))
     renderOverview()
-    const banner = await screen.findByRole('alert')
-    expect(banner).toHaveTextContent(/3/)
+    const strip = await screen.findByTestId('status-strip')
+    const tile = within(strip).getByText('Dead Letters').closest('button')!
+    expect(tile).toHaveTextContent(/3/)
   })
+
+  // --- Signal Flow card ---
+
+  it('renders the Signal Flow card', async () => {
+    renderOverview()
+    const card = await screen.findByTestId('signal-flow-card')
+    expect(card).toBeInTheDocument()
+    expect(within(card).getByText('Signal Flow')).toBeInTheDocument()
+  })
+
+  // --- Degraded banner ---
+
+  it('does NOT show the degraded banner when the messenger is configured', async () => {
+    renderOverview()
+    await screen.findByTestId('status-strip')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows the degraded banner when the messenger is not configured', async () => {
+    server.resetHandlers(...handlers({ messenger: { configured: false } }))
+    renderOverview()
+    const banner = await screen.findByRole('status')
+    expect(banner).toHaveTextContent(/Messenger not configured/i)
+  })
+
+  // --- Hot Feed ---
+
+  it('renders the HOT FEED with only P0/P1 pending items (drops P2)', async () => {
+    renderOverview()
+    const feed = await screen.findByTestId('hot-feed')
+    await waitFor(() =>
+      expect(feed).toHaveTextContent(/Production DB latency spike/i),
+    )
+    expect(feed).toHaveTextContent(/OAuth refactor/i)
+    expect(feed).not.toHaveTextContent(/Weekly cost summary/i)
+  })
+
+  it('opens the item funnel dialog when a hot feed item is clicked', async () => {
+    const user = userEvent.setup()
+    renderOverview()
+    await screen.findByTestId('hot-feed')
+    const row = await screen.findByTestId('hot-feed-item-item-p0')
+    await user.click(row)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent(/Production DB latency spike/i)
+  })
+
+  // --- UI states ---
 
   it('renders the loading state while queries are pending', () => {
     renderOverview()
     expect(screen.getByTestId('overview-loading')).toBeInTheDocument()
   })
 
-  it('renders the error state with the X-Request-ID on failure', async () => {
+  it('renders the error state on failure', async () => {
     server.resetHandlers(
       http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok-123' })),
       http.get('/api/stats/overview', () =>
@@ -283,116 +309,42 @@ describe('Overview page', () => {
           { status: 500, headers: { 'X-Request-ID': 'req-42' } },
         ),
       ),
-      http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json(TIMESERIES)),
-      http.get('/api/stats/timeseries', () => HttpResponse.json(METRIC_TIMESERIES)),
-      http.get('/api/topology', () => HttpResponse.json(TOPOLOGY)),
-      http.get('/api/stats/sources', () => HttpResponse.json([])),
+      http.get('/api/stats/sources', () => HttpResponse.json(SOURCES_ROLLUP)),
       http.get('/api/items', () => HttpResponse.json(ITEMS)),
-      http.get('/api/jobs', () => HttpResponse.json(JOBS)),
       http.get('/health', () => HttpResponse.json(HEALTH)),
       http.get('/api/messenger', () => HttpResponse.json(MESSENGER)),
     )
     renderOverview()
-    expect(await screen.findByText(/req-42/)).toBeInTheDocument()
+    expect(await screen.findByText(/Failed to load overview/i)).toBeInTheDocument()
+  })
+
+  it('renders the empty state when there is no activity', async () => {
+    const EMPTY = {
+      ...OVERVIEW,
+      pending_triage: 0,
+      in_flight: 0,
+      dead_letters: 0,
+      active_items: 0,
+      sources_enabled: 0,
+      sources_total: 0,
+      items: { ...OVERVIEW.items, total: 0 },
+      queue: { in_flight: 0, dead_letters: 0 },
+    }
+    server.resetHandlers(...handlers({ overview: EMPTY }))
+    renderOverview()
+    expect(await screen.findByText(/No activity yet/i)).toBeInTheDocument()
   })
 
   it('renders the unauthorized state when the token endpoint returns 401', async () => {
     server.resetHandlers(
       http.get('/api/auth/token', () => new HttpResponse(null, { status: 401 })),
       http.get('/api/stats/overview', () => HttpResponse.json(OVERVIEW)),
-      http.get('/api/stats/ingestion-timeseries', () => HttpResponse.json(TIMESERIES)),
-      http.get('/api/stats/timeseries', () => HttpResponse.json(METRIC_TIMESERIES)),
-      http.get('/api/topology', () => HttpResponse.json(TOPOLOGY)),
-      http.get('/api/stats/sources', () => HttpResponse.json([])),
+      http.get('/api/stats/sources', () => HttpResponse.json(SOURCES_ROLLUP)),
       http.get('/api/items', () => HttpResponse.json(ITEMS)),
-      http.get('/api/jobs', () => HttpResponse.json(JOBS)),
       http.get('/health', () => HttpResponse.json(HEALTH)),
       http.get('/api/messenger', () => HttpResponse.json(MESSENGER)),
     )
     renderOverview()
     expect(await screen.findByText(/token unavailable/i)).toBeInTheDocument()
-  })
-
-  // --- Hero region (P1, spec §8) ---
-
-  it('renders the attention header from real metrics (P0 active + pending)', async () => {
-    renderOverview()
-    const header = await screen.findByTestId('attention-header')
-    // P0 active items (by_priority.P0 = 1) and pending triage (4).
-    expect(header).toHaveTextContent(/P0/i)
-    expect(header).toHaveTextContent(/1/)
-    expect(header).toHaveTextContent(/pending/i)
-    expect(header).toHaveTextContent(/4/)
-  })
-
-  it('does NOT render hollow widgets (active sessions / unread pings / blocked tasks)', async () => {
-    renderOverview()
-    await screen.findByTestId('attention-header')
-    expect(screen.queryByText(/unread pings/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/blocked tasks/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/active sessions/i)).not.toBeInTheDocument()
-  })
-
-  it('renders the HOT FEED with only P0/P1 pending items (drops P2)', async () => {
-    renderOverview()
-    const feed = await screen.findByTestId('hot-feed')
-    // wait for the async items query to settle before asserting content
-    await waitFor(() =>
-      expect(feed).toHaveTextContent(/Production DB latency spike/i),
-    )
-    expect(feed).toHaveTextContent(/OAuth refactor/i)
-    expect(feed).not.toHaveTextContent(/Weekly cost summary/i)
-  })
-
-  it('renders the INITIATE TRIAGE CTA linking to /triage with the pending count', async () => {
-    renderOverview()
-    const cta = await screen.findByTestId('initiate-triage')
-    expect(cta).toHaveAttribute('href', '/triage')
-    expect(cta).toHaveTextContent(/4/)
-  })
-
-  it('renders the ingestion-success-rate tile as a percentage', async () => {
-    renderOverview()
-    const tile = await screen.findByTestId('ingestion-success-tile')
-    expect(tile).toHaveTextContent(/97%/)
-  })
-
-  it('renders "n/a" for the ingestion-success-rate tile when the metric is null', async () => {
-    server.resetHandlers(
-      ...handlers({
-        overview: {
-          ...OVERVIEW,
-          metrics: { ...OVERVIEW.metrics, ingestion_success_rate: null },
-        },
-      }),
-    )
-    renderOverview()
-    const tile = await screen.findByTestId('ingestion-success-tile')
-    expect(tile).toHaveTextContent(/n\/a/i)
-  })
-
-  it('renders the topology panel with an SVG (role=img) and a visually-hidden table fallback', async () => {
-    renderOverview()
-    const panel = await screen.findByTestId('topology-panel')
-    // wait for the async topology query to settle before asserting the SVG
-    await waitFor(() =>
-      expect(panel.querySelector('svg[role="img"]')).toBeTruthy(),
-    )
-    // a11y table fallback lists nodes + statuses
-    const table = panel.querySelector('table')
-    expect(table).toBeTruthy()
-    expect(table).toHaveTextContent(/Workbench/)
-    expect(table).toHaveTextContent(/PostgreSQL/)
-    expect(table).toHaveTextContent(/not_configured/)
-  })
-
-  it('keeps all existing widgets present alongside the hero region', async () => {
-    renderOverview()
-    // existing stat cards + charts + jobs still render
-    expect(await screen.findByText('Pending Triage')).toBeInTheDocument()
-    expect(screen.getByText('Items by Priority')).toBeInTheDocument()
-    expect(screen.getByText('Recent Jobs')).toBeInTheDocument()
-    // hero coexists
-    expect(screen.getByTestId('hot-feed')).toBeInTheDocument()
   })
 })
