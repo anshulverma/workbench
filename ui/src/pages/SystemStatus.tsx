@@ -4,7 +4,7 @@
 // core, services, and storage. Node cards show icon, label, status, ping, and
 // utilization. Clicking a node opens a searchable log viewer dialog.
 
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity,
