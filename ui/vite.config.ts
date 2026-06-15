@@ -12,6 +12,9 @@ export default defineConfig({
   },
   build: { outDir: 'dist' },
   server: {
+    // Reachable via Meta's x2p edge proxy and devserver hostnames, not just localhost.
+    // Leading-dot entries allow the domain and all subdomains.
+    allowedHosts: ['.facebook.net', '.fbinfra.net', 'localhost'],
     proxy: {
       '/api': 'http://127.0.0.1:8421',
       '/health': 'http://127.0.0.1:8421',
