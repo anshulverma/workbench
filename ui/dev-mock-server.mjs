@@ -675,9 +675,14 @@ const routes = [
   ['GET', /^\/api\/funnel\/items$/, (res, _m, q) => {
     const source = q.get('source')
     const verdict = q.get('verdict')
-    let list = funnelItems
+    // Always return the rich SearchItem shape — it is a superset of FunnelItem
+    // (id/summary/stages/verdict) plus tags/context/llm_summary that the Search
+    // page needs. Satisfies both the Search page and the Filters output table.
+    let list = searchItems
+    const query = (q.get('q') || '').toLowerCase()
     if (source) list = list.filter((it) => it.source === source)
-    if (verdict) list = list.filter((it) => it.verdict.decision === verdict)
+    if (verdict) list = list.filter((it) => it.verdict && it.verdict.decision === verdict)
+    if (query) list = list.filter((it) => (it.summary + ' ' + (it.llm_summary || '')).toLowerCase().includes(query))
     return send(res, 200, list)
   }],
   ['GET', /^\/api\/funnel\/items\/([^/]+)$/, (res, mm) => {

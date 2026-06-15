@@ -12,6 +12,9 @@ export default defineConfig({
   },
   build: { outDir: 'dist' },
   server: {
-    proxy: { '/api': 'http://127.0.0.1:8421' },
+    proxy: {
+      '/api': 'http://127.0.0.1:8421',
+      '/health': 'http://127.0.0.1:8421',
+    },
   },
 })

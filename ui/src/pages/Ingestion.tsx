@@ -42,21 +42,17 @@ import { relativeTime } from '@/lib/format'
 import {
   useActivity,
   useDeadLetters,
-  useJobs,
   usePurgeDeadLetter,
   useQueueStats,
   useRetryDeadLetter,
   useSourcesRollup,
   type ActivityItem,
   type DeadLetterEntry,
-  type Job,
 } from '@/hooks/useStats'
 
 // Slice 12: Real IngestionFunnel component, embedded.
 import { IngestionFunnel } from '@/pages/Filters'
 
-const JOB_STATUSES = ['queued', 'pending', 'running', 'completed', 'failed']
-const PAGE_SIZE = 25
 const TAIL_CAP = 60
 
 function isUnauthorized(err: unknown): boolean {
@@ -198,31 +194,12 @@ function DeadLetterTable() {
   )
 }
 
-const jobColumns: Column<Job>[] = [
-  {
-    key: 'id',
-    header: 'ID',
-    render: (j) => <span className="font-mono text-xs">{j.id}</span>,
-  },
-  { key: 'trigger', header: 'Trigger', render: (j) => j.trigger },
-  { key: 'status', header: 'Status', render: (j) => j.status },
-  { key: 'items_extracted', header: 'Items', render: (j) => j.items_extracted },
-  {
-    key: 'created_at',
-    header: 'Created',
-    render: (j) => relativeTime(j.created_at),
-  },
-]
-
 export function Ingestion() {
-  const [statusFilter, setStatusFilter] = useState('')
-  const [offset, setOffset] = useState(0)
   const [tailLive, setTailLive] = useState(true)
   const [tailItemId, setTailItemId] = useState<string | null>(null)
 
   const sources = useSourcesRollup()
   const activity = useActivity(50)
-  const jobs = useJobs(PAGE_SIZE, offset, statusFilter || undefined)
   const queue = useQueueStats()
   const deadLetters = useDeadLetters()
 
@@ -252,7 +229,7 @@ export function Ingestion() {
   }, [tailItemId, activity.data])
 
   // unauthorized: any query failing with a 401.
-  const unauthorizedErr = [sources, activity, jobs, queue]
+  const unauthorizedErr = [sources, activity, queue]
     .map((q) => q.error)
     .find(isUnauthorized)
   if (unauthorizedErr) {
@@ -297,10 +274,6 @@ export function Ingestion() {
     : []
   const queueDegraded = queue.isError
   const deadCount = deadLetters.data?.length ?? 0
-
-  const total = jobs.data?.total ?? 0
-  const canPrev = offset > 0
-  const canNext = offset + PAGE_SIZE < total
 
   return (
     <div className="space-y-7">
@@ -433,69 +406,7 @@ export function Ingestion() {
         <DeadLetterTable />
       </section>
 
-      {/* 4 — Job history */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <SectionHeader>Job History</SectionHeader>
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Status</span>
-            <select
-              aria-label="Job status filter"
-              className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value)
-                setOffset(0)
-              }}
-            >
-              <option value="">all</option>
-              {JOB_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        {jobs.isPending ? (
-          <Skeleton className="h-48" />
-        ) : jobs.isError ? (
-          <p className="text-sm text-destructive">
-            Failed to load jobs: {(jobs.error as Error).message}
-          </p>
-        ) : (jobs.data?.jobs.length ?? 0) === 0 ? (
-          <EmptyState message="No jobs match this filter" />
-        ) : (
-          <>
-            <DataTable columns={jobColumns} rows={jobs.data!.jobs} rowKey={(j) => j.id} />
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>
-                {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!canPrev}
-                  onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!canNext}
-                  onClick={() => setOffset((o) => o + PAGE_SIZE)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* 5 — Embedded Ingestion Funnel (Slice 12) */}
+      {/* Embedded Ingestion Funnel (Slice 12) */}
       <section className="space-y-2.5" aria-label="ingestion funnel">
         <SectionHeader
           right={
