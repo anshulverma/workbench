@@ -1,0 +1,57 @@
+{
+  "topic": "config-db-ui-authoritative",
+  "input_mode": "spec-file",
+  "source_spec": "docs/superpowers/specs/2026-06-15-config-db-ui-authoritative-design.md",
+  "domains": ["backend", "api-design", "frontend", "infrastructure"],
+  "iteration": 1,
+  "phase": "complete",
+  "confidence_threshold": "medium",
+  "settled_decisions": [
+    {"id": "D1", "text": "DB is the single source of truth; config.yml removed entirely."},
+    {"id": "D2", "text": "Secrets + bootstrap in a gitignored .env, loaded via python-dotenv."},
+    {"id": "D3", "text": "Everything non-bootstrap → DB, UI-editable, pydantic defaults as fallback (sparse override doc)."},
+    {"id": "D4", "text": "Storage = single-row JSONB app_settings document + source_configs table (Approach A)."},
+    {"id": "D5", "text": "Everything UI-editable hot-applies (worker resize, scheduler reconfig, presentation, connections); .env restart-only."},
+    {"id": "D6", "text": "One-time import then delete config.yml; generic seed seam WORKBENCH_CONFIG_SEED; meta migration separate."},
+    {"id": "D7", "text": "Full settings UI in scope."},
+    {"id": "D8", "text": "UI manages env-var reference NAMES; server never writes .env; PATCH re-runs load_dotenv(override=False)."},
+    {"id": "D9", "text": "logging + server host/port in .env, read-only in UI."}
+  ],
+  "bubble_ups": [
+    {"q": "workbench-meta override handling", "answer": "Define generic seed seam (WORKBENCH_CONFIG_SEED) here; meta migration separate."},
+    {"q": "new-secret flow when env var not yet in process env", "answer": "Re-read .env on PATCH (load_dotenv override=False) so new vars resolve live."}
+  ],
+  "key_findings": [
+    "auth_token.py has NO rotation today -> token is .env-only (open item resolved).",
+    "/api/config has no external consumer -> remove public route; /api/debug/config retained.",
+    "PipelineEngine + WorkbenchScheduler + IngestionQueueWorker capture config at construction -> appliers must mutate live objects + rebind scheduler.config.",
+    "No app-level Settings class exists -> 'settings' vocabulary is free to adopt.",
+    "Pass 2: entrypoint boot-break (__main__/cli_main load_config) + redaction-vs-env-ref contradiction.",
+    "Pass 3: llm is required-no-default with no stub provider -> no-seed first boot hard-fails unless llm seeded.",
+    "Pass 4: converged, zero material issues, all code refs verified.",
+    "Pre-existing latent bug (out of scope): scheduler.content_generators read at scheduler.py:497 but never assigned."
+  ],
+  "ADRs": ["docs/adr/0055-db-authoritative-config-with-env-bootstrap.md"],
+  "artifacts": {
+    "context_md": "CONTEXT.md (update deferred to Slice 6 of plan)",
+    "spec": "docs/auto-plan/specs/2026-06-15-config-db-ui-authoritative-design.md",
+    "adrs": ["docs/adr/0055-db-authoritative-config-with-env-bootstrap.md"],
+    "plan": "docs/auto-plan/plans/2026-06-15-config-db-ui-authoritative.md"
+  },
+  "preference_updates": [
+    "feedback_config_write_back.md rewritten (DB-authoritative; reverses prior YAML-as-truth)."
+  ],
+  "harden": {
+    "enabled": true,
+    "max_passes": 10,
+    "current_pass": 4,
+    "convergence_status": "converged",
+    "snapshots_dir": "docs/auto-plan/reports/snapshots",
+    "passes": [
+      {"pass": 1, "status": "complete", "role": "baseline build (Snapshot-0)", "judge_verdict": "baseline", "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}},
+      {"pass": 2, "status": "complete", "judge_verdict": "NOT CONVERGED", "gaps_filled": ["entrypoint BootstrapConfig binding", "redaction-vs-env-ref contradiction", "connections via /api/settings/connections", "explicit extra=ignore", "useSettings re-point"], "snapshot_path": "docs/auto-plan/reports/snapshots/pass-2", "metrics": {"material_changes": 2, "minor_changes": 4, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 2}},
+      {"pass": 3, "status": "complete", "judge_verdict": "NOT CONVERGED", "gaps_filled": ["llm required-no-default hard-fail (no stub provider)"], "snapshot_path": "docs/auto-plan/reports/snapshots/pass-3", "metrics": {"material_changes": 1, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 1}},
+      {"pass": 4, "status": "complete", "judge_verdict": "CONVERGED", "gaps_filled": [], "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}}
+    ]
+  }
+}
