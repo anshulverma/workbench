@@ -34,7 +34,7 @@ import { SOURCE_COLORS, OUTPUT_COLORS } from '@/lib/funnel-constants'
 // ---- Constants ----
 
 const W = 760
-const H = 300
+const H = 210 // 70% of the original 300 — shorter Signal Flow on the Overview
 const TOP = 26
 const BOT = 26
 const NODE_W = 12

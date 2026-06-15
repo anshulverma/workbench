@@ -113,10 +113,10 @@ describe('SourceFlow', () => {
   })
 
   describe('layout and SVG structure', () => {
-    it('has viewBox 760x300', () => {
+    it('has viewBox 760x210', () => {
       render(<SourceFlow data={makeSampleMatrix()} />)
       const svg = screen.getByTestId('source-flow').querySelector('svg')
-      expect(svg?.getAttribute('viewBox')).toBe('0 0 760 300')
+      expect(svg?.getAttribute('viewBox')).toBe('0 0 760 210')
     })
 
     it('contains 80 dot circles for the animation pool', () => {
