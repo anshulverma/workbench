@@ -543,7 +543,7 @@ function SourceFlowInner({
   )
 
   return (
-    <div data-testid="source-flow">
+    <div data-testid="source-flow" style={{ width: '100%' }}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
         width="100%"
@@ -648,14 +648,14 @@ function SourceFlowInner({
                 color: 'var(--brand, var(--primary))',
               }}
             >
-              <ArrowDownToLine size={15} />
-              <span className="font-mono text-xs font-bold">
+              <ArrowDownToLine size={13} />
+              <span className="font-mono font-bold" style={{ fontSize: 10 }}>
                 {ingestRate}
               </span>
               <span
                 className="font-mono text-muted-foreground"
                 style={{
-                  fontSize: 8,
+                  fontSize: 7,
                   letterSpacing: '.08em',
                 }}
               >
@@ -692,16 +692,16 @@ function SourceFlowInner({
               <span
                 className="font-mono text-muted-foreground"
                 style={{
-                  fontSize: 8,
+                  fontSize: 7,
                   letterSpacing: '.08em',
                 }}
               >
                 OUT/h
               </span>
-              <span className="font-mono text-xs font-bold">
+              <span className="font-mono font-bold" style={{ fontSize: 10 }}>
                 {egressRate}
               </span>
-              <ArrowUpFromLine size={15} />
+              <ArrowUpFromLine size={13} />
             </div>
           </div>
         </foreignObject>
@@ -773,7 +773,7 @@ function SourceFlowInner({
                       <span
                         className="font-mono font-bold uppercase"
                         style={{
-                          fontSize: 10,
+                          fontSize: 9,
                           letterSpacing: '.04em',
                         }}
                       >
@@ -781,12 +781,12 @@ function SourceFlowInner({
                       </span>
                     </span>
                   ) : (
-                    <span className="font-mono text-sm font-bold">
+                    <span className="font-mono text-xs font-bold">
                       {perDay(n.v)}
                       <span
                         className="font-mono text-muted-foreground"
                         style={{
-                          fontSize: 9,
+                          fontSize: 8,
                           fontWeight: 500,
                         }}
                       >
@@ -860,13 +860,13 @@ function SourceFlowInner({
                       lineHeight: 1.15,
                     }}
                   >
-                    <span className="font-mono text-sm font-bold whitespace-nowrap">
+                    <span className="font-mono text-xs font-bold whitespace-nowrap">
                       {Math.round(n.v)}
                     </span>
                     <span
                       className="font-mono text-muted-foreground uppercase whitespace-nowrap"
                       style={{
-                        fontSize: 9,
+                        fontSize: 8,
                         letterSpacing: '.05em',
                       }}
                     >
