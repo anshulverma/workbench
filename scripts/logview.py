@@ -324,20 +324,140 @@ def should_show(
     return True
 
 
-def _emit(console: Console, path: str, line: str, args, display_tz) -> None:
+def _as_float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(v):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_request_completed(r: Record) -> bool:
+    return r.message == "request completed" and "duration_ms" in r.extras
+
+
+class RequestBatcher:
+    """Rolls up high-frequency 'request completed' middleware records into one
+    periodic summary line (count, ok/failed, avg + slowest endpoint) instead of
+    one line per request. Failures (status >= 400) are still printed individually
+    by the caller so they stay visible; they are also counted in the rollup.
+
+    A window closes on a wall-clock idle gap (follow mode) or once it spans
+    MAX_SPAN seconds of log time, whichever comes first; the caller flushes any
+    remainder at EOF / on exit."""
+
+    IDLE_GAP = 2.0  # wall-clock seconds of quiet that closes a window (follow)
+    MAX_SPAN = 60.0  # max log-time seconds a single summary may cover
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self) -> None:
+        self.count = 0
+        self.failed = 0
+        self.dur_sum = 0.0
+        self.slow_ms = -1.0
+        self.slow_label = ""
+        self.first_ts = None
+        self.last_ts = None
+        self.last_added_mono = None
+
+    @property
+    def pending(self) -> bool:
+        return self.count > 0
+
+    def add(self, r: Record, now_mono: float) -> None:
+        status = _as_int(r.extras.get("status_code"))
+        ms = _as_float(r.extras.get("duration_ms"))
+        self.count += 1
+        if status is not None and status >= 400:
+            self.failed += 1
+        if ms is not None:
+            self.dur_sum += ms
+            if ms > self.slow_ms:
+                self.slow_ms = ms
+                self.slow_label = (
+                    f"{r.extras.get('method', '')} {r.extras.get('path', '')}".strip()
+                )
+        if self.first_ts is None:
+            self.first_ts = r.ts
+        self.last_ts = r.ts
+        self.last_added_mono = now_mono
+
+    def span_exceeded(self, new_ts) -> bool:
+        if self.first_ts is None or new_ts is None:
+            return False
+        return (new_ts - self.first_ts).total_seconds() > self.MAX_SPAN
+
+    def idle(self, now_mono: float) -> bool:
+        return (
+            self.pending
+            and self.last_added_mono is not None
+            and now_mono - self.last_added_mono >= self.IDLE_GAP
+        )
+
+    def _summary_record(self) -> Record:
+        avg = self.dur_sum / self.count if self.count else 0.0
+        span = 0.0
+        if self.first_ts and self.last_ts:
+            span = (self.last_ts - self.first_ts).total_seconds()
+        ok = self.count - self.failed
+        head = f"{self.count} requests"
+        if span >= 1:
+            head += f" in {span:.0f}s"
+        parts = [head]
+        parts.append("all ok" if not self.failed else f"{ok} ok, {self.failed} failed")
+        parts.append(f"avg {avg:.1f}ms")
+        if self.slow_ms >= 0:
+            parts.append(f"slowest {self.slow_label} ({self.slow_ms:.1f}ms)")
+        return Record(
+            ts=self.last_ts,
+            service="workbench",
+            level="warning" if self.failed else "info",
+            location="requests",
+            message="Σ " + " · ".join(parts),
+            raw="",
+        )
+
+    def flush(self, console: Console, display_tz) -> None:
+        if not self.pending:
+            return
+        console.print(render_line(self._summary_record(), display_tz), soft_wrap=True)
+        self.reset()
+
+
+def _emit(
+    console: Console, path: str, line: str, args, display_tz, batcher=None
+) -> None:
     service = service_from_path(path)
     r = parser_for(service)(line.rstrip("\n"), service)
-    if should_show(
+    if not should_show(
         r,
         set(args.service or []),
         set(args.exclude or []),
         args.level,
         set(args.exclude_logger or []),
     ):
-        console.print(render_line(r, display_tz), soft_wrap=True)
+        return
+    if batcher is not None and _is_request_completed(r):
+        if batcher.span_exceeded(r.ts):
+            batcher.flush(console, display_tz)
+        batcher.add(r, _time.monotonic())
+        status = _as_int(r.extras.get("status_code"))
+        if status is not None and status >= 400:
+            # keep failures visible inline; they are also counted in the rollup
+            console.print(render_line(r, display_tz), soft_wrap=True)
+        return
+    console.print(render_line(r, display_tz), soft_wrap=True)
 
 
-def _drain(console: Console, sp: str, fh, args, display_tz) -> None:
+def _drain(console: Console, sp: str, fh, args, display_tz, batcher=None) -> None:
     """Emit only complete (newline-terminated) lines; rewind on a partial line
     so it is rendered once, later, when the writer finishes it."""
     while True:
@@ -346,50 +466,61 @@ def _drain(console: Console, sp: str, fh, args, display_tz) -> None:
         if not line or not line.endswith("\n"):
             fh.seek(pos)
             return
-        _emit(console, sp, line, args, display_tz)
+        _emit(console, sp, line, args, display_tz, batcher)
 
 
 def _follow(console: Console, directory: str, args, display_tz) -> None:
+    batcher = RequestBatcher() if args.batch_requests else None
     handles: dict = {}
     inodes: dict = {}
     first_pass = True
     announced_empty = False
-    while True:
-        paths = sorted(Path(directory).glob("*.log"))
-        if not paths and not announced_empty:
-            console.print(f"[dim]no *.log files in {directory} yet…[/dim]")
-            announced_empty = True
-        for path in paths:
-            sp = str(path)
-            try:
-                st = path.stat()
-            except FileNotFoundError:
-                continue
-            tracked = sp in handles
-            if not tracked or inodes.get(sp) != st.st_ino:
-                if tracked:
-                    handles[sp].close()
-                fh = open(sp, "r", encoding="utf-8", errors="replace")
-                # On the first pass, skip history of pre-existing files. New or
-                # rotated files (inode changed) are read from the start.
-                if first_pass:
-                    fh.seek(0, os.SEEK_END)
-                handles[sp] = fh
-                inodes[sp] = st.st_ino
-            fh = handles[sp]
-            if fh.tell() > st.st_size:  # truncated in place
-                fh.seek(0)
-            _drain(console, sp, fh, args, display_tz)
-        first_pass = False
-        _time.sleep(0.25)
+    try:
+        while True:
+            paths = sorted(Path(directory).glob("*.log"))
+            if not paths and not announced_empty:
+                console.print(f"[dim]no *.log files in {directory} yet…[/dim]")
+                announced_empty = True
+            for path in paths:
+                sp = str(path)
+                try:
+                    st = path.stat()
+                except FileNotFoundError:
+                    continue
+                tracked = sp in handles
+                if not tracked or inodes.get(sp) != st.st_ino:
+                    if tracked:
+                        handles[sp].close()
+                    fh = open(sp, "r", encoding="utf-8", errors="replace")
+                    # On the first pass, skip history of pre-existing files. New or
+                    # rotated files (inode changed) are read from the start.
+                    if first_pass:
+                        fh.seek(0, os.SEEK_END)
+                    handles[sp] = fh
+                    inodes[sp] = st.st_ino
+                fh = handles[sp]
+                if fh.tell() > st.st_size:  # truncated in place
+                    fh.seek(0)
+                _drain(console, sp, fh, args, display_tz, batcher)
+            first_pass = False
+            if batcher is not None and batcher.idle(_time.monotonic()):
+                batcher.flush(console, display_tz)
+            _time.sleep(0.25)
+    except KeyboardInterrupt:
+        if batcher is not None:
+            batcher.flush(console, display_tz)
+        raise
 
 
 def _read_once(console: Console, directory: str, args, display_tz) -> None:
+    batcher = RequestBatcher() if args.batch_requests else None
     for path in sorted(Path(directory).glob("*.log")):
         with open(str(path), "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 if line.endswith("\n"):
-                    _emit(console, str(path), line, args, display_tz)
+                    _emit(console, str(path), line, args, display_tz, batcher)
+    if batcher is not None:
+        batcher.flush(console, display_tz)
 
 
 def main(argv=None) -> int:
@@ -408,6 +539,12 @@ def main(argv=None) -> int:
     )
     p.add_argument("--tz", default="America/Los_Angeles", help="display timezone")
     p.add_argument("--no-follow", action="store_true")
+    p.add_argument(
+        "--batch-requests",
+        action="store_true",
+        help="roll up 'request completed' middleware logs into periodic summary "
+        "lines (count, avg + slowest endpoint); failures still shown individually",
+    )
     args = p.parse_args(argv)
     console = Console()
     display_tz = ZoneInfo(args.tz)

@@ -49,7 +49,7 @@ format:
 	$(PYTHON) -m ruff format src/ tests/ scripts/
 
 logs:
-	$(PYTHON) scripts/logview.py data/logs --exclude dcat --exclude access --exclude-logger uvicorn.access $(if $(EXCLUDE),--exclude $(EXCLUDE))
+	$(PYTHON) scripts/logview.py data/logs --exclude dcat --exclude access --exclude-logger uvicorn.access --batch-requests $(if $(EXCLUDE),--exclude $(EXCLUDE))
 
 health:
 	@curl -s http://localhost:8421/health | python3 -m json.tool
