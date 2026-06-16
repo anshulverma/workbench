@@ -1,7 +1,7 @@
 // AppSidebar tests (V3 shell restructure, Slice 7).
 //
 // Asserts the nav rail renders 8 items in the correct order, with Search at
-// position 2, System Status at position 8, and that the removed items
+// position 2, System Status at position 7 (above Settings), and that the removed items
 // (Sources, Messenger) are absent.
 
 import { describe, it, expect } from 'vitest'
@@ -54,8 +54,8 @@ describe('AppSidebar', () => {
       'Action Items',
       'Ingestion',
       'Knowledge',
-      'Settings',
       'System Status',
+      'Settings',
     ])
   })
 

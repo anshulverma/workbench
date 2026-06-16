@@ -33,8 +33,8 @@ const NAV: NavItem[] = [
   { to: '/actions', label: 'Action Items', icon: CircleCheckBig },
   { to: '/ingestion', label: 'Ingestion', icon: Workflow },
   { to: '/knowledge', label: 'Knowledge', icon: BookOpen },
-  { to: '/settings', label: 'Settings', icon: Settings },
   { to: '/system', label: 'System Status', icon: Activity },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
 /** Check if a route matches a nav item. */
@@ -76,7 +76,8 @@ export function AppSidebar({ className }: { className?: string }) {
         </span>
         <span className="wb-rail-label font-display text-sm font-semibold tracking-tight">
           <span className="text-foreground">Work</span>
-          <span className="text-primary">Bench</span>
+          <span className="text-primary">B</span>
+          <span className="text-foreground">ench</span>
         </span>
       </NavLink>
 
