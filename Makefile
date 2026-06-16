@@ -2,7 +2,9 @@ COMPOSE := docker compose
 COMPOSE_FILES ?= -f docker-compose.yml
 PYTHON ?= $(HOME)/.venv/workbench/bin/python
 PIP ?= $(HOME)/.venv/workbench/bin/pip
-EXCLUDE ?= dcat
+# Extra service(s) to hide in `make logs`, additive to the built-in defaults
+# (dcat/access). e.g. `make logs EXCLUDE=postgres`.
+EXCLUDE ?=
 WORKBENCH_API_TOKEN ?= change-me
 
 .PHONY: setup ui-setup ui-build ui-test gen-api build up down serve test migrate lint format logs health triage clean
