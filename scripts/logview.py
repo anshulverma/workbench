@@ -352,8 +352,8 @@ class RequestBatcher:
     MAX_SPAN seconds of log time, whichever comes first; the caller flushes any
     remainder at EOF / on exit."""
 
-    IDLE_GAP = 2.0  # wall-clock seconds of quiet that closes a window (follow)
-    MAX_SPAN = 60.0  # max log-time seconds a single summary may cover
+    IDLE_GAP = 16.0  # wall-clock seconds of quiet that closes a window (follow)
+    MAX_SPAN = 480.0  # max log-time seconds a single summary may cover
 
     def __init__(self):
         self.reset()
