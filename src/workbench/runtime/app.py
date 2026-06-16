@@ -308,7 +308,7 @@ async def lifespan(app: FastAPI):
     # Change-monitoring: register per-source-type ChangeDetectors from config.
     app.state.scheduler._change_detectors = build_change_detectors(config.sources)
     app.state.scheduler.start()
-    logger.info("Workbench %s ready on port %d", __version__, config.server.port)
+    logger.info("Workbench ready", version=__version__, port=config.server.port)
 
     yield
 
