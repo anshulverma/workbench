@@ -37,7 +37,7 @@ import { ApiError } from '@/lib/api'
 
 const SYS_STATUS: Record<string, { color: string; label: string }> = {
   healthy: { color: '#9ad08a', label: 'operational' },
-  degraded: { color: '#ff6a2b', label: 'degraded' },
+  degraded: { color: '#f5a623', label: 'degraded' },
   unhealthy: { color: '#e5484d', label: 'down' },
   disabled: { color: '#71717a', label: 'paused' },
   planned: { color: '#71717a', label: 'planned' },
@@ -46,7 +46,7 @@ const SYS_STATUS: Record<string, { color: string; label: string }> = {
 const ROLE_TONE: Record<string, string> = {
   connector: '#71d2ff',
   service: '#b79cf7',
-  core: '#ff6a2b',
+  core: '#f5a623',
   storage: '#9ad08a',
 }
 
@@ -1030,7 +1030,7 @@ export function SystemStatusSummary() {
                 className="size-1.5 rounded-full"
                 style={{
                   background:
-                    healthy === total ? '#9ad08a' : '#ff6a2b',
+                    healthy === total ? '#9ad08a' : '#f5a623',
                 }}
               />
               {lane}:{' '}

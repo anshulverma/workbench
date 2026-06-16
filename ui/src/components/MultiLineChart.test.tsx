@@ -7,7 +7,7 @@ import { MultiLineChart, type ChartSeries } from './MultiLineChart'
 // ---------------------------------------------------------------------------
 
 const SERIES: ChartSeries[] = [
-  { name: 'Ingested', color: '#ff6a2b', data: [10, 20, 15, 30, 25] },
+  { name: 'Ingested', color: '#f5a623', data: [10, 20, 15, 30, 25] },
   { name: 'Triaged', color: '#71d2ff', data: [5, 12, 8, 20, 18] },
 ]
 

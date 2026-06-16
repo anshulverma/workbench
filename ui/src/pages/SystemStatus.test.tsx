@@ -121,7 +121,7 @@ describe('SystemStatus page', () => {
     // Check role colors
     expect(screen.getByTestId('legend-connector')).toHaveStyle({ background: '#71d2ff' })
     expect(screen.getByTestId('legend-service')).toHaveStyle({ background: '#b79cf7' })
-    expect(screen.getByTestId('legend-core')).toHaveStyle({ background: '#ff6a2b' })
+    expect(screen.getByTestId('legend-core')).toHaveStyle({ background: '#f5a623' })
     expect(screen.getByTestId('legend-storage')).toHaveStyle({ background: '#9ad08a' })
   })
 

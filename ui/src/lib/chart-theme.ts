@@ -3,11 +3,11 @@
 // Single source of truth for chart colors + Recharts defaults, replacing the
 // per-page hardcoded `DONUT_COLORS` arrays that drifted from the theme tokens.
 // Hex values mirror the two-orange palette (ADR 0033) and the contrast contract
-// (ADR 0046): brand orange `#ff6a2b` is the chart primary, cyan `#71d2ff` the
+// (ADR 0046): brand orange `#f5a623` is the chart primary, cyan `#71d2ff` the
 // tertiary, plus AA-safe semantic hues for red/amber/blue/green series.
 
 export const CHART_COLORS = {
-  primary: '#ff6a2b',
+  primary: '#f5a623',
   tertiary: '#71d2ff',
   red: '#ffb4ab',
   amber: '#ffb59a',

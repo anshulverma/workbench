@@ -22,9 +22,9 @@ describe('theme tokens (spec §1, contrast contract §13)', () => {
   })
 
   it('maps the two-orange system to shadcn vars', () => {
-    expect(css).toMatch(/--primary:\s*#ff6a2b/i)
+    expect(css).toMatch(/--primary:\s*#f5a623/i)
     expect(css).toMatch(/--primary-foreground:\s*#0e0e11/i)
-    expect(css).toMatch(/--ring:\s*#ff6a2b/i)
+    expect(css).toMatch(/--ring:\s*#f5a623/i)
     // neutral hover, NOT orange
     expect(css).toMatch(/--accent:\s*#2a2a2d/i)
   })

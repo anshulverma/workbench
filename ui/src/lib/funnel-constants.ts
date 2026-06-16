@@ -13,7 +13,7 @@ export const ACTION_META: Record<string, ActionMeta> = {
   drop: { label: 'auto-drop', icon: 'Filter', chipFg: '#ffb4ab', chipBg: 'color-mix(in srgb, #93000a 32%, transparent)', accent: '#e5484d' },
   include: { label: 'auto-include', icon: 'CircleCheckBig', chipFg: '#0e0e11', chipBg: 'var(--success)', accent: 'var(--success)' },
   label: { label: 'label', icon: 'Tag', chipFg: '#0e0e11', chipBg: '#b79cf7', accent: '#9a7af0' },
-  loopback: { label: 'loop back', icon: 'RotateCcw', chipFg: '#0e0e11', chipBg: '#ffb59a', accent: '#ff6a2b' },
+  loopback: { label: 'loop back', icon: 'RotateCcw', chipFg: '#0e0e11', chipBg: '#ffb59a', accent: '#f5a623' },
 }
 
 export const STAGE_META: Record<StageOutcome, ActionMeta> = {
@@ -31,7 +31,7 @@ export const SRC_ICON: Record<string, string> = {
 }
 
 export const SOURCE_COLORS: Record<string, string> = {
-  github: '#ff6a2b',
+  github: '#f5a623',
   email: '#71d2ff',
   calendar: '#ffb59a',
   chat: '#9ad08a',
