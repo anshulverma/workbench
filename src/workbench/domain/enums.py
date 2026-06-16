@@ -28,6 +28,10 @@ class ItemStatus(str, Enum):
     ACTIVE = "active"
     DONE = "done"
     ARCHIVED = "archived"
+    # Auto-dropped by the relevance filter. Persisted (not discarded) so the
+    # Ingestion funnel can show what was filtered out and why; excluded from the
+    # active/triage feeds, which query by their own statuses.
+    DROPPED = "dropped"
 
 
 class ItemCategory(str, Enum):

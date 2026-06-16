@@ -1049,6 +1049,9 @@ async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, in
     results["done_items"] = await stores.items.delete_older_than(
         "done", config.done_items_days
     )
+    results["dropped_items"] = await stores.items.delete_older_than(
+        "dropped", config.dropped_items_days
+    )
     results["expired_cards"] = await stores.triage.delete_older_than(
         "expired", config.expired_cards_days
     )

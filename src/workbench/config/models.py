@@ -108,6 +108,7 @@ class TracingConfig(BaseModel):
 class RetentionConfig(BaseModel):
     archived_items_days: int = 90
     done_items_days: int = 90
+    dropped_items_days: int = 14
     expired_cards_days: int = 30
     responded_cards_days: int = 90
     enrichment_traces_days: int = 30

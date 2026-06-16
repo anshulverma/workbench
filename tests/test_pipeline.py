@@ -169,8 +169,18 @@ async def test_process_raw_item_auto_drop(stores, mock_llm):
     )
     await engine.process_raw_item(raw, job.id)
 
-    items = await stores.items.get_items(ItemFilters())
-    assert len(items) == 0
+    # Dropped items are now persisted (status=DROPPED) so the Ingestion funnel
+    # can show what was filtered out, but excluded from the active/triage feeds.
+    all_items = await stores.items.get_items(ItemFilters())
+    assert len(all_items) == 1
+    assert all_items[0].status == ItemStatus.DROPPED
+    assert all_items[0].verdict_action == "drop"
+    assert all_items[0].funnel_log
+    assert await stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE)) == []
+    assert (
+        await stores.items.get_items(ItemFilters(status=ItemStatus.PENDING_TRIAGE))
+        == []
+    )
 
 
 @pytest.mark.asyncio
@@ -537,7 +547,12 @@ async def test_e2e_auto_drop(stores, mock_llm):
     await worker.stop()
 
     assert len(await stores.triage.get_pending()) == 0
-    assert len(await stores.items.get_items(ItemFilters())) == 0
+    # Drop is persisted as a DROPPED item (visible in the funnel), not in the feed.
+    dropped = await stores.items.get_items(ItemFilters(status=ItemStatus.DROPPED))
+    assert len(dropped) == 1
+    assert dropped[0].verdict_action == "drop"
+    assert dropped[0].funnel_log
+    assert len(await stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE))) == 0
 
 
 @pytest.mark.asyncio
@@ -579,6 +594,7 @@ async def test_scheduler_skips_unhealthy_connection(stores, mock_llm):
 
 # --- S1: auto_drop recording config gate (plan Task 1) ---
 
+
 @pytest.mark.asyncio
 async def test_auto_drop_not_recorded_when_flag_false(monkeypatch):
     from unittest.mock import AsyncMock
@@ -592,7 +608,9 @@ async def test_auto_drop_not_recorded_when_flag_false(monkeypatch):
         AsyncMock(), mem, AsyncMock(), StubEnricher(), record_drop_decisions=False
     )
     ext = ExtractedItem(
-        summary="noise", category=ItemCategory.INFORMATIONAL, source_context="",
+        summary="noise",
+        category=ItemCategory.INFORMATIONAL,
+        source_context="",
         raw_item=RawItem(id="X1", source_type="email", source_label="", raw_text="x"),
     )
 
@@ -617,7 +635,9 @@ async def test_auto_drop_recorded_when_flag_true(monkeypatch):
         AsyncMock(), mem, AsyncMock(), StubEnricher(), record_drop_decisions=True
     )
     ext = ExtractedItem(
-        summary="noise", category=ItemCategory.INFORMATIONAL, source_context="",
+        summary="noise",
+        category=ItemCategory.INFORMATIONAL,
+        source_context="",
         raw_item=RawItem(id="X2", source_type="email", source_label="", raw_text="x"),
     )
 
@@ -627,3 +647,63 @@ async def test_auto_drop_recorded_when_flag_true(monkeypatch):
     monkeypatch.setattr(eng, "score_and_decide", fake)
     await engine._process_extracted_item(ext, job=None)
     mem.record_pipeline_decision.assert_called_once()
+
+
+# --- Funnel trace + verdict population (Ingestion page wiring) ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action,verdict,status",
+    [
+        ("auto_include", "include", ItemStatus.ACTIVE),
+        ("auto_drop", "drop", ItemStatus.DROPPED),
+        ("triage", "triage", ItemStatus.PENDING_TRIAGE),
+    ],
+)
+async def test_process_populates_funnel_log_and_verdict(
+    monkeypatch, action, verdict, status
+):
+    """Every routing branch saves an Item carrying a funnel_log + verdict so the
+    Ingestion funnel can render it — including auto_drop (status=DROPPED)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from workbench.pipeline.engine import PipelineEngine
+    from workbench.providers.enrichment.stub import StubEnricher
+    from workbench.domain import ExtractedItem, ItemCategory, RawItem
+    import workbench.pipeline.engine as eng
+
+    stores = AsyncMock()
+    engine = PipelineEngine(stores, AsyncMock(), AsyncMock(), StubEnricher())
+    ext = ExtractedItem(
+        summary="x",
+        category=ItemCategory.INFORMATIONAL,
+        source_context="",
+        raw_item=RawItem(id="Z1", source_type="email", source_label="", raw_text="x"),
+    )
+
+    async def fake_decide(*a, **k):
+        return (action, 42, 88)
+
+    async def fake_enrich(*a, **k):
+        return {}
+
+    async def fake_card(*a, **k):
+        return MagicMock()
+
+    monkeypatch.setattr(eng, "score_and_decide", fake_decide)
+    monkeypatch.setattr(eng, "enrich_item", fake_enrich)
+    monkeypatch.setattr(eng, "generate_card", fake_card)
+
+    await engine._process_extracted_item(ext, job=None)
+
+    stores.items.save_item.assert_awaited_once()
+    saved = stores.items.save_item.await_args.args[0]
+    assert saved.status == status
+    assert saved.verdict_action == verdict
+    assert saved.verdict_confidence == 88
+    assert saved.funnel_log
+    assert saved.funnel_log[0]["stage"] == "extract"
+    # the relevance stage carries the outcome + reason the UI renders
+    rel = next(e for e in saved.funnel_log if e["stage"] == "relevance")
+    assert rel["confidence"] == 88
+    assert "relevance 42" in rel["reason"]

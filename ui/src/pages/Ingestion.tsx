@@ -85,6 +85,7 @@ function statusToOutcome(status: string | null): TailEntry['outcome'] {
     case 'error':
       return 'drop'
     case 'filtered':
+    case 'dropped':
       return 'drop'
     case 'pending':
     case 'queued':

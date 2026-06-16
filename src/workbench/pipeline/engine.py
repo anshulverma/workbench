@@ -32,6 +32,44 @@ from workbench.storage.base import Stores
 
 logger = logging.getLogger(__name__)
 
+# action (from filter.decide_from_score) -> the coarse verdict the funnel API
+# buckets on (see api/funnel.py _DECISION: include/triage -> "triaged", drop ->
+# "dropped").
+_VERDICT_ACTION = {"auto_include": "include", "auto_drop": "drop", "triage": "triage"}
+_OUTCOME = {"auto_include": "included", "auto_drop": "dropped", "triage": "triaged"}
+
+
+def _funnel_log(action: str, relevance: int, confidence: int) -> list[dict]:
+    """Build the per-item funnel trace the Ingestion page renders (one entry per
+    stage; shape consumed by api/funnel.py _stage_view)."""
+    log = [
+        {"stage": "extract", "label": "Extracted", "outcome": "pass"},
+        {
+            "stage": "relevance",
+            "label": "Relevance filter",
+            "outcome": _OUTCOME[action],
+            "reason": f"relevance {relevance}/100 (confidence {confidence}/100)",
+            "confidence": confidence,
+        },
+    ]
+    if action == "auto_include":
+        log.append({"stage": "route", "label": "Auto-included", "outcome": "included"})
+    elif action == "auto_drop":
+        log.append(
+            {
+                "stage": "route",
+                "label": "Auto-dropped (below relevance threshold)",
+                "outcome": "dropped",
+                "reason": f"relevance {relevance}/100",
+            }
+        )
+    else:
+        log.append({"stage": "enrich", "label": "Enriched", "outcome": "pass"})
+        log.append(
+            {"stage": "triage", "label": "Triage card created", "outcome": "triaged"}
+        )
+    return log
+
 
 class PipelineEngine:
     def __init__(
@@ -239,6 +277,9 @@ class PipelineEngine:
                 confidence_threshold=confidence_t,
             )
 
+        funnel_log = _funnel_log(action, relevance, confidence)
+        verdict_action = _VERDICT_ACTION[action]
+
         if action == "auto_include":
             item = Item(
                 source_type=ext_item.raw_item.source_type,
@@ -249,6 +290,10 @@ class PipelineEngine:
                 priority=Priority.P2,
                 status=ItemStatus.ACTIVE,
                 raw_data=ext_item.raw_item.model_dump(),
+                funnel_log=funnel_log,
+                verdict_action=verdict_action,
+                verdict_priority=Priority.P2.value,
+                verdict_confidence=confidence,
             )
             await self.stores.items.save_item(item)
             await self.memory.record_pipeline_decision(
@@ -259,18 +304,26 @@ class PipelineEngine:
                 await self.stores.jobs.update_job(job)
 
         elif action == "auto_drop":
+            # Persist the drop (status=DROPPED, excluded from active/triage feeds)
+            # so the Ingestion funnel can show what was filtered out and why.
+            item = Item(
+                source_type=ext_item.raw_item.source_type,
+                source_id=ext_item.raw_item.id,
+                summary=ext_item.summary,
+                category=ext_item.category,
+                origin=ItemOrigin.AUTO_INCLUDED,
+                priority=Priority.P3,
+                status=ItemStatus.DROPPED,
+                raw_data=ext_item.raw_item.model_dump(),
+                funnel_log=funnel_log,
+                verdict_action=verdict_action,
+                verdict_priority=Priority.P3.value,
+                verdict_confidence=confidence,
+            )
+            await self.stores.items.save_item(item)
             if self.record_drop_decisions:
                 await self.memory.record_pipeline_decision(
-                    Item(
-                        source_type=ext_item.raw_item.source_type,
-                        source_id=ext_item.raw_item.id,
-                        summary=ext_item.summary,
-                        category=ext_item.category,
-                        origin=ItemOrigin.AUTO_INCLUDED,
-                        priority=Priority.P3,
-                    ),
-                    "auto_drop",
-                    f"relevance={relevance}",
+                    item, "auto_drop", f"relevance={relevance}"
                 )
             if job:
                 job.items_dropped += 1
@@ -286,6 +339,10 @@ class PipelineEngine:
                 priority=Priority.PENDING,
                 status=ItemStatus.PENDING_TRIAGE,
                 raw_data=ext_item.raw_item.model_dump(),
+                funnel_log=funnel_log,
+                verdict_action=verdict_action,
+                verdict_priority=Priority.PENDING.value,
+                verdict_confidence=confidence,
             )
             await self.stores.items.save_item(item)
 
