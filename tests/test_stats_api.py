@@ -669,3 +669,71 @@ async def test_timeseries_day_bucket_full_axis(client):
     series = r.json()
     assert len(series) == 7
     assert all(p["count"] == 0 for p in series)
+
+
+# --------------------------------------------------------------------------- #
+# Triage-funnel timeseries metrics (Throughput panel, Triage.tsx). The three
+# flows of the triage funnel: items ingested -> cards enqueued -> cards triaged.
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_timeseries_ingestion_count_counts_items(client, app_with_state):
+    from datetime import datetime, timezone
+
+    stores = app_with_state.state.stores
+    await stores.items.save_item(
+        Item(
+            source_type="github",
+            source_id="ing1",
+            summary="s",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority=Priority.P0,
+            status=ItemStatus.ACTIVE,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    r = await client.get(
+        "/api/stats/timeseries?metric=ingestion_count&window=24&bucket=hour"
+    )
+    assert r.status_code == 200
+    series = r.json()
+    assert len(series) == 24
+    assert sum(p["count"] for p in series) == 1
+
+
+@pytest.mark.asyncio
+async def test_timeseries_triage_queue_count_counts_enqueued_cards(
+    client, app_with_state
+):
+    from datetime import datetime, timezone
+
+    stores = app_with_state.state.stores
+    await stores.triage.save_card(
+        TriageCard(item_id=None, created_at=datetime.now(timezone.utc))
+    )
+    r = await client.get(
+        "/api/stats/timeseries?metric=triage_queue_count&window=24&bucket=hour"
+    )
+    assert r.status_code == 200
+    series = r.json()
+    assert len(series) == 24
+    assert sum(p["count"] for p in series) == 1
+
+
+@pytest.mark.asyncio
+async def test_timeseries_triaged_count_counts_only_responded(client, app_with_state):
+    from datetime import datetime, timezone
+
+    stores = app_with_state.state.stores
+    now = datetime.now(timezone.utc)
+    # A responded card counts; a still-queued card (no responded_at) does not.
+    await stores.triage.save_card(
+        TriageCard(item_id=None, created_at=now, responded_at=now, status="responded")
+    )
+    await stores.triage.save_card(TriageCard(item_id=None, created_at=now))
+    r = await client.get(
+        "/api/stats/timeseries?metric=triaged_count&window=24&bucket=hour"
+    )
+    assert r.status_code == 200
+    series = r.json()
+    assert sum(p["count"] for p in series) == 1

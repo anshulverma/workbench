@@ -140,6 +140,20 @@ class TriageStore(ABC):
         """Average responded_at - sent_at over responded cards, or None."""
         ...
 
+    @abstractmethod
+    async def enqueued_timeseries(
+        self, window: int, bucket: str
+    ) -> list[tuple[datetime, int]]:
+        """Cards entering the triage queue (created_at) per bucket over window."""
+        ...
+
+    @abstractmethod
+    async def triaged_timeseries(
+        self, window: int, bucket: str
+    ) -> list[tuple[datetime, int]]:
+        """Cards triaged (responded_at) per bucket over the window."""
+        ...
+
 
 class PlanStore(ABC):
     @abstractmethod

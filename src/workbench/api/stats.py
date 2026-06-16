@@ -19,8 +19,17 @@ _THROUGHPUT_HOURS = 8
 _AUTO_RESOLVED_HOURS = 24
 _INGESTION_SUCCESS_DAYS = 7
 
-# /api/stats/timeseries allow-lists (422 on anything else).
-_TIMESERIES_METRICS = {"signal_velocity", "throughput"}
+# /api/stats/timeseries allow-lists (422 on anything else). Each metric maps to
+# a store timeseries query in `timeseries()`. signal_velocity/ingestion_count
+# both count items created (one is the Overview sparkline name, the other the
+# Triage funnel name); the triage_* metrics are the queue's in/out flows.
+_TIMESERIES_METRICS = {
+    "signal_velocity",
+    "throughput",
+    "ingestion_count",
+    "triage_queue_count",
+    "triaged_count",
+}
 _TIMESERIES_BUCKETS = {"hour", "day"}
 
 
@@ -161,18 +170,24 @@ async def timeseries(
 ):
     """Generic derived timeseries (ADR0039), zero-filled full bucket axis.
 
-    metric ∈ {signal_velocity (items created), throughput (items completed)};
-    bucket ∈ {hour, day}. Empty buckets are emitted as count:0, never omitted.
+    metric ∈ {signal_velocity / ingestion_count (items created),
+    throughput (items completed), triage_queue_count (cards enqueued),
+    triaged_count (cards responded)}; bucket ∈ {hour, day}. Empty buckets are
+    emitted as count:0, never omitted.
     """
     if metric not in _TIMESERIES_METRICS or bucket not in _TIMESERIES_BUCKETS:
         from fastapi import HTTPException
 
         raise HTTPException(status_code=422, detail="invalid metric or bucket")
     stores = request.app.state.stores
-    if metric == "signal_velocity":
+    if metric in ("signal_velocity", "ingestion_count"):
         rows = await stores.items.created_timeseries(window, bucket)
-    else:  # throughput
+    elif metric == "throughput":
         rows = await stores.items.completed_timeseries(window, bucket)
+    elif metric == "triage_queue_count":
+        rows = await stores.triage.enqueued_timeseries(window, bucket)
+    else:  # triaged_count
+        rows = await stores.triage.triaged_timeseries(window, bucket)
     return _zero_filled(rows, window, bucket)
 
 

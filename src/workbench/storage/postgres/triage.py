@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import asyncpg
 
@@ -155,6 +155,29 @@ class PgTriageStore(TriageStore):
             "WHERE responded_at IS NOT NULL AND sent_at IS NOT NULL"
         )
         return float(row["avg_s"]) if row["avg_s"] is not None else None
+
+    async def _timeseries(
+        self, column: str, window: int, bucket: str
+    ) -> list[tuple[datetime, int]]:
+        """date_trunc COUNT(*) over triage_cards.<column>, mirroring the items
+        store's _timeseries. ``column`` is an internal literal, never user input."""
+        if bucket not in ("hour", "day"):
+            bucket = "hour"
+        interval = "1 hour" if bucket == "hour" else "1 day"
+        rows = await self.pool.fetch(
+            f"SELECT date_trunc('{bucket}', {column}, 'UTC') AS ts, COUNT(*) AS cnt "
+            f"FROM triage_cards WHERE {column} IS NOT NULL "
+            f"AND {column} >= NOW() - INTERVAL '{interval}' * $1 "
+            "GROUP BY ts ORDER BY ts",
+            window,
+        )
+        return [(r["ts"], int(r["cnt"])) for r in rows]
+
+    async def enqueued_timeseries(self, window: int, bucket: str):
+        return await self._timeseries("created_at", window, bucket)
+
+    async def triaged_timeseries(self, window: int, bucket: str):
+        return await self._timeseries("responded_at", window, bucket)
 
     @staticmethod
     def _row_to_card(row: asyncpg.Record) -> TriageCard:
