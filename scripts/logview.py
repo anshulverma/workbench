@@ -3,6 +3,7 @@
 Tails every *.log under a directory, parses each emitter's format into a
 normalized record, and renders one consistent colored stream.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,9 +21,16 @@ from rich.text import Text
 
 _LEVELS = {"debug", "info", "warning", "error", "critical"}
 _LEVEL_ALIASES = {
-    "warn": "warning", "err": "error", "fatal": "critical", "panic": "critical",
-    "log": "info", "detail": "info", "hint": "info", "notice": "info",
-    "statement": "debug", "trace": "debug",
+    "warn": "warning",
+    "err": "error",
+    "fatal": "critical",
+    "panic": "critical",
+    "log": "info",
+    "detail": "info",
+    "hint": "info",
+    "notice": "info",
+    "statement": "debug",
+    "trace": "debug",
 }
 
 
@@ -36,6 +44,7 @@ class Record:
     extras: dict[str, str] = field(default_factory=dict)
     exception: str | None = None
     raw: str = ""
+    logger: str | None = None
 
 
 def _norm_level(token: str) -> str:
@@ -64,8 +73,16 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 _PY_WARNING_RE = re.compile(r"\w+Warning\b")
 
-_STRUCTURAL = {"timestamp", "level", "logger", "filename", "lineno",
-               "func_name", "event", "exception"}
+_STRUCTURAL = {
+    "timestamp",
+    "level",
+    "logger",
+    "filename",
+    "lineno",
+    "func_name",
+    "event",
+    "exception",
+}
 
 
 def parse_json(line: str, service: str) -> Record:
@@ -93,6 +110,7 @@ def parse_json(line: str, service: str) -> Record:
         extras=extras,
         exception=str(exc) if exc else None,
         raw=line,
+        logger=logger_name or None,
     )
 
 
@@ -108,16 +126,28 @@ def parse_postgres(line: str, service: str) -> Record:
     m = _PG_RE.match(line)
     if not m:
         if line.startswith("\t"):
-            return Record(ts=None, service=service, level="debug",
-                          location=None, message=line.strip(), raw=line)
+            return Record(
+                ts=None,
+                service=service,
+                level="debug",
+                location=None,
+                message=line.strip(),
+                raw=line,
+            )
         return parse_raw(line, service)
     ts = None
     try:
         ts = datetime.datetime.strptime(m["ts"][:23], "%Y-%m-%d %H:%M:%S.%f")
     except ValueError:
         pass
-    return Record(ts=ts, service=service, level=_norm_level(m["level"]),
-                  location=f"pid {m['pid']}", message=m["msg"], raw=line)
+    return Record(
+        ts=ts,
+        service=service,
+        level=_norm_level(m["level"]),
+        location=f"pid {m['pid']}",
+        message=m["msg"],
+        raw=line,
+    )
 
 
 _NEO4J_RE = re.compile(
@@ -130,20 +160,35 @@ def parse_neo4j(line: str, service: str) -> Record:
     m = _NEO4J_RE.match(line)
     if not m:
         return parse_raw(line, service)
-    return Record(ts=_parse_ts(m["ts"]), service=service, level=_norm_level(m["level"]),
-                  location=m["comp"] or None, message=m["msg"], raw=line)
+    return Record(
+        ts=_parse_ts(m["ts"]),
+        service=service,
+        level=_norm_level(m["level"]),
+        location=m["comp"] or None,
+        message=m["msg"],
+        raw=line,
+    )
 
 
 _KW_RE = re.compile(r"\b(CRITICAL|FATAL|ERROR|WARNING|WARN|INFO|DEBUG)\b")
-_KW_CI_RE = re.compile(r"\b(critical|fatal|error|warning|warn|info|debug)\b", re.IGNORECASE)
+_KW_CI_RE = re.compile(
+    r"\b(critical|fatal|error|warning|warn|info|debug)\b", re.IGNORECASE
+)
 
 
 def _parse_glog_ts(date_str: str, time_str: str) -> datetime.datetime | None:
     try:
         month, day = int(date_str[:2]), int(date_str[2:])
         t = datetime.datetime.strptime(time_str[:15], "%H:%M:%S.%f")
-        return datetime.datetime(datetime.date.today().year, month, day,
-                                 t.hour, t.minute, t.second, t.microsecond)
+        return datetime.datetime(
+            datetime.date.today().year,
+            month,
+            day,
+            t.hour,
+            t.minute,
+            t.second,
+            t.microsecond,
+        )
     except (ValueError, AttributeError):
         return None
 
@@ -151,9 +196,14 @@ def _parse_glog_ts(date_str: str, time_str: str) -> datetime.datetime | None:
 def parse_raw(line: str, service: str) -> Record:
     m = _GLOG_RE.match(line)
     if m:
-        return Record(ts=_parse_glog_ts(m["date"], m["time"]),
-                      service=service, level=_GLOG_LEVELS[m["level"]],
-                      location=m["loc"], message=m["msg"], raw=line)
+        return Record(
+            ts=_parse_glog_ts(m["date"], m["time"]),
+            service=service,
+            level=_GLOG_LEVELS[m["level"]],
+            location=m["loc"],
+            message=m["msg"],
+            raw=line,
+        )
     clean = _ANSI_RE.sub("", line) if "\x1b" in line else line
     m = _KW_RE.search(clean)
     if not m:
@@ -164,8 +214,9 @@ def parse_raw(line: str, service: str) -> Record:
         level = "warning"
     else:
         level = "unknown"
-    return Record(ts=None, service=service, level=level, location=None,
-                  message=line, raw=line)
+    return Record(
+        ts=None, service=service, level=level, location=None, message=line, raw=line
+    )
 
 
 PARSERS = {
@@ -183,12 +234,20 @@ def parser_for(service: str):
 DEFAULT_TZ = ZoneInfo("America/Los_Angeles")
 
 LEVEL_GLYPH = {
-    "debug": "D", "info": "I", "warning": "W",
-    "error": "E", "critical": "F", "unknown": "?",
+    "debug": "D",
+    "info": "I",
+    "warning": "W",
+    "error": "E",
+    "critical": "F",
+    "unknown": "?",
 }
 LEVEL_STYLE = {
-    "debug": "dim", "info": "green", "warning": "yellow",
-    "error": "red", "critical": "bold red", "unknown": "dim",
+    "debug": "dim",
+    "info": "green",
+    "warning": "yellow",
+    "error": "red",
+    "critical": "bold red",
+    "unknown": "dim",
 }
 _SERVICE_STYLES = ["cyan", "magenta", "blue", "bright_black", "bright_cyan"]
 _service_color: dict[str, str] = {}
@@ -196,7 +255,9 @@ _service_color: dict[str, str] = {}
 
 def _service_style(service: str) -> str:
     if service not in _service_color:
-        _service_color[service] = _SERVICE_STYLES[len(_service_color) % len(_SERVICE_STYLES)]
+        _service_color[service] = _SERVICE_STYLES[
+            len(_service_color) % len(_SERVICE_STYLES)
+        ]
     return _service_color[service]
 
 
@@ -223,20 +284,42 @@ def render_line(r: Record, display_tz: datetime.tzinfo = DEFAULT_TZ) -> Text:
     return t
 
 
-_LEVEL_ORDER = {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4, "unknown": 1}
+_LEVEL_ORDER = {
+    "debug": 0,
+    "info": 1,
+    "warning": 2,
+    "error": 3,
+    "critical": 4,
+    "unknown": 1,
+}
 
 
 def service_from_path(path: str) -> str:
     return Path(path).stem
 
 
-def should_show(r: Record, services: set, excludes: set, min_level) -> bool:
+def should_show(
+    r: Record, services: set, excludes: set, min_level, exclude_loggers=frozenset()
+) -> bool:
     if excludes and r.service in excludes:
         return False
+    # Match on the logger name or any dotted prefix, so "uvicorn" also hides
+    # "uvicorn.access" / "uvicorn.error". Catches access lines that propagate
+    # into other service files, not just the dedicated access.log.
+    if exclude_loggers and r.logger:
+        parts = r.logger.split(".")
+        if any(
+            ".".join(parts[:i]) in exclude_loggers for i in range(1, len(parts) + 1)
+        ):
+            return False
     if services and r.service not in services:
         return False
     # unknown is fail-open so parse_raw lines are never dropped by a level filter
-    if min_level and r.level != "unknown" and _LEVEL_ORDER.get(r.level, 1) < _LEVEL_ORDER[min_level]:
+    if (
+        min_level
+        and r.level != "unknown"
+        and _LEVEL_ORDER.get(r.level, 1) < _LEVEL_ORDER[min_level]
+    ):
         return False
     return True
 
@@ -244,7 +327,13 @@ def should_show(r: Record, services: set, excludes: set, min_level) -> bool:
 def _emit(console: Console, path: str, line: str, args, display_tz) -> None:
     service = service_from_path(path)
     r = parser_for(service)(line.rstrip("\n"), service)
-    if should_show(r, set(args.service or []), set(args.exclude or []), args.level):
+    if should_show(
+        r,
+        set(args.service or []),
+        set(args.exclude or []),
+        args.level,
+        set(args.exclude_logger or []),
+    ):
         console.print(render_line(r, display_tz), soft_wrap=True)
 
 
@@ -307,8 +396,16 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Unified Rich log viewer for workbench.")
     p.add_argument("directory", nargs="?", default="data/logs")
     p.add_argument("--level", choices=sorted(_LEVEL_ORDER))
-    p.add_argument("--service", action="append", help="repeatable; show only these services")
+    p.add_argument(
+        "--service", action="append", help="repeatable; show only these services"
+    )
     p.add_argument("--exclude", action="append", help="repeatable; hide these services")
+    p.add_argument(
+        "--exclude-logger",
+        action="append",
+        help="repeatable; hide records from these loggers (matches dotted prefixes, "
+        "e.g. 'uvicorn' hides 'uvicorn.access')",
+    )
     p.add_argument("--tz", default="America/Los_Angeles", help="display timezone")
     p.add_argument("--no-follow", action="store_true")
     args = p.parse_args(argv)
