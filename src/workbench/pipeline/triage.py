@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from workbench.providers.llm.base import LLMProvider
+from workbench.providers.llm.context import llm_call_context
 from workbench.domain import ChangeContext, ExtractedItem, TriageCard, TriageOption
 
 logger = logging.getLogger(__name__)
@@ -104,31 +105,36 @@ async def generate_card(
     # FIX 30/31: Pass only the context dict, not the full enrichment wrapper.
     context_for_llm = enrichment_context.get("context", enrichment_context)
     generator = (content_generators or {}).get(source_type)
-    if generator is not None:
-        try:
-            envelope = await generator.generate(
-                item=item,
-                llm=llm,
-                enrichment_context=context_for_llm,
-                memory_context=memory_context,
-                change_context=change_context,
-            )
-            card = TriageCard(card_content=envelope)
-        except Exception as e:
-            logger.warning("Content generator failed, using template: %s", e)
-            card = _template_card(item, enrichment_context, source_type, change_context)
-    else:
-        try:
-            card = await llm.generate_triage_card(
-                item,
-                context_for_llm,
-                source_type,
-                memory_context=memory_context,
-                change_context=change_context,
-            )
-        except Exception as e:
-            logger.warning("LLM card generation failed, using template: %s", e)
-            card = _template_card(item, enrichment_context, source_type, change_context)
+    with llm_call_context(origin="triage", purpose="generate_card", stage="triage"):
+        if generator is not None:
+            try:
+                envelope = await generator.generate(
+                    item=item,
+                    llm=llm,
+                    enrichment_context=context_for_llm,
+                    memory_context=memory_context,
+                    change_context=change_context,
+                )
+                card = TriageCard(card_content=envelope)
+            except Exception as e:
+                logger.warning("Content generator failed, using template: %s", e)
+                card = _template_card(
+                    item, enrichment_context, source_type, change_context
+                )
+        else:
+            try:
+                card = await llm.generate_triage_card(
+                    item,
+                    context_for_llm,
+                    source_type,
+                    memory_context=memory_context,
+                    change_context=change_context,
+                )
+            except Exception as e:
+                logger.warning("LLM card generation failed, using template: %s", e)
+                card = _template_card(
+                    item, enrichment_context, source_type, change_context
+                )
 
     # FIX 10: Validate any suggested options
     if memory_context and memory_context.get("preference_facts"):

@@ -56,6 +56,7 @@ async def record_plugboard_call(
     result_extractor: Callable[[Any], tuple[Any, Any, Any]] | None = None,
     temperature: float | None = None,
     is_fallback: bool = False,
+    tokens_estimated: bool = False,
 ) -> Any:
     """Run ``do_call`` (one messages.create), emitting a PlugboardCallRecord.
 
@@ -121,6 +122,7 @@ async def record_plugboard_call(
                 subcalls=subcalls,
                 temperature=temperature,
                 is_fallback=is_fallback,
+                tokens_estimated=tokens_estimated,
             )
         )
     return resp

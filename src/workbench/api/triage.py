@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
+from workbench.providers.llm.context import llm_call_context
 from workbench.domain import (
     FilterRule,
     InteractionEntry,
@@ -55,7 +56,12 @@ async def respond_to_triage(response: TriageResponse, request: Request):
                 503, "LLM provider not configured for free-text interpretation"
             )
 
-        interpreted = await llm.interpret_triage_response(card, response.raw_text)
+        with llm_call_context(
+            origin="aggregate",
+            purpose="interpret_triage_response",
+            stage="aggregate",
+        ):
+            interpreted = await llm.interpret_triage_response(card, response.raw_text)
 
         # Use the scheduler's execute logic
         scheduler = getattr(request.app.state, "scheduler", None)

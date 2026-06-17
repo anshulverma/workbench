@@ -23,6 +23,33 @@ from workbench.domain import (
 
 logger = logging.getLogger(__name__)
 
+
+def split_tokens_by_share(shares: list[int], total: int | None) -> list[int | None]:
+    """Split a batch token ``total`` across items by character ``shares``.
+
+    Returns one value per share. ``None`` total -> all ``None`` (usage missing).
+    Uses largest-remainder so the parts sum exactly to ``total``. A zero
+    total-share falls back to an equal split. See spec 3.x (batch capture).
+    """
+    n = len(shares)
+    if total is None:
+        return [None] * n
+    if n == 0:
+        return []
+    denom = sum(shares)
+    if denom <= 0:
+        base, rem = divmod(total, n)
+        return [base + (1 if i < rem else 0) for i in range(n)]
+    raw = [total * s / denom for s in shares]
+    floors = [int(r) for r in raw]
+    leftover = total - sum(floors)
+    # distribute leftover to the largest fractional remainders
+    order = sorted(range(n), key=lambda i: raw[i] - floors[i], reverse=True)
+    for i in order[:leftover]:
+        floors[i] += 1
+    return floors
+
+
 EXTRACT_PROMPT = """Extract actionable items from the following content. For each item, provide:
 - summary: what needs to be done or noted
 - category: one of "action_item", "meeting", "plan_seed", "informational"
@@ -80,8 +107,19 @@ class AnthropicLLM(LLMProvider):
         raw_item = RawItem(
             id="", source_type=source_type, source_label="", raw_text=raw_text
         )
+
+        def _extract_result(resp):
+            text = resp.content[0].text
+            structured = None
+            try:
+                structured = {"items": json.loads(self._extract_json(text))}
+            except Exception:
+                structured = None
+            return text, structured, None
+
         response = await self._call_with_retry(
-            EXTRACT_PROMPT.format(source_type=source_type, raw_text=raw_text[:10000])
+            EXTRACT_PROMPT.format(source_type=source_type, raw_text=raw_text[:10000]),
+            result_extractor=_extract_result,
         )
         try:
             items_data = json.loads(self._extract_json(response))
@@ -99,7 +137,12 @@ class AnthropicLLM(LLMProvider):
             return []
 
     async def score_relevance(
-        self, item: ExtractedItem, preference_facts: list[Fact], rules: list[FilterRule]
+        self,
+        item: ExtractedItem,
+        preference_facts: list[Fact],
+        rules: list[FilterRule],
+        *,
+        is_fallback: bool = False,
     ) -> tuple[int, int]:
         prefs_text = (
             "\n".join(f"- {f.content}" for f in preference_facts)
@@ -111,13 +154,25 @@ class AnthropicLLM(LLMProvider):
             if rules
             else "No rules yet."
         )
+
+        def _score_result(resp):
+            text = resp.content[0].text
+            structured = None
+            try:
+                structured = json.loads(self._extract_json(text))
+            except Exception:
+                structured = None
+            return text, structured, None
+
         response = await self._call_with_retry(
             SCORE_PROMPT.format(
                 summary=item.summary,
                 source_type=item.raw_item.source_type,
                 preferences=prefs_text,
                 rules=rules_text,
-            )
+            ),
+            result_extractor=_score_result,
+            is_fallback=is_fallback,
         )
         try:
             scores = json.loads(self._extract_json(response))
@@ -169,11 +224,54 @@ class AnthropicLLM(LLMProvider):
             '[{"index": <int>, "relevance": <0-100>, "confidence": <0-100>}].\n\n'
             f"Items:\n{json.dumps(payload, indent=2)}"
         )
+        # Per-item input prompt slices for subcall provenance (exact, indexed).
+        item_prompts = {p["index"]: json.dumps(p, indent=2) for p in payload}
+
+        def _batch_result(resp):
+            text = resp.content[0].text
+            elements: dict[int, dict] = {}
+            try:
+                for d in json.loads(self._extract_json(text)):
+                    elements[int(d["index"])] = d
+            except Exception:
+                elements = {}
+            usage = getattr(resp, "usage", None)
+            total_in = getattr(usage, "input_tokens", None) if usage else None
+            total_out = getattr(usage, "output_tokens", None) if usage else None
+            # Build subcalls only for successfully-parsed indices, splitting the
+            # batch usage proportionally by per-item char share (in/out).
+            indices = sorted(elements)
+            in_shares = [len(item_prompts.get(idx, "")) for idx in indices]
+            out_shares = [
+                len(json.dumps(elements[idx], separators=(",", ":"))) for idx in indices
+            ]
+            in_split = split_tokens_by_share(in_shares, total_in)
+            out_split = split_tokens_by_share(out_shares, total_out)
+            subcalls = []
+            for pos, idx in enumerate(indices):
+                el = elements[idx]
+                subcalls.append(
+                    {
+                        "item": str(idx),
+                        "prompt": item_prompts.get(idx, ""),
+                        "completion": json.dumps(el),
+                        "structured": el,
+                        "tokens_in": in_split[pos],
+                        "tokens_out": out_split[pos],
+                    }
+                )
+            return text, None, subcalls
+
         parsed: dict[int, tuple[int, int]] = {}
         try:
             data = json.loads(
                 self._extract_json(
-                    await self._call_with_retry(prompt, item_count=len(chunk))
+                    await self._call_with_retry(
+                        prompt,
+                        item_count=len(chunk),
+                        result_extractor=_batch_result,
+                        tokens_estimated=True,
+                    )
                 )
             )
             for d in data:
@@ -187,7 +285,9 @@ class AnthropicLLM(LLMProvider):
                 results[offset + i] = parsed[i]
             else:
                 try:
-                    results[offset + i] = await self.score_relevance(item, facts, rules)
+                    results[offset + i] = await self.score_relevance(
+                        item, facts, rules, is_fallback=True
+                    )
                 except Exception:
                     results[offset + i] = (50, 30)
 
@@ -254,8 +354,11 @@ User preference history:
 Write a brief, informative description that helps the user decide what to do.
 Return ONLY the card body text, no JSON wrapping."""
 
+        def _card_result(resp):
+            return resp.content[0].text, None, None
+
         try:
-            return await self._call_with_retry(prompt)
+            return await self._call_with_retry(prompt, result_extractor=_card_result)
         except Exception:
             logger.warning("Card body generation failed, falling back to summary")
             return summary
@@ -383,11 +486,22 @@ Return ONLY the card body text, no JSON wrapping."""
             }
         ]
 
+        def _interpret_result(resp):
+            for block in resp.content:
+                if (
+                    getattr(block, "type", None) == "tool_use"
+                    and getattr(block, "name", None) == "interpret_response"
+                ):
+                    return None, block.input, None
+            return None, None, None
+
         try:
             response = await record_plugboard_call(
                 client="main_llm",
                 model=self.model,
                 sink=self._sink,
+                input_prompt=messages[0]["content"],
+                result_extractor=_interpret_result,
                 do_call=lambda: self.client.messages.create(
                     model=self.model,
                     max_tokens=1000,
@@ -436,7 +550,16 @@ Return ONLY the card body text, no JSON wrapping."""
             )
 
     async def _call_with_retry(
-        self, prompt: str, max_retries: int = 3, *, item_count: int = 1
+        self,
+        prompt: str,
+        max_retries: int = 3,
+        *,
+        item_count: int = 1,
+        system_prompt: str | None = None,
+        result_extractor=None,
+        temperature: float | None = None,
+        is_fallback: bool = False,
+        tokens_estimated: bool = False,
     ) -> str:
         for attempt in range(max_retries):
             try:
@@ -445,6 +568,12 @@ Return ONLY the card body text, no JSON wrapping."""
                     model=self.model,
                     sink=self._sink,
                     item_count=item_count,
+                    input_prompt=prompt,
+                    system_prompt=system_prompt,
+                    result_extractor=result_extractor,
+                    temperature=temperature,
+                    is_fallback=is_fallback,
+                    tokens_estimated=tokens_estimated,
                     do_call=lambda: self.client.messages.create(
                         model=self.model,
                         max_tokens=2000,

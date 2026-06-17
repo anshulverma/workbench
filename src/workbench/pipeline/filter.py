@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from workbench.providers.llm.base import LLMProvider
+from workbench.providers.llm.context import llm_call_context
 from workbench.providers.memory.base import MemoryLayer
 from workbench.storage.base import FilterRuleStore
 from workbench.domain import ExtractedItem, Fact, FilterRule
@@ -85,7 +86,8 @@ async def score_and_decide(
     """Returns (action, relevance, confidence). Action is 'auto_include', 'auto_drop', or 'triage'."""
     all_facts, all_rules = await gather_facts_and_rules(memory, filter_rules, item)
 
-    relevance, confidence = await llm.score_relevance(item, all_facts, all_rules)
+    with llm_call_context(origin="filter", purpose="score_relevance", stage="filter"):
+        relevance, confidence = await llm.score_relevance(item, all_facts, all_rules)
 
     action = decide_from_score(
         relevance,
