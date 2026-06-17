@@ -226,3 +226,91 @@ describe('SystemStatus page', () => {
     )
   })
 })
+
+describe('SystemStatus — LLM Infra sub-tab', () => {
+  // The diagram is the default tab; the LLM Infra tab is a sibling sub-view.
+  // We pause the live tail right after switching so the streaming interval
+  // doesn't append rows mid-assertion.
+  async function openLLMTab() {
+    renderPage()
+    expect(await screen.findByTestId('system-status-page')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('system-tab-llm'))
+    expect(await screen.findByTestId('llm-infra')).toBeInTheDocument()
+    // Pause the live tail for deterministic assertions.
+    await userEvent.click(screen.getByTestId('llm-live-toggle'))
+  }
+
+  it('defaults to the diagram tab and hides the LLM panel', async () => {
+    renderPage()
+    expect(await screen.findByTestId('system-diagram')).toBeInTheDocument()
+    expect(screen.queryByTestId('llm-infra')).not.toBeInTheDocument()
+  })
+
+  it('switches to the LLM Infra tab, hiding the diagram', async () => {
+    await openLLMTab()
+    expect(screen.queryByTestId('system-diagram')).not.toBeInTheDocument()
+    expect(screen.getByText('LLM Invocation Log')).toBeInTheDocument()
+  })
+
+  it('shows LLM stat rollups (calls, latency, error rate, batched)', async () => {
+    await openLLMTab()
+    const cards = screen.getByTestId('llm-stat-cards')
+    expect(within(cards).getByText('Calls (24h)')).toBeInTheDocument()
+    expect(within(cards).getByText('Avg Latency')).toBeInTheDocument()
+    expect(within(cards).getByText('Error Rate')).toBeInTheDocument()
+    expect(within(cards).getByText('Batched')).toBeInTheDocument()
+    // 64-call pool × 47 = 3,008 calls in 24h.
+    expect(within(cards).getByText('3,008')).toBeInTheDocument()
+  })
+
+  it('renders the live-tailing invocation rows', async () => {
+    await openLLMTab()
+    const rows = screen.getAllByTestId('llm-log-row')
+    expect(rows.length).toBe(14) // initial slice
+  })
+
+  it('filters the invocation log by query', async () => {
+    await openLLMTab()
+    const before = screen.getAllByTestId('llm-log-row').length
+    await userEvent.type(screen.getByTestId('llm-search-input'), 'enrich')
+    await waitFor(() => {
+      expect(screen.getAllByTestId('llm-log-row').length).toBeLessThan(before)
+    })
+    // Every visible row is an enrich call.
+    for (const row of screen.getAllByTestId('llm-log-row')) {
+      expect(row.textContent?.toLowerCase()).toContain('enrich')
+    }
+  })
+
+  it('opens a call detail dialog with stage + structured output', async () => {
+    await openLLMTab()
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByTestId('llm-detail-stage')).toBeInTheDocument()
+    expect(within(dialog).getByText('System prompt')).toBeInTheDocument()
+    expect(within(dialog).getByText('Structured output')).toBeInTheDocument()
+  })
+
+  it('batched calls expose a sub-call selector to step through items', async () => {
+    await openLLMTab()
+    // The 3rd row (index 2, en_github) carries a batch of 3.
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[2])
+    const dialog = await screen.findByRole('dialog')
+    const selector = within(dialog).getByTestId('llm-subcall-selector')
+    expect(selector).toBeInTheDocument()
+    expect(within(dialog).getByText(/batch ×3/i)).toBeInTheDocument()
+    // Three item buttons to switch between sub-calls.
+    expect(within(dialog).getByTestId('llm-subcall-0')).toBeInTheDocument()
+    expect(within(dialog).getByTestId('llm-subcall-2')).toBeInTheDocument()
+  })
+
+  it('closes the call detail dialog', async () => {
+    await openLLMTab()
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[0])
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /close/i }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    )
+  })
+})

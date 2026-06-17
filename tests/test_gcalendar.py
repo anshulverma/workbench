@@ -36,7 +36,9 @@ def _make_event(
         "start": {"dateTime": start.isoformat()},
         "end": {"dateTime": end.isoformat()},
         "organizer": {"email": organizer_email},
-        "attendees": [{"email": e, "responseStatus": "accepted"} for e in (attendees or [])],
+        "attendees": [
+            {"email": e, "responseStatus": "accepted"} for e in (attendees or [])
+        ],
         "location": location,
         "description": description,
         "status": status,
@@ -57,12 +59,15 @@ def _mock_connection_with_events(events: list[dict]):
 
 # ============ Adapter Tests ============
 
+
 @pytest.mark.asyncio
 async def test_poll_returns_raw_items():
     event = _make_event()
     conn = _mock_connection_with_events([event])
 
-    config = GCalendarAdapter.ProviderConfig(calendar_ids=["primary"], lookahead_hours=48)
+    config = GCalendarAdapter.ProviderConfig(
+        calendar_ids=["primary"], lookahead_hours=48
+    )
     adapter = GCalendarAdapter(config, connection=conn)
 
     with pytest.MonkeyPatch.context() as mp:
@@ -75,6 +80,8 @@ async def test_poll_returns_raw_items():
     raw = json.loads(items[0].raw_text)
     assert raw["summary"] == "Team Standup"
     assert raw["organizer"] == "alice@meta.com"
+    # Source link: the event's Google Calendar htmlLink.
+    assert items[0].source_url == f"https://calendar.google.com/event/{event['id']}"
 
 
 def test_adapter_type():
@@ -178,6 +185,7 @@ async def test_multiple_calendars():
 
     conn = MagicMock()
     call_count = {"n": 0}
+
     def _make_list_result(*a, **kw):
         mock = MagicMock()
         call_count["n"] += 1
@@ -186,6 +194,7 @@ async def test_multiple_calendars():
         else:
             mock.execute.return_value = {"items": [event_b]}
         return mock
+
     conn.calendar.events.return_value.list = _make_list_result
 
     adapter = GCalendarAdapter(
@@ -202,6 +211,7 @@ async def test_multiple_calendars():
 
 # ============ Enricher Tests ============
 
+
 def _make_calendar_item(
     organizer: str = "alice@meta.com",
     attendees: list[str] | None = None,
@@ -211,20 +221,28 @@ def _make_calendar_item(
         id="cal_evt-1",
         source_type="calendar",
         source_label="Calendar: Team Standup",
-        raw_text=json.dumps({
-            "summary": summary,
-            "organizer": organizer,
-            "attendees": [{"email": e, "response_status": "accepted"} for e in (attendees or [])],
-            "location": "Room 5A",
-            "description": "Weekly standup",
-            "start": "2026-06-02T10:00:00+00:00",
-            "end": "2026-06-02T10:30:00+00:00",
-            "is_recurring": False,
-            "link": "https://calendar.google.com/event/evt-1",
-        }),
+        raw_text=json.dumps(
+            {
+                "summary": summary,
+                "organizer": organizer,
+                "attendees": [
+                    {"email": e, "response_status": "accepted"}
+                    for e in (attendees or [])
+                ],
+                "location": "Room 5A",
+                "description": "Weekly standup",
+                "start": "2026-06-02T10:00:00+00:00",
+                "end": "2026-06-02T10:30:00+00:00",
+                "is_recurring": False,
+                "link": "https://calendar.google.com/event/evt-1",
+            }
+        ),
     )
     return ExtractedItem(
-        summary=summary, category=ItemCategory.MEETING, source_context="", raw_item=raw,
+        summary=summary,
+        category=ItemCategory.MEETING,
+        source_context="",
+        raw_item=raw,
     )
 
 
@@ -246,7 +264,8 @@ async def test_enricher_extracts_entity_refs():
             organizer="alice@meta.com",
             attendees=["bob@meta.com", "carol@meta.com"],
         ),
-        "shallow", EnrichmentBudget(),
+        "shallow",
+        EnrichmentBudget(),
     )
     refs = result["context"]["entity_refs"]
     assert {"type": "person", "id": "gcal:alice@meta.com"} in refs
@@ -259,7 +278,10 @@ async def test_enricher_non_calendar_returns_empty():
     enricher = GCalendarEnricher(GCalendarEnricher.ProviderConfig())
     raw = RawItem(id="gh-1", source_type="github", source_label="PR", raw_text="{}")
     item = ExtractedItem(
-        summary="test", category=ItemCategory.INFORMATIONAL, source_context="", raw_item=raw,
+        summary="test",
+        category=ItemCategory.INFORMATIONAL,
+        source_context="",
+        raw_item=raw,
     )
     result = await enricher.enrich(item, "shallow", EnrichmentBudget())
     assert result == {"calls_made": 0, "time_ms": 0, "context": {}}
@@ -271,7 +293,9 @@ async def test_enricher_records_entities_in_memory():
     mock_memory = AsyncMock()
     await enricher.enrich(
         _make_calendar_item(organizer="alice@meta.com"),
-        "shallow", EnrichmentBudget(), memory=mock_memory,
+        "shallow",
+        EnrichmentBudget(),
+        memory=mock_memory,
     )
     mock_memory.record_entity.assert_called()
     call_args = mock_memory.record_entity.call_args

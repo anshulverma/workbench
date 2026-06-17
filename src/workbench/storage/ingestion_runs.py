@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
@@ -11,11 +10,11 @@ from workbench.domain import IngestionRun
 
 class IngestionRunStore(ABC):
     @abstractmethod
-    async def start_run(self, source_id: str) -> str: ...
+    async def start_run(self, source_id: str) -> int: ...
     @abstractmethod
-    async def finish_run(self, run_id: str, raw_enqueued: int) -> None: ...
+    async def finish_run(self, run_id: int, raw_enqueued: int) -> None: ...
     @abstractmethod
-    async def error_run(self, run_id: str, error: str) -> None: ...
+    async def error_run(self, run_id: int, error: str) -> None: ...
     @abstractmethod
     async def latest_for_source(self, source_id: str) -> IngestionRun | None: ...
     @abstractmethod
@@ -36,18 +35,18 @@ class PgIngestionRunStore(IngestionRunStore):
     def __init__(self, pool: asyncpg.Pool):
         self.pool = pool
 
-    async def start_run(self, source_id: str) -> str:
-        run_id = str(uuid.uuid4())
-        await self.pool.execute(
-            "INSERT INTO ingestion_runs (id, source_id, started_at, status, raw_enqueued) "
-            "VALUES ($1, $2, $3, 'running', 0)",
-            run_id,
+    async def start_run(self, source_id: str) -> int:
+        # id is a BIGINT identity column — omit it on INSERT and let the DB
+        # assign one, returned to the caller for later finish/error updates.
+        row = await self.pool.fetchrow(
+            "INSERT INTO ingestion_runs (source_id, started_at, status, raw_enqueued) "
+            "VALUES ($1, $2, 'running', 0) RETURNING id",
             source_id,
             datetime.now(timezone.utc),
         )
-        return run_id
+        return row["id"]
 
-    async def finish_run(self, run_id: str, raw_enqueued: int) -> None:
+    async def finish_run(self, run_id: int, raw_enqueued: int) -> None:
         await self.pool.execute(
             "UPDATE ingestion_runs SET status = 'success', finished_at = $1, "
             "raw_enqueued = $2 WHERE id = $3",
@@ -56,7 +55,7 @@ class PgIngestionRunStore(IngestionRunStore):
             run_id,
         )
 
-    async def error_run(self, run_id: str, error: str) -> None:
+    async def error_run(self, run_id: int, error: str) -> None:
         await self.pool.execute(
             "UPDATE ingestion_runs SET status = 'error', finished_at = $1, error = $2 "
             "WHERE id = $3",

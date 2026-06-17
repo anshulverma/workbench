@@ -76,9 +76,9 @@ describe('useCorrections', () => {
         return HttpResponse.json([])
       }),
     )
-    const { result } = renderHook(() => useCorrections('item-42'), { wrapper })
+    const { result } = renderHook(() => useCorrections(42), { wrapper })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(capturedUrl).toContain('item_id=item-42')
+    expect(capturedUrl).toContain('item_id=42')
   })
 })
 
@@ -112,20 +112,20 @@ describe('useAddCorrection', () => {
     server.use(
       http.post('/api/feedback/corrections', async ({ request }) => {
         posted = (await request.json()) as Record<string, unknown>
-        return HttpResponse.json({ ...posted, id: 'c-new', created_at: '2026-06-10T12:00:00Z' })
+        return HttpResponse.json({ ...posted, id: 999, created_at: '2026-06-10T12:00:00Z' })
       }),
     )
 
     const { result } = renderHook(() => useAddCorrection(), { wrapper })
     result.current.mutate({
-      item_id: 'item-5',
-      rule_id: 'r-1',
+      item_id: 5,
+      rule_id: 1,
       original_action: 'drop',
       corrected_action: 'include',
       reason: 'test',
     })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(posted).toMatchObject({ item_id: 'item-5', corrected_action: 'include' })
+    expect(posted).toMatchObject({ item_id: 5, corrected_action: 'include' })
   })
 })
 
@@ -140,9 +140,9 @@ describe('useDeleteCorrection', () => {
     )
 
     const { result } = renderHook(() => useDeleteCorrection(), { wrapper })
-    result.current.mutate('c-1')
+    result.current.mutate(1)
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(deletedId).toBe('c-1')
+    expect(deletedId).toBe('1')
   })
 })
 
@@ -157,7 +157,7 @@ describe('useUpdateTuningTask', () => {
     )
 
     const { result } = renderHook(() => useUpdateTuningTask(), { wrapper })
-    result.current.mutate({ taskId: 't-1', status: 'applied' })
+    result.current.mutate({ taskId: 1, status: 'applied' })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(patchedUrl).toContain('status=applied')
   })

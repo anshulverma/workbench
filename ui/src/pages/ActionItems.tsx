@@ -100,9 +100,9 @@ function ActionRow({
   onSnooze,
 }: {
   action: Action
-  onChangePriority: (id: string, priority: string) => void
-  onDone: (id: string) => void
-  onSnooze: (id: string) => void
+  onChangePriority: (id: number, priority: string) => void
+  onDone: (id: number) => void
+  onSnooze: (id: number) => void
 }) {
   return (
     <div
@@ -380,10 +380,10 @@ export function ActionItems() {
     )
   }
 
-  const onChangePriority = (id: string, priority: string) =>
+  const onChangePriority = (id: number, priority: string) =>
     changePriority.mutate({ id, priority })
-  const onDone = (id: string) => markDone.mutate(id)
-  const onSnooze = (id: string) => snooze.mutate({ id, hours: 4 })
+  const onDone = (id: number) => markDone.mutate(id)
+  const onSnooze = (id: number) => snooze.mutate({ id, hours: 4 })
 
   const total = actions.data.total
 

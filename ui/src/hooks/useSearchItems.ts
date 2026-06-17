@@ -56,7 +56,7 @@ export function useItemActions() {
   const qc = useQueryClient()
 
   const archive = useMutation({
-    mutationFn: (itemId: string) =>
+    mutationFn: (itemId: number) =>
       apiPost<{ status: string }>(`/api/items/${itemId}/archive`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['search-items'] })
@@ -69,7 +69,7 @@ export function useItemActions() {
   })
 
   const boost = useMutation({
-    mutationFn: (itemId: string) =>
+    mutationFn: (itemId: number) =>
       apiPost<{ status: string }>(`/api/items/${itemId}/boost`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['search-items'] })
@@ -95,7 +95,7 @@ export function useSnoozeItem() {
       itemId,
       durationMinutes,
     }: {
-      itemId: string
+      itemId: number
       durationMinutes: number
     }) =>
       apiPost<{ status: string }>(`/api/items/${itemId}/snooze`, {

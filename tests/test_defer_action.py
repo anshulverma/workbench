@@ -19,8 +19,8 @@ def test_defer_action_sets_deferred_until():
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(
-            id="card-1",
-            item_id="item-1",
+            id=1,
+            item_id=1,
             status="sent",
             options=[
                 TriageOption(label="Snooze 4h", action="defer", details={"hours": 4}),
@@ -35,7 +35,7 @@ def test_defer_action_sets_deferred_until():
         request.app.state.stores = mock_stores
         request.app.state.memory = AsyncMock()
 
-        response = TriageResponse(card_id="card-1", choice=1)
+        response = TriageResponse(card_id=1, choice=1)
 
         result = await respond_to_triage(response, request)
 
@@ -57,8 +57,8 @@ def test_defer_action_in_scheduler():
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(
-            id="card-2",
-            item_id="item-2",
+            id=2,
+            item_id=2,
             status="sent",
             card_content={"summary": "Test item", "source_type": "diff"},
             options=[
@@ -112,8 +112,8 @@ def test_other_action_sets_awaiting_followup():
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(
-            id="card-3",
-            item_id="item-3",
+            id=3,
+            item_id=3,
             status="sent",
             options=[
                 TriageOption(label="Other", action="other"),
@@ -128,7 +128,7 @@ def test_other_action_sets_awaiting_followup():
         request.app.state.stores = mock_stores
         request.app.state.memory = AsyncMock()
 
-        response = TriageResponse(card_id="card-3", choice=1)
+        response = TriageResponse(card_id=3, choice=1)
 
         result = await respond_to_triage(response, request)
 
@@ -145,8 +145,8 @@ def test_defer_default_hours():
     async def _test():
         mock_stores = _mock_stores()
         card = TriageCard(
-            id="card-4",
-            item_id="item-4",
+            id=4,
+            item_id=4,
             status="sent",
             options=[
                 TriageOption(label="Snooze", action="defer", details={}),
@@ -160,7 +160,7 @@ def test_defer_default_hours():
         request.app.state.stores = mock_stores
         request.app.state.memory = AsyncMock()
 
-        response = TriageResponse(card_id="card-4", choice=1)
+        response = TriageResponse(card_id=4, choice=1)
 
         result = await respond_to_triage(response, request)
 

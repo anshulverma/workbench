@@ -124,7 +124,7 @@ class SnoozeRequest(BaseModel):
 
 async def _log_action_lifecycle(
     stores,
-    item_id: str,
+    item_id: int,
     action: str,
     summary: str,
     source_type: str,
@@ -141,7 +141,7 @@ async def _log_action_lifecycle(
 
 
 @router.post("/{item_id}/done")
-async def mark_done(request: Request, item_id: str):
+async def mark_done(request: Request, item_id: int):
     stores = request.app.state.stores
     item = await stores.items.get_item(item_id)
     if not item:
@@ -158,7 +158,7 @@ async def mark_done(request: Request, item_id: str):
 
 
 @router.post("/{item_id}/priority")
-async def change_priority(request: Request, item_id: str, body: PriorityUpdate):
+async def change_priority(request: Request, item_id: int, body: PriorityUpdate):
     stores = request.app.state.stores
     item = await stores.items.get_item(item_id)
     if not item:
@@ -178,7 +178,7 @@ async def change_priority(request: Request, item_id: str, body: PriorityUpdate):
 
 
 @router.post("/{item_id}/snooze")
-async def snooze_action(request: Request, item_id: str, body: SnoozeRequest):
+async def snooze_action(request: Request, item_id: int, body: SnoozeRequest):
     stores = request.app.state.stores
     item = await stores.items.get_item(item_id)
     if not item:

@@ -200,7 +200,7 @@ async def test_queue_count_by_status_and_source(stores):
             IngestionQueueEntry(
                 raw_content="c",
                 source_type=src,
-                job_id=f"j-{st}",
+                job_id=1,
                 status=QueueEntryStatus(st),
             )
         )
@@ -254,7 +254,7 @@ async def test_stats_overview_returns_six_counts(client, app_with_state):
         IngestionQueueEntry(
             raw_content="c",
             source_type="github",
-            job_id="j1",
+            job_id=1,
             status=QueueEntryStatus.PROCESSING,
         )
     )
@@ -262,7 +262,7 @@ async def test_stats_overview_returns_six_counts(client, app_with_state):
         IngestionQueueEntry(
             raw_content="c",
             source_type="github",
-            job_id="j2",
+            job_id=2,
             status=QueueEntryStatus.DEAD_LETTER,
         )
     )
@@ -300,7 +300,7 @@ async def test_stats_queue(client, app_with_state):
         IngestionQueueEntry(
             raw_content="c",
             source_type="github",
-            job_id="j1",
+            job_id=1,
             status=QueueEntryStatus.QUEUED,
         )
     )

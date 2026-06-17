@@ -88,8 +88,8 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
     () =>
       rawRules.map((r) => ({
         ...r,
-        prompt: fb.promptFor(r.id, r.prompt),
-        tuned: !!fb.promptFor(r.id, null as unknown as string),
+        prompt: fb.promptFor(String(r.id), r.prompt),
+        tuned: !!fb.promptFor(String(r.id), null as unknown as string),
       })),
     [rawRules, fb],
   )
@@ -103,7 +103,7 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
     if (serverOrder && serverOrder.length > 0) return serverOrder
     // Seed from available data
     const seed: FunnelOrderEntry[] = []
-    const seen = new Set<string>()
+    const seen = new Set<number>()
     enrichers.forEach((e) => {
       if (!seen.has(e.id)) {
         seed.push({ kind: 'enricher', id: e.id })
@@ -138,7 +138,7 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
 
   // ---- Handlers ----
   const moveStage = useCallback(
-    (id: string, dir: number) => {
+    (id: number, dir: number) => {
       const curr = [...order]
       const i = curr.findIndex((s) => s.id === id)
       const j = i + dir
@@ -151,7 +151,7 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
   )
 
   const onToggle = useCallback(
-    (id: string) => {
+    (id: number) => {
       const rule = rules.find((r) => r.id === id)
       if (rule) {
         toggleStage.mutate({ id, enabled: !rule.enabled })
@@ -161,7 +161,7 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
   )
 
   const onToggleEnricher = useCallback(
-    (id: string) => {
+    (id: number) => {
       const enricher = enrichers.find((e) => e.id === id)
       if (enricher) {
         toggleStage.mutate({ id, enabled: !enricher.enabled })
@@ -171,7 +171,7 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
   )
 
   const onToggleLoopback = useCallback(
-    (id: string) => {
+    (id: number) => {
       const lb = loopbacks.find((l) => l.id === id)
       if (lb) {
         toggleStage.mutate({ id, enabled: !lb.enabled })
@@ -181,7 +181,7 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
   )
 
   const onDelete = useCallback(
-    (id: string) => {
+    (id: number) => {
       deleteRule.mutate(id)
       setLocalOrder((prev) => (prev ?? order).filter((s) => s.id !== id))
     },
@@ -196,9 +196,9 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
   )
 
   // ---- Lookup helpers ----
-  const ruleOf = (id: string) => rules.find((r) => r.id === id)
-  const enricherOf = (id: string) => enrichers.find((e) => e.id === id)
-  const loopbackOf = (id: string) => loopbacks.find((l) => l.id === id)
+  const ruleOf = (id: number) => rules.find((r) => r.id === id)
+  const enricherOf = (id: number) => enrichers.find((e) => e.id === id)
+  const loopbackOf = (id: number) => loopbacks.find((l) => l.id === id)
 
   // ---- Icons ----
   const ArrowDownUp = getIcon('ArrowDownUp')

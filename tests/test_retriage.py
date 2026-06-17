@@ -41,7 +41,7 @@ def _result(change_type="status_changed", critical=False):
 
 def _item():
     return Item(
-        id="it1",
+        id=1,
         source_type="diff",
         source_id="D123",
         summary="Review D123",
@@ -89,8 +89,8 @@ def _sched(messenger):
 
 def _sent_card():
     return TriageCard(
-        id="c1",
-        item_id="it1",
+        id=2,
+        item_id=1,
         status="sent",
         bot_message_id="spaces/A/messages/p1",
         card_content={
@@ -123,7 +123,7 @@ async def test_sent_card_update_message_called_with_cardmessage():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ):
-        await sched._fire_retriage("it1", _result(), _raw(), {"status": "needs_review"})
+        await sched._fire_retriage(1, _result(), _raw(), {"status": "needs_review"})
     assert isinstance(seen["card"], CardMessage)
     assert seen["mid"] == "spaces/A/messages/p1"
     assert seen["card"].header.startswith("[Updated]")
@@ -142,7 +142,7 @@ async def test_sent_card_update_false_falls_back_to_send_and_repersists_id():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ):
-        await sched._fire_retriage("it1", _result(), _raw(), {"status": "needs_review"})
+        await sched._fire_retriage(1, _result(), _raw(), {"status": "needs_review"})
     messenger.send_card.assert_awaited()
     assert any(
         c.args[0].bot_message_id == "spaces/A/messages/p2"
@@ -160,7 +160,7 @@ async def test_code_updated_runs_full_enrichment():
     enrich = AsyncMock(return_value={"context": {"curated_hunks": []}})
     with patch("workbench.pipeline.scheduler.enrich_item", new=enrich):
         await sched._fire_retriage(
-            "it1",
+            1,
             _result(change_type="code_updated"),
             _raw(diff_version="v2"),
             {"status": "x"},
@@ -179,7 +179,7 @@ async def test_light_path_reuses_stored_hunks_no_enrich():
     enrich = AsyncMock(return_value={"context": {"curated_hunks": []}})
     with patch("workbench.pipeline.scheduler.enrich_item", new=enrich):
         await sched._fire_retriage(
-            "it1", _result(change_type="status_changed"), _raw(), {"status": "x"}
+            1, _result(change_type="status_changed"), _raw(), {"status": "x"}
         )
     enrich.assert_not_awaited()
 
@@ -195,7 +195,7 @@ async def test_daily_cap_blocks_noncritical_before_llm():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ) as enrich:
-        await sched._fire_retriage("it1", _result(), _raw(), {"status": "x"})
+        await sched._fire_retriage(1, _result(), _raw(), {"status": "x"})
     enrich.assert_not_awaited()
     sched.llm.generate_triage_card.assert_not_awaited()
 
@@ -213,9 +213,7 @@ async def test_critical_bypasses_cap():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ):
-        await sched._fire_retriage(
-            "it1", _result(critical=True), _raw(), {"status": "x"}
-        )
+        await sched._fire_retriage(1, _result(critical=True), _raw(), {"status": "x"})
     messenger.update_message.assert_awaited()
 
 
@@ -226,7 +224,7 @@ async def test_archived_item_is_noop():
     archived = _item()
     archived.status = ItemStatus.ARCHIVED
     stores.items.get_item = AsyncMock(return_value=archived)
-    await sched._fire_retriage("it1", _result(), _raw(), {"status": "x"})
+    await sched._fire_retriage(1, _result(), _raw(), {"status": "x"})
     stores.triage.update_card.assert_not_awaited()
 
 
@@ -243,7 +241,7 @@ async def test_queued_card_updated_in_place_no_messenger_update():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ):
-        await sched._fire_retriage("it1", _result(), _raw(), {"status": "x"})
+        await sched._fire_retriage(1, _result(), _raw(), {"status": "x"})
     stores.triage.update_card.assert_awaited()
     messenger.update_message.assert_not_awaited()
 
@@ -260,7 +258,7 @@ async def test_responded_card_creates_new_card():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ):
-        await sched._fire_retriage("it1", _result(), _raw(), {"status": "x"})
+        await sched._fire_retriage(1, _result(), _raw(), {"status": "x"})
     stores.triage.save_card.assert_awaited()
 
 
@@ -273,7 +271,7 @@ async def test_no_existing_card_creates_new_card():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ):
-        await sched._fire_retriage("it1", _result(), _raw(), {"status": "x"})
+        await sched._fire_retriage(1, _result(), _raw(), {"status": "x"})
     stores.triage.save_card.assert_awaited()
 
 
@@ -292,5 +290,5 @@ async def test_deferred_card_cleared_before_update():
         "workbench.pipeline.scheduler.enrich_item",
         new=AsyncMock(return_value={"context": {}}),
     ):
-        await sched._fire_retriage("it1", _result(), _raw(), {"status": "x"})
+        await sched._fire_retriage(1, _result(), _raw(), {"status": "x"})
     stores.triage.clear_deferral.assert_awaited_once()

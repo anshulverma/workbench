@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,7 +15,7 @@ __all__ = [
 
 
 class PipelineJob(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: int | None = None
     trigger: JobTrigger
     status: JobStatus = JobStatus.PENDING
     input_hash: str = ""
@@ -31,13 +30,13 @@ class PipelineJob(BaseModel):
 
 
 class IngestionQueueEntry(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: int | None = None
     raw_content: str
     source_type: str
     source_id: str | None = None
     urgency_signals: dict[str, Any] = Field(default_factory=dict)
     urgency_score: int = 50
-    job_id: str
+    job_id: int
     status: QueueEntryStatus = QueueEntryStatus.QUEUED
     attempt: int = 0
     max_attempts: int = 3
@@ -48,7 +47,7 @@ class IngestionQueueEntry(BaseModel):
 
 
 class IngestionRun(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: int | None = None
     source_id: str
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None

@@ -55,7 +55,7 @@ const KINDS: Array<[string, string]> = [
 export function Search() {
   const [q, setQ] = useState('')
   const [kind, setKind] = useState<string>('all')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -107,7 +107,7 @@ export function Search() {
 
   // Item actions handler
   const onAction = useCallback(
-    (itemId: string, action: ItemAction, value?: string) => {
+    (itemId: number, action: ItemAction, value?: string) => {
       switch (action) {
         case 'priority':
           // Priority updates are optimistic for now

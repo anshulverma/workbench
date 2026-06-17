@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -15,8 +14,8 @@ __all__ = [
 
 
 class EnrichmentTrace(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    item_id: str
+    id: int | None = None
+    item_id: int
     depth: str
     calls_made: int
     time_ms: int
@@ -25,7 +24,7 @@ class EnrichmentTrace(BaseModel):
 
 
 class TraceFilters(BaseModel):
-    item_id: str | None = None
+    item_id: int | None = None
     since: datetime | None = None
 
 
@@ -37,7 +36,7 @@ class EnrichmentBudget(BaseModel):
 class EnricherConfig(BaseModel):
     """Configuration for an enrichment stage in the pipeline."""
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: int | None = None
     name: str
     stage: str  # e.g. "context", "summary", "risk"
     provider: str
@@ -50,7 +49,7 @@ class EnricherConfig(BaseModel):
 class LoopBackConfig(BaseModel):
     """Configuration for a loopback (re-processing) stage."""
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: int | None = None
     name: str
     trigger: str  # condition that triggers re-processing
     target_stage: str  # which stage to loop back to

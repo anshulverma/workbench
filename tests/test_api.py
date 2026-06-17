@@ -129,7 +129,7 @@ async def test_health_uses_queue_depth_and_count(client, app_with_state):
                 IngestionQueueEntry(
                     raw_content=f"c{i}",
                     source_type="github",
-                    job_id=f"j-{status}-{i}",
+                    job_id=1,
                     status=QueueEntryStatus(status),
                 )
             )
@@ -240,14 +240,14 @@ async def test_sources_crud(client, app_with_state, tmp_path):
 
 @pytest.mark.asyncio
 async def test_job_not_found(client):
-    r = await client.get("/api/jobs/nonexistent")
+    r = await client.get("/api/jobs/999999")
     assert r.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_item_not_found(client):
     r = await client.patch(
-        "/api/items/nonexistent",
+        "/api/items/999999",
         json={"priority": "P0"},
     )
     assert r.status_code == 404

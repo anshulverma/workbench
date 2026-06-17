@@ -42,11 +42,14 @@ def _mock_connection_with_messages(messages: list[dict]):
     conn = MagicMock()
     messages_list = MagicMock()
     messages_list.execute.return_value = {"messages": messages}
-    conn.chat.spaces.return_value.messages.return_value.list.return_value = messages_list
+    conn.chat.spaces.return_value.messages.return_value.list.return_value = (
+        messages_list
+    )
     return conn
 
 
 # ============ Adapter Tests ============
+
 
 @pytest.mark.asyncio
 async def test_poll_returns_raw_items():
@@ -68,6 +71,8 @@ async def test_poll_returns_raw_items():
     raw = json.loads(items[0].raw_text)
     assert raw["space_name"] == "Team Chat"
     assert len(raw["messages"]) == 1
+    # Source link: deep link to the thread (spaces/SPACE1/threads/thread-1).
+    assert items[0].source_url == "https://chat.google.com/room/SPACE1/thread-1"
 
 
 def test_adapter_type():
@@ -85,11 +90,16 @@ async def test_poll_without_connection():
 @pytest.mark.asyncio
 async def test_bot_messages_filtered():
     human_msg = _make_message(
-        name="spaces/S/messages/m1", text="Hi", sender_type="HUMAN",
+        name="spaces/S/messages/m1",
+        text="Hi",
+        sender_type="HUMAN",
     )
     bot_msg = _make_message(
-        name="spaces/S/messages/m2", text="Bot reply", sender_type="BOT",
-        sender_name="users/bot-123", sender_display="WorkbenchBot",
+        name="spaces/S/messages/m2",
+        text="Bot reply",
+        sender_type="BOT",
+        sender_name="users/bot-123",
+        sender_display="WorkbenchBot",
     )
     conn = _mock_connection_with_messages([human_msg, bot_msg])
 
@@ -223,9 +233,9 @@ async def test_thread_exits_after_48h_inactivity():
         connection=conn,
     )
     # Seed the tracked thread with an old timestamp
-    adapter._tracked_threads["spaces/S/threads/t-old"] = (
-        datetime.now(timezone.utc) - timedelta(hours=50)
-    )
+    adapter._tracked_threads["spaces/S/threads/t-old"] = datetime.now(
+        timezone.utc
+    ) - timedelta(hours=50)
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("workbench.providers.source.gchat.asyncio.to_thread", _run_sync)
@@ -287,6 +297,7 @@ async def test_source_id_format():
 
 # ============ Enricher Tests ============
 
+
 def _make_chat_item(
     space_name: str = "Team Chat",
     messages: list[dict] | None = None,
@@ -300,12 +311,14 @@ def _make_chat_item(
         id="gchat_t1_12345",
         source_type="chat",
         source_label="Chat: Team Chat",
-        raw_text=json.dumps({
-            "space_name": space_name,
-            "thread_name": "spaces/S/threads/t1",
-            "messages": messages,
-            "participant_count": len(set(m["sender_name"] for m in messages)),
-        }),
+        raw_text=json.dumps(
+            {
+                "space_name": space_name,
+                "thread_name": "spaces/S/threads/t1",
+                "messages": messages,
+                "participant_count": len(set(m["sender_name"] for m in messages)),
+            }
+        ),
     )
     return ExtractedItem(
         summary="Team Chat discussion",
@@ -346,7 +359,10 @@ async def test_enricher_non_chat_returns_empty():
     enricher = GChatEnricher(GChatEnricher.ProviderConfig())
     raw = RawItem(id="gh-1", source_type="github", source_label="PR", raw_text="{}")
     item = ExtractedItem(
-        summary="test", category=ItemCategory.INFORMATIONAL, source_context="", raw_item=raw,
+        summary="test",
+        category=ItemCategory.INFORMATIONAL,
+        source_context="",
+        raw_item=raw,
     )
     result = await enricher.enrich(item, "shallow", EnrichmentBudget())
     assert result == {"calls_made": 0, "time_ms": 0, "context": {}}
@@ -356,5 +372,7 @@ async def test_enricher_non_chat_returns_empty():
 async def test_enricher_records_entities_in_memory():
     enricher = GChatEnricher(GChatEnricher.ProviderConfig())
     mock_memory = AsyncMock()
-    await enricher.enrich(_make_chat_item(), "shallow", EnrichmentBudget(), memory=mock_memory)
+    await enricher.enrich(
+        _make_chat_item(), "shallow", EnrichmentBudget(), memory=mock_memory
+    )
     assert mock_memory.record_entity.call_count >= 2  # at least alice and bob

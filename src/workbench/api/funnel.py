@@ -152,7 +152,7 @@ async def get_funnel_items(
 
 
 @router.get("/funnel/items/{item_id}")
-async def get_funnel_item(item_id: str, request: Request):
+async def get_funnel_item(item_id: int, request: Request):
     """Single item in the UI FunnelItem shape."""
     stores = request.app.state.stores
     item = await stores.items.get_item(item_id)
@@ -162,7 +162,7 @@ async def get_funnel_item(item_id: str, request: Request):
 
 
 @router.get("/items/{item_id}/funnel")
-async def get_item_funnel(item_id: str, request: Request):
+async def get_item_funnel(item_id: int, request: Request):
     """Full funnel trace for a single item.
 
     Returns funnel_log from the item itself plus any stages recorded
@@ -218,7 +218,7 @@ async def funnel_create_filter_rule(body: FilterRuleCreate, request: Request):
 
 
 @router.delete("/funnel/filter-rules/{rule_id}")
-async def funnel_delete_filter_rule(rule_id: str, request: Request):
+async def funnel_delete_filter_rule(rule_id: int, request: Request):
     stores = request.app.state.stores
     await stores.filter_rules.delete_rule(rule_id)
     return {"status": "deleted"}

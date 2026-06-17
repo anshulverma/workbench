@@ -35,6 +35,7 @@ async def test_record_triage_posts_to_memory_service(layer, mock_http_client):
     mock_http_client.post.return_value = mock_response
 
     card = TriageCard(
+        id=1,
         card_content={"summary": "Fix auth", "source_type": "github"},
         options=[TriageOption(label="Add todo (P1)", action="add_todo")],
     )
@@ -52,6 +53,7 @@ async def test_record_triage_does_not_raise_on_failure(layer, mock_http_client):
     mock_http_client.post.side_effect = Exception("Connection refused")
 
     card = TriageCard(
+        id=1,
         card_content={"summary": "test", "source_type": "github"},
         options=[TriageOption(label="Skip", action="skip")],
     )

@@ -23,19 +23,10 @@ class PgLoopBacksStore(LoopBacksStore):
         return self._row_to_loopback(row) if row else None
 
     async def upsert_loopback(self, loopback: LoopBackConfig) -> LoopBackConfig:
-        await self.pool.execute(
-            """INSERT INTO loopbacks
-               (id, name, trigger, target_stage, max_iterations,
-                enabled, config, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-               ON CONFLICT (id) DO UPDATE SET
-                 name = EXCLUDED.name,
-                 trigger = EXCLUDED.trigger,
-                 target_stage = EXCLUDED.target_stage,
-                 max_iterations = EXCLUDED.max_iterations,
-                 enabled = EXCLUDED.enabled,
-                 config = EXCLUDED.config""",
-            loopback.id,
+        # id is a BIGINT identity column. A new loopback (id is None) is
+        # INSERTed without it so the DB assigns one (written back onto the
+        # config); an existing loopback upserts by id.
+        values = [
             loopback.name,
             loopback.trigger,
             loopback.target_stage,
@@ -43,7 +34,33 @@ class PgLoopBacksStore(LoopBacksStore):
             loopback.enabled,
             json.dumps(loopback.config),
             loopback.created_at,
-        )
+        ]
+        if loopback.id is None:
+            row = await self.pool.fetchrow(
+                """INSERT INTO loopbacks
+                   (name, trigger, target_stage, max_iterations,
+                    enabled, config, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+                   RETURNING id""",
+                *values,
+            )
+            loopback.id = row["id"]
+        else:
+            await self.pool.execute(
+                """INSERT INTO loopbacks
+                   (id, name, trigger, target_stage, max_iterations,
+                    enabled, config, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+                   ON CONFLICT (id) DO UPDATE SET
+                     name = EXCLUDED.name,
+                     trigger = EXCLUDED.trigger,
+                     target_stage = EXCLUDED.target_stage,
+                     max_iterations = EXCLUDED.max_iterations,
+                     enabled = EXCLUDED.enabled,
+                     config = EXCLUDED.config""",
+                loopback.id,
+                *values,
+            )
         return loopback
 
     async def delete_loopback(self, loopback_id: str) -> None:

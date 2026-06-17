@@ -120,9 +120,7 @@ async def test_processed_dedup(stores):
 
 @pytest.mark.asyncio
 async def test_interaction_log(stores):
-    entry = InteractionEntry(
-        source_type="diff", item_summary="test", option_chosen="1"
-    )
+    entry = InteractionEntry(source_type="diff", item_summary="test", option_chosen="1")
     await stores.interactions.append(entry)
     assert await stores.interactions.count() == 1
     entries = await stores.interactions.get_all()
@@ -172,7 +170,7 @@ async def test_triage_get_card(stores):
     assert fetched is not None
     assert fetched.card_content["summary"] == "find me"
 
-    missing = await stores.triage.get_card("nonexistent")
+    missing = await stores.triage.get_card(999999)
     assert missing is None
 
 
@@ -245,7 +243,7 @@ async def test_plan_crud(stores):
 @pytest.mark.asyncio
 async def test_enrichment_trace(stores):
     trace = EnrichmentTrace(
-        item_id="item-1",
+        item_id=1,
         depth="shallow",
         calls_made=2,
         time_ms=150,
@@ -253,12 +251,12 @@ async def test_enrichment_trace(stores):
     )
     await stores.enrichment.log_trace(trace)
 
-    traces = await stores.enrichment.get_traces(TraceFilters(item_id="item-1"))
+    traces = await stores.enrichment.get_traces(TraceFilters(item_id=1))
     assert len(traces) == 1
     assert traces[0].depth == "shallow"
     assert traces[0].context_retrieved == {"key": "value"}
 
-    empty = await stores.enrichment.get_traces(TraceFilters(item_id="nonexistent"))
+    empty = await stores.enrichment.get_traces(TraceFilters(item_id=999999))
     assert len(empty) == 0
 
 
@@ -318,7 +316,7 @@ async def test_ingestion_queue_enqueue_dequeue(stores):
         source_type="diff",
         source_id="D456",
         urgency_score=75,
-        job_id="job-1",
+        job_id=1,
     )
     await stores.ingestion_queue.enqueue(entry)
 
@@ -343,7 +341,7 @@ async def test_ingestion_queue_dead_letter(stores):
         source_type="email",
         source_id="E789",
         urgency_score=50,
-        job_id="job-2",
+        job_id=2,
         max_attempts=2,
     )
     await stores.ingestion_queue.enqueue(entry)
@@ -411,19 +409,19 @@ async def test_ingestion_queue_priority_ordering(stores):
         raw_content="low",
         source_type="diff",
         urgency_score=10,
-        job_id="job-3",
+        job_id=3,
     )
     mid = IngestionQueueEntry(
         raw_content="mid",
         source_type="diff",
         urgency_score=50,
-        job_id="job-3",
+        job_id=3,
     )
     high = IngestionQueueEntry(
         raw_content="high",
         source_type="diff",
         urgency_score=90,
-        job_id="job-3",
+        job_id=3,
     )
     await stores.ingestion_queue.enqueue(low)
     await stores.ingestion_queue.enqueue(mid)
@@ -441,7 +439,7 @@ async def test_ingestion_queue_recover_stuck(stores):
         raw_content="stuck",
         source_type="diff",
         urgency_score=50,
-        job_id="job-4",
+        job_id=4,
     )
     await stores.ingestion_queue.enqueue(entry)
     await stores.ingestion_queue.dequeue(limit=1)  # sets to processing

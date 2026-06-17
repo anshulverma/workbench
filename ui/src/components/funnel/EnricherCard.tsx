@@ -22,8 +22,8 @@ export interface EnricherCardProps {
   order: number
   total: number
   reorderable?: boolean
-  onToggle: (id: string) => void
-  onMove: (id: string, dir: number) => void
+  onToggle: (id: number) => void
+  onMove: (id: number, dir: number) => void
   onOpen: (enricher: Enricher) => void
 }
 

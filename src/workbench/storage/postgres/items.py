@@ -41,19 +41,22 @@ class PgItemStore(ItemStore):
         return self._row_to_item(row) if row else None
 
     async def save_item(self, item: Item) -> Item:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT and let the DB
+        # assign one, then write it back onto the passed Item so callers that
+        # link to it (e.g. card.item_id = item.id) see the real value.
+        row = await self.pool.fetchrow(
             """INSERT INTO items
-               (id, source_type, source_id, summary, category, origin,
+               (source_type, source_id, summary, category, origin,
                 priority, status, raw_data, created_at, updated_at,
                 parent_item_id, action_source, action_category,
                 snoozed_until, completed_at,
                 tags, llm_summary, enriched_context, funnel_log,
                 verdict_action, verdict_priority, verdict_confidence)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11,
-                       $12, $13, $14, $15, $16,
-                       $17::jsonb, $18, $19::jsonb, $20::jsonb,
-                       $21, $22, $23)""",
-            item.id,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
+                       $10, $11, $12, $13, $14, $15,
+                       $16::jsonb, $17, $18::jsonb, $19::jsonb,
+                       $20, $21, $22)
+               RETURNING id""",
             item.source_type,
             item.source_id,
             item.summary,
@@ -77,6 +80,7 @@ class PgItemStore(ItemStore):
             item.verdict_priority,
             item.verdict_confidence,
         )
+        item.id = row["id"]
         return item
 
     async def update_item(self, item_id: str, updates: ItemUpdate) -> Item:

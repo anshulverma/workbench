@@ -25,7 +25,7 @@ export const FUNNEL_KEYS = {
   loopbacks: ['funnel', 'loopbacks'] as const,
   items: (params?: { source?: string; verdict?: string }) =>
     ['funnel', 'items', params ?? {}] as const,
-  itemDetail: (id: string) => ['funnel', 'item', id] as const,
+  itemDetail: (id: number | string) => ['funnel', 'item', id] as const,
   order: ['funnel', 'order'] as const,
   enrichmentSamples: ['funnel', 'enrichment-samples'] as const,
 }
@@ -77,7 +77,7 @@ export function useFunnelItems(params?: {
 }
 
 /** GET /api/funnel/items/:id — single item with full stage detail. */
-export function useItemFunnel(id: string | null) {
+export function useItemFunnel(id: number | null) {
   return useQuery({
     queryKey: FUNNEL_KEYS.itemDetail(id ?? ''),
     queryFn: () => apiGet<FunnelItem>(`/api/funnel/items/${id}`),
@@ -126,7 +126,7 @@ export function useToggleFunnelStage() {
       id,
       enabled,
     }: {
-      id: string
+      id: number
       enabled: boolean
     }) =>
       apiPost<{ status: string }>(`/api/funnel/stages/${id}/toggle`, {
@@ -181,7 +181,7 @@ export function useCreateFilterRule() {
 export function useDeleteFilterRule() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) =>
+    mutationFn: (id: number) =>
       apiDelete<{ status: string }>(`/api/funnel/filter-rules/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: FUNNEL_KEYS.filterRules })

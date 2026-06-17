@@ -314,7 +314,7 @@ class WorkbenchScheduler:
 
         source_type = card.card_content.get("source_type", "unknown")
         raw = RawItem(
-            id=card.item_id or card.id,
+            id=str(card.item_id or card.id),
             source_type=source_type,
             source_label="",
             raw_text="",
@@ -704,7 +704,7 @@ class WorkbenchScheduler:
             else:
                 item = Item(
                     source_type=card.card_content.get("source_type", "unknown"),
-                    source_id=card.id,
+                    source_id=str(card.id),
                     summary=card.card_content.get("summary", ""),
                     category=ItemCategory.ACTION_ITEM,
                     origin=ItemOrigin.TRIAGED,
@@ -840,7 +840,7 @@ class WorkbenchScheduler:
         for todo in interpreted.user_todos:
             new_item = Item(
                 source_type=card.card_content.get("source_type", "unknown"),
-                source_id=card.id,
+                source_id=str(card.id),
                 summary=todo.summary,
                 category=ItemCategory.ACTION_ITEM,
                 origin=ItemOrigin.TRIAGED,

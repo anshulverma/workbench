@@ -4,10 +4,20 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from workbench.domain import (
-    TriageCard, TriageOption, TriageResponse,
-    InterpretedResponse, SystemAction, UserTodo,
-    InteractionEntry, Item, ItemCategory, ItemOrigin,
-    ItemStatus, ItemUpdate, Priority, FilterRule,
+    TriageCard,
+    TriageOption,
+    TriageResponse,
+    InterpretedResponse,
+    SystemAction,
+    UserTodo,
+    InteractionEntry,
+    Item,
+    ItemCategory,
+    ItemOrigin,
+    ItemStatus,
+    ItemUpdate,
+    Priority,
+    FilterRule,
 )
 
 
@@ -28,14 +38,18 @@ def mock_stores():
 @pytest.fixture
 def card():
     return TriageCard(
-        id="card-1",
-        item_id="item-1",
+        id=1,
+        item_id=1,
         status="sent",
         card_content={"summary": "Review PR #200", "source_type": "github"},
         options=[
-            TriageOption(label="Add todo P1", action="add_todo", details={"priority": "P1"}),
+            TriageOption(
+                label="Add todo P1", action="add_todo", details={"priority": "P1"}
+            ),
             TriageOption(label="Skip", action="skip"),
-            TriageOption(label="Other -- tell me what you'd like to do", action="other"),
+            TriageOption(
+                label="Other -- tell me what you'd like to do", action="other"
+            ),
         ],
     )
 
@@ -75,7 +89,9 @@ async def test_free_text_with_user_todo():
         explanation="Adding as P3 todo. Created action item to assign to bob.",
     )
 
-    result = await llm.interpret_triage_response(MagicMock(), "add as P3 and assign to bob")
+    result = await llm.interpret_triage_response(
+        MagicMock(), "add as P3 and assign to bob"
+    )
     assert len(result.system_actions) == 1
     assert len(result.user_todos) == 1
     assert result.user_todos[0].summary == "Assign to bob"
@@ -96,7 +112,9 @@ async def test_execute_add_todo_updates_item(mock_stores, card):
         pipeline=AsyncMock(),
         messenger=AsyncMock(),
         config=MagicMock(
-            triage=MagicMock(daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10),
+            triage=MagicMock(
+                daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10
+            ),
             scheduler=MagicMock(poll_interval_minutes=15, morning_briefing_hour=9),
             logging=MagicMock(timezone="America/Los_Angeles"),
         ),
@@ -112,7 +130,7 @@ async def test_execute_add_todo_updates_item(mock_stores, card):
 
     # FIX 32: Priority string -> enum conversion
     mock_stores.items.update_item.assert_called_once_with(
-        "item-1", ItemUpdate(priority=Priority.P3, status=ItemStatus.ACTIVE)
+        1, ItemUpdate(priority=Priority.P3, status=ItemStatus.ACTIVE)
     )
 
 
@@ -128,7 +146,9 @@ async def test_execute_skip_requires_confirmation(mock_stores, card):
         pipeline=AsyncMock(),
         messenger=messenger,
         config=MagicMock(
-            triage=MagicMock(daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10),
+            triage=MagicMock(
+                daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10
+            ),
             scheduler=MagicMock(poll_interval_minutes=15, morning_briefing_hour=9),
             logging=MagicMock(timezone="America/Los_Angeles"),
         ),
@@ -170,7 +190,9 @@ async def test_execute_defer_sets_deferred_until(mock_stores, card):
         pipeline=AsyncMock(),
         messenger=AsyncMock(),
         config=MagicMock(
-            triage=MagicMock(daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10),
+            triage=MagicMock(
+                daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10
+            ),
             scheduler=MagicMock(poll_interval_minutes=15, morning_briefing_hour=9),
             logging=MagicMock(timezone="America/Los_Angeles"),
         ),
@@ -203,7 +225,9 @@ async def test_execute_creates_user_todos_as_items(mock_stores, card):
         pipeline=AsyncMock(),
         messenger=AsyncMock(),
         config=MagicMock(
-            triage=MagicMock(daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10),
+            triage=MagicMock(
+                daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10
+            ),
             scheduler=MagicMock(poll_interval_minutes=15, morning_briefing_hour=9),
             logging=MagicMock(timezone="America/Los_Angeles"),
         ),
@@ -225,7 +249,7 @@ async def test_execute_creates_user_todos_as_items(mock_stores, card):
     first_call = mock_stores.items.save_item.call_args_list[0][0][0]
     assert first_call.summary == "Assign to bob"
     assert first_call.action_category == "delegation"
-    assert first_call.parent_item_id == "item-1"
+    assert first_call.parent_item_id == 1
     assert first_call.action_source == "triage_response"
 
 
@@ -240,7 +264,9 @@ async def test_execute_logs_interaction_entry(mock_stores, card):
         pipeline=AsyncMock(),
         messenger=AsyncMock(),
         config=MagicMock(
-            triage=MagicMock(daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10),
+            triage=MagicMock(
+                daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10
+            ),
             scheduler=MagicMock(poll_interval_minutes=15, morning_briefing_hour=9),
             logging=MagicMock(timezone="America/Los_Angeles"),
         ),
@@ -278,8 +304,8 @@ async def test_awaiting_confirmation_yes_executes_pending(mock_stores):
     )
 
     card = TriageCard(
-        id="card-1",
-        item_id="item-1",
+        id=1,
+        item_id=1,
         status="awaiting_confirmation",
         card_content={
             "summary": "Review PR #200",
@@ -299,7 +325,9 @@ async def test_awaiting_confirmation_yes_executes_pending(mock_stores):
         pipeline=AsyncMock(),
         messenger=AsyncMock(),
         config=MagicMock(
-            triage=MagicMock(daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10),
+            triage=MagicMock(
+                daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10
+            ),
             scheduler=MagicMock(poll_interval_minutes=15, morning_briefing_hour=9),
             logging=MagicMock(timezone="America/Los_Angeles"),
         ),
@@ -310,5 +338,5 @@ async def test_awaiting_confirmation_yes_executes_pending(mock_stores):
 
     # Skip action should now execute (archive item)
     mock_stores.items.update_item.assert_called_once_with(
-        "item-1", ItemUpdate(status=ItemStatus.ARCHIVED)
+        1, ItemUpdate(status=ItemStatus.ARCHIVED)
     )

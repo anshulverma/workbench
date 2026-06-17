@@ -68,7 +68,7 @@ export interface HealthResponse {
 }
 
 export interface Job {
-  id: string
+  id: number
   trigger: string
   status: string
   items_extracted: number
@@ -172,7 +172,7 @@ export interface SourceRollup {
 }
 
 export interface ActivityItem {
-  id: string
+  id: number
   status: string
   source_type: string
   summary: string | null
@@ -188,12 +188,12 @@ export interface QueueStats {
 }
 
 export interface DeadLetterEntry {
-  id: string
+  id: number
   raw_content: string
   source_type: string
   source_id: string | null
   urgency_score: number
-  job_id: string
+  job_id: number
   status: string
   attempt: number
   max_attempts: number
@@ -244,7 +244,7 @@ function errMessage(err: unknown): string {
 export function useRetryDeadLetter() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) =>
+    mutationFn: (id: number) =>
       apiPost<{ status: string }>(`/api/queue/dead-letter/${id}/retry`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['queue', 'dead-letter'] })
@@ -258,7 +258,7 @@ export function useRetryDeadLetter() {
 export function usePurgeDeadLetter() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) =>
+    mutationFn: (id: number) =>
       apiDelete<{ status: string }>(`/api/queue/dead-letter/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['queue', 'dead-letter'] })

@@ -24,7 +24,7 @@ async def list_enrichers(request: Request):
 
 
 @router.get("/enrichers/{enricher_id}")
-async def get_enricher(enricher_id: str, request: Request):
+async def get_enricher(enricher_id: int, request: Request):
     store = _get_enrichers_store(request)
     enricher = await store.get_enricher(enricher_id)
     if not enricher:
@@ -34,7 +34,7 @@ async def get_enricher(enricher_id: str, request: Request):
 
 @router.get("/enrichers/{enricher_id}/samples")
 async def get_enricher_samples(
-    enricher_id: str,
+    enricher_id: int,
     request: Request,
     limit: int = Query(10, ge=1, le=100),
 ):

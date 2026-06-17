@@ -43,8 +43,8 @@ describe('theme tokens (spec §1, contrast contract §13)', () => {
     expect(css).toMatch(/--brand-fg:/)
   })
 
-  it('sets the redesign radius to 0.375rem', () => {
-    expect(css).toMatch(/--radius:\s*0\.375rem/)
+  it('sets the redesign radius to 0.75rem (rounded-corners retune)', () => {
+    expect(css).toMatch(/--radius:\s*0\.75rem/)
   })
 
   it('keeps both a dark default palette and a :root light palette', () => {

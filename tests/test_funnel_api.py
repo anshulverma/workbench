@@ -214,7 +214,7 @@ async def test_get_item_funnel(client, stores):
 
 @pytest.mark.asyncio
 async def test_get_item_funnel_not_found(client):
-    r = await client.get("/api/items/nonexistent-id/funnel")
+    r = await client.get("/api/items/999999/funnel")
     assert r.status_code == 404
 
 
@@ -307,10 +307,10 @@ async def test_funnel_enrichers_view_shape(client, stores):
     await stores.enrichers.upsert_enricher(enricher)
     # Two traces for this stage -> enriched=2, avg_ms=(10+30)/2=20
     await stores.enrichment.log_trace(
-        EnrichmentTrace(item_id="i1", depth="context", calls_made=1, time_ms=10)
+        EnrichmentTrace(item_id=1, depth="context", calls_made=1, time_ms=10)
     )
     await stores.enrichment.log_trace(
-        EnrichmentTrace(item_id="i2", depth="context", calls_made=1, time_ms=30)
+        EnrichmentTrace(item_id=2, depth="context", calls_made=1, time_ms=30)
     )
 
     r = await client.get("/api/funnel/enrichers")
@@ -381,8 +381,9 @@ async def test_funnel_enrichment_samples_shape(client, stores):
     r = await client.get("/api/funnel/enrichment-samples")
     assert r.status_code == 200
     data = r.json()
-    assert enricher.id in data
-    sample = data[enricher.id][0]
+    # JSON object keys are always strings, so the int enricher id is stringified.
+    assert str(enricher.id) in data
+    sample = data[str(enricher.id)][0]
     assert sample["id"] == item.id
     assert sample["summary"] == "PR #42: Fix login bug"
     assert sample["context"]["author"] == "alice"
@@ -424,7 +425,7 @@ async def test_funnel_item_detail_shape(client, stores):
 
 @pytest.mark.asyncio
 async def test_funnel_item_detail_not_found(client):
-    r = await client.get("/api/funnel/items/nope")
+    r = await client.get("/api/funnel/items/999999")
     assert r.status_code == 404
 
 

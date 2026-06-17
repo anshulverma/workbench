@@ -13,17 +13,19 @@ class PgInteractionStore(InteractionStore):
         self.pool = pool
 
     async def append(self, entry: InteractionEntry) -> None:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT and write the
+        # DB-assigned value back onto the entry.
+        row = await self.pool.fetchrow(
             """INSERT INTO interaction_log
-               (id, timestamp, source_type, item_id, item_summary,
+               (timestamp, source_type, item_id, item_summary,
                 triage_card_full, enrichment_context, options_presented,
                 option_chosen, todo_created, enrichment_depth,
                 enrichment_calls, enrichment_time_ms, choice_index,
                 type, interpreted, confirmed)
-               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb,
-                       $9, $10::jsonb, $11, $12, $13, $14,
-                       $15, $16::jsonb, $17)""",
-            entry.id,
+               VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb,
+                       $8, $9::jsonb, $10, $11, $12, $13,
+                       $14, $15::jsonb, $16)
+               RETURNING id""",
             entry.timestamp,
             entry.source_type,
             entry.item_id,
@@ -41,6 +43,7 @@ class PgInteractionStore(InteractionStore):
             json.dumps(entry.interpreted) if entry.interpreted else None,
             entry.confirmed,
         )
+        entry.id = row["id"]
 
     async def get_since(self, cursor: int, limit: int) -> list[InteractionEntry]:
         rows = await self.pool.fetch(

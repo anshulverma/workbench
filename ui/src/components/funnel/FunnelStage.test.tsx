@@ -20,7 +20,7 @@ function makeStage(overrides: Partial<FunnelStageType> = {}): FunnelStageType {
 
 function makeItem(overrides: Partial<FunnelItem> = {}): FunnelItem {
   return {
-    id: 'item_1',
+    id: 1,
     summary: 'Test PR #42',
     source: 'github',
     created_at: '2026-06-10T12:00:00Z',
@@ -189,7 +189,7 @@ describe('FunnelStage', () => {
     const item = makeItem()
     // Pre-populate override
     WBFeedback.addOverride({
-      itemId: item.id,
+      itemId: String(item.id),
       itemSummary: item.summary,
       filterId: 'fr_01',
       filterPrompt: 'test prompt',

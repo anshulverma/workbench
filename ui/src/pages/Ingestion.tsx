@@ -68,7 +68,7 @@ function activityToTailEntry(item: ActivityItem, index: number): TailEntry {
   return {
     key: `${item.id}-${index}`,
     timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
-    itemId: item.id,
+    itemId: String(item.id),
     source: item.source_type ?? '?',
     funnelStage: item.status ?? 'unknown',
     outcome: statusToOutcome(item.status),
@@ -99,7 +99,7 @@ function DeadLetterTable() {
   const deadLetters = useDeadLetters()
   const retry = useRetryDeadLetter()
   const purge = usePurgeDeadLetter()
-  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [confirmId, setConfirmId] = useState<number | null>(null)
 
   const columns: Column<DeadLetterEntry>[] = [
     {
@@ -166,7 +166,7 @@ function DeadLetterTable() {
   }
   return (
     <>
-      <DataTable columns={columns} rows={rows} rowKey={(d) => d.id} />
+      <DataTable columns={columns} rows={rows} rowKey={(d) => String(d.id)} />
       <Dialog open={confirmId !== null} onOpenChange={(o) => !o && setConfirmId(null)}>
         <DialogContent>
           <DialogHeader>
@@ -182,7 +182,7 @@ function DeadLetterTable() {
             <Button
               variant="destructive"
               onClick={() => {
-                if (confirmId) purge.mutate(confirmId)
+                if (confirmId != null) purge.mutate(confirmId)
                 setConfirmId(null)
               }}
             >
@@ -214,7 +214,7 @@ export function Ingestion() {
   // clicked activity item. The dialog degrades gracefully with minimal data.
   const tailItem = useMemo(() => {
     if (!tailItemId) return null
-    const act = (activity.data ?? []).find((a) => a.id === tailItemId)
+    const act = (activity.data ?? []).find((a) => String(a.id) === tailItemId)
     if (!act) return null
     return {
       id: act.id,

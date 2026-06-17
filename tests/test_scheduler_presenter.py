@@ -7,7 +7,7 @@ from workbench.pipeline.scheduler import WorkbenchScheduler
 
 def _card():
     return TriageCard(
-        id="c1",
+        id=1,
         card_content={
             "summary": "Review D123",
             "card_body": "Review D123",

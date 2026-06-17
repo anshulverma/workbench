@@ -31,20 +31,30 @@ def _strip_html(html: str) -> str:
 
 
 def _extract_body(payload: dict) -> str:
-    if payload.get("mimeType", "").startswith("text/plain") and payload.get("body", {}).get("data"):
-        return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="replace")
+    if payload.get("mimeType", "").startswith("text/plain") and payload.get(
+        "body", {}
+    ).get("data"):
+        return base64.urlsafe_b64decode(payload["body"]["data"]).decode(
+            "utf-8", errors="replace"
+        )
 
     for part in payload.get("parts", []):
         if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-            return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="replace")
+            return base64.urlsafe_b64decode(part["body"]["data"]).decode(
+                "utf-8", errors="replace"
+            )
 
     for part in payload.get("parts", []):
         if part.get("mimeType") == "text/html" and part.get("body", {}).get("data"):
-            html = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="replace")
+            html = base64.urlsafe_b64decode(part["body"]["data"]).decode(
+                "utf-8", errors="replace"
+            )
             return _strip_html(html)
 
     if payload.get("body", {}).get("data"):
-        raw = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="replace")
+        raw = base64.urlsafe_b64decode(payload["body"]["data"]).decode(
+            "utf-8", errors="replace"
+        )
         if payload.get("mimeType", "").startswith("text/html"):
             return _strip_html(raw)
         return raw
@@ -77,13 +87,15 @@ def _extract_attachments(payload: dict) -> list[dict]:
     for part in payload.get("parts", []):
         if part.get("filename"):
             header_names = {h.get("name", "") for h in part.get("headers", [])}
-            attachments.append({
-                "filename": part["filename"],
-                "mime_type": part.get("mimeType", ""),
-                "size_bytes": int(part.get("body", {}).get("size", 0)),
-                "attachment_id": part.get("body", {}).get("attachmentId", ""),
-                "inline": "Content-ID" in header_names,
-            })
+            attachments.append(
+                {
+                    "filename": part["filename"],
+                    "mime_type": part.get("mimeType", ""),
+                    "size_bytes": int(part.get("body", {}).get("size", 0)),
+                    "attachment_id": part.get("body", {}).get("attachmentId", ""),
+                    "inline": "Content-ID" in header_names,
+                }
+            )
     return attachments
 
 
@@ -108,9 +120,16 @@ class GmailAdapter(SourceAdapter):
             query += f" after:{int(since.timestamp())}"
 
         def _fetch():
-            result = self._connection.gmail.users().messages().list(
-                userId="me", q=query, maxResults=self._config.max_results,
-            ).execute()
+            result = (
+                self._connection.gmail.users()
+                .messages()
+                .list(
+                    userId="me",
+                    q=query,
+                    maxResults=self._config.max_results,
+                )
+                .execute()
+            )
             return result.get("messages", [])
 
         message_stubs = await asyncio.to_thread(_fetch)
@@ -119,9 +138,16 @@ class GmailAdapter(SourceAdapter):
             msg_id = stub["id"]
 
             def _get_message(mid=msg_id):
-                return self._connection.gmail.users().messages().get(
-                    userId="me", id=mid, format="full",
-                ).execute()
+                return (
+                    self._connection.gmail.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=mid,
+                        format="full",
+                    )
+                    .execute()
+                )
 
             msg = await asyncio.to_thread(_get_message)
             payload = msg.get("payload", {})
@@ -138,16 +164,18 @@ class GmailAdapter(SourceAdapter):
             recipients_to = [r.strip() for r in to.split(",") if r.strip()]
             recipients_cc = [r.strip() for r in cc.split(",") if r.strip()]
 
-            raw_text = json.dumps({
-                "subject": subject,
-                "sender": sender,
-                "recipients_to": recipients_to,
-                "recipients_cc": recipients_cc,
-                "body": body,
-                "snippet": msg.get("snippet", ""),
-                "thread_id": msg.get("threadId", ""),
-                "attachments": attachments,
-            })
+            raw_text = json.dumps(
+                {
+                    "subject": subject,
+                    "sender": sender,
+                    "recipients_to": recipients_to,
+                    "recipients_cc": recipients_cc,
+                    "body": body,
+                    "snippet": msg.get("snippet", ""),
+                    "thread_id": msg.get("threadId", ""),
+                    "attachments": attachments,
+                }
+            )
 
             urgency_signals = {
                 "sender": sender,
@@ -158,12 +186,15 @@ class GmailAdapter(SourceAdapter):
                 "labels": msg.get("labelIds", []),
             }
 
-            items.append(RawItem(
-                id=f"email_{msg_id}",
-                source_type="email",
-                source_label=f"Email: {subject[:80]}",
-                raw_text=raw_text,
-                urgency_signals=urgency_signals,
-            ))
+            items.append(
+                RawItem(
+                    id=f"email_{msg_id}",
+                    source_type="email",
+                    source_label=f"Email: {subject[:80]}",
+                    raw_text=raw_text,
+                    urgency_signals=urgency_signals,
+                    source_url=f"https://mail.google.com/mail/u/0/#all/{msg_id}",
+                )
+            )
 
         return items

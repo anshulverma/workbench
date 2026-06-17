@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
@@ -61,8 +60,9 @@ class ChangeContext(BaseModel):
 
 
 class TriageCard(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    item_id: str | None = None
+    # DB-assigned autoincrement id; None until persisted (save_card sets it).
+    id: int | None = None
+    item_id: int | None = None
     card_content: dict = Field(default_factory=dict)
     options: list[TriageOption] = Field(default_factory=list)
     relevance_score: int = 50
@@ -80,7 +80,7 @@ class TriageCard(BaseModel):
 
 
 class TriageResponse(BaseModel):
-    card_id: str
+    card_id: int
     choice: int | None = None
     raw_text: str | None = None
 

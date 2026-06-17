@@ -223,7 +223,7 @@ async def test_snooze_item(client, stores):
 @pytest.mark.asyncio
 async def test_snooze_item_not_found(client):
     r = await client.post(
-        "/api/items/nonexistent/snooze",
+        "/api/items/999999/snooze",
         json={"hours": 4},
     )
     assert r.status_code == 404

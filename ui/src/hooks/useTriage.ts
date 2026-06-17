@@ -31,7 +31,7 @@ export interface TriageTheme {
   label: string
   summary: string
   counts: Record<string, number>
-  cards: string[]
+  cards: number[]
 }
 
 export interface TriageOption {
@@ -43,12 +43,17 @@ export interface TriageOption {
 }
 
 export interface TriageCard {
-  id: string
-  item_id?: string | null
+  id: number
+  item_id?: number | null
   card_content: {
     summary?: string
     source_type?: string
     priority?: string
+    // Source identity for the source-type badge + "open in source" link.
+    // source_ref is the human-readable id (e.g. "D123456", "T123", "#42");
+    // source_url is the canonical external URL. Both server-populated, optional.
+    source_ref?: string
+    source_url?: string
     [k: string]: unknown
   }
   options: TriageOption[]
@@ -67,7 +72,7 @@ export interface RespondResult {
   status: string
   action?: string
   explanation?: string
-  card_id?: string
+  card_id?: number
 }
 
 export const TRIAGE_PENDING_KEY = ['triage', 'pending'] as const
@@ -100,7 +105,7 @@ function handleConflict(err: unknown, qc: ReturnType<typeof useQueryClient>): bo
 }
 
 export interface RespondBody {
-  card_id: string
+  card_id: number
   choice?: number
   raw_text?: string
 }
@@ -127,7 +132,7 @@ export function useRespond() {
 }
 
 export interface ConfirmBody {
-  card_id: string
+  card_id: number
   confirm: boolean
 }
 

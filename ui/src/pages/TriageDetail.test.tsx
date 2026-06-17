@@ -27,6 +27,21 @@ const CARD = {
   },
 }
 
+// A non-diff (task) card: no diff `sections`, but carries universal source
+// identity (source_type / source_ref / source_url).
+const CARD_TASK = {
+  id: 'c2',
+  status: 'sent',
+  relevance_score: 60,
+  options: [{ label: 'Add P1', action: 'add_todo' }],
+  card_content: {
+    summary: 'Investigate flaky test',
+    source_type: 'meta_tasks',
+    source_ref: 'T123456',
+    source_url: 'https://www.internalfb.com/tasks/?t=123456',
+  },
+}
+
 const server = setupServer(http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok' })))
 beforeAll(() => server.listen())
 afterEach(() => {
@@ -88,6 +103,16 @@ describe('TriageDetail', () => {
     server.use(http.get('/api/triage/cards/c1', () => HttpResponse.json(CARD)))
     renderDetail()
     expect(await screen.findByRole('button', { name: /1\. Add P1/i })).toBeInTheDocument()
+  })
+
+  it('shows a source-type badge and an "open in source" link for a non-diff card', async () => {
+    server.use(http.get('/api/triage/cards/c2', () => HttpResponse.json(CARD_TASK)))
+    renderDetail('c2')
+    expect(await screen.findByText('Investigate flaky test')).toBeInTheDocument()
+    expect(screen.getByTestId('source-type-badge')).toHaveTextContent(/task/i)
+    const link = screen.getByRole('link', { name: /T123456/ })
+    expect(link).toHaveAttribute('href', 'https://www.internalfb.com/tasks/?t=123456')
+    expect(link).toHaveAttribute('target', '_blank')
   })
 
   it('shows the change callout on a re-triaged card', async () => {

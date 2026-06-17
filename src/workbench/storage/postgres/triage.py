@@ -29,30 +29,10 @@ class PgTriageStore(TriageStore):
         return self._row_to_card(row) if row else None
 
     async def save_card(self, card: TriageCard) -> TriageCard:
-        await self.pool.execute(
-            """INSERT INTO triage_cards
-               (id, item_id, card_content, options, relevance_score,
-                confidence_score, status, bot_message_id, daily_sequence,
-                expires_at, sent_at, responded_at, response, deferred_until,
-                created_at)
-               VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9,
-                       $10, $11, $12, $13, $14, $15)
-               ON CONFLICT (id) DO UPDATE SET
-                 item_id = EXCLUDED.item_id,
-                 card_content = EXCLUDED.card_content,
-                 options = EXCLUDED.options,
-                 relevance_score = EXCLUDED.relevance_score,
-                 confidence_score = EXCLUDED.confidence_score,
-                 status = EXCLUDED.status,
-                 bot_message_id = EXCLUDED.bot_message_id,
-                 daily_sequence = EXCLUDED.daily_sequence,
-                 expires_at = EXCLUDED.expires_at,
-                 sent_at = EXCLUDED.sent_at,
-                 responded_at = EXCLUDED.responded_at,
-                 response = EXCLUDED.response,
-                 deferred_until = EXCLUDED.deferred_until,
-                 created_at = EXCLUDED.created_at""",
-            card.id,
+        # id is a BIGINT identity column. A new card (id is None) is INSERTed
+        # without it so the DB assigns one (written back onto the card); an
+        # existing card (id set, e.g. queued -> sent -> responded) upserts by id.
+        values = [
             card.item_id,
             json.dumps(card.card_content),
             json.dumps([o.model_dump() for o in card.options]),
@@ -67,7 +47,47 @@ class PgTriageStore(TriageStore):
             card.response,
             card.deferred_until,
             card.created_at,
-        )
+        ]
+        if card.id is None:
+            row = await self.pool.fetchrow(
+                """INSERT INTO triage_cards
+                   (item_id, card_content, options, relevance_score,
+                    confidence_score, status, bot_message_id, daily_sequence,
+                    expires_at, sent_at, responded_at, response, deferred_until,
+                    created_at)
+                   VALUES ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8,
+                           $9, $10, $11, $12, $13, $14)
+                   RETURNING id""",
+                *values,
+            )
+            card.id = row["id"]
+        else:
+            await self.pool.execute(
+                """INSERT INTO triage_cards
+                   (id, item_id, card_content, options, relevance_score,
+                    confidence_score, status, bot_message_id, daily_sequence,
+                    expires_at, sent_at, responded_at, response, deferred_until,
+                    created_at)
+                   VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9,
+                           $10, $11, $12, $13, $14, $15)
+                   ON CONFLICT (id) DO UPDATE SET
+                     item_id = EXCLUDED.item_id,
+                     card_content = EXCLUDED.card_content,
+                     options = EXCLUDED.options,
+                     relevance_score = EXCLUDED.relevance_score,
+                     confidence_score = EXCLUDED.confidence_score,
+                     status = EXCLUDED.status,
+                     bot_message_id = EXCLUDED.bot_message_id,
+                     daily_sequence = EXCLUDED.daily_sequence,
+                     expires_at = EXCLUDED.expires_at,
+                     sent_at = EXCLUDED.sent_at,
+                     responded_at = EXCLUDED.responded_at,
+                     response = EXCLUDED.response,
+                     deferred_until = EXCLUDED.deferred_until,
+                     created_at = EXCLUDED.created_at""",
+                card.id,
+                *values,
+            )
         return card
 
     async def update_card(self, card: TriageCard) -> None:

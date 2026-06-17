@@ -46,13 +46,13 @@ export function FunnelStage({
   editable?: boolean
   timing?: TimingInfo | null
   baseTime?: number | null
-  filterRules?: Array<{ id: string; prompt: string }>
-  enrichers?: Array<{ id: string; label: string }>
+  filterRules?: Array<{ id: number; prompt: string }>
+  enrichers?: Array<{ id: number; label: string }>
 }) {
   const fb = useFeedbackStore()
   const [editing, setEditing] = useState(false)
 
-  const ov = editable && item ? fb.overrideFor(item.id, stage.filterId) : null
+  const ov = editable && item ? fb.overrideFor(String(item.id), stage.filterId) : null
   const effOutcome = ov ? ov.toOutcome : stage.outcome
   const effLabel = ov ? ov.toLabel : stage.label
   const m = STAGE_META[effOutcome] ?? STAGE_META.pass
@@ -72,7 +72,7 @@ export function FunnelStage({
   const apply = (to: string) => {
     if (!item) return
     fb.addOverride({
-      itemId: item.id,
+      itemId: String(item.id),
       itemSummary: item.summary,
       filterId: stage.filterId,
       filterPrompt: rule.prompt,
@@ -215,7 +215,7 @@ export function FunnelStage({
               data-testid={ov ? 'undo-button' : 'correct-button'}
               onClick={() =>
                 ov
-                  ? fb.removeOverride(item.id, stage.filterId)
+                  ? fb.removeOverride(String(item.id), stage.filterId)
                   : setEditing(true)
               }
               style={{

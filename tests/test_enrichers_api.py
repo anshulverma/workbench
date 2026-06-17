@@ -126,7 +126,7 @@ async def test_get_enricher(client, stores):
 
 @pytest.mark.asyncio
 async def test_get_enricher_not_found(client):
-    r = await client.get("/api/enrichers/nonexistent")
+    r = await client.get("/api/enrichers/999999")
     assert r.status_code == 404
 
 
@@ -144,7 +144,7 @@ async def test_get_enricher_samples(client, stores):
 
     # Log traces that match the enricher's stage
     trace = EnrichmentTrace(
-        item_id="item-1",
+        item_id=1,
         depth="risk",
         calls_made=2,
         time_ms=150,
@@ -154,7 +154,7 @@ async def test_get_enricher_samples(client, stores):
 
     # Log a trace with different stage -- should NOT appear
     other_trace = EnrichmentTrace(
-        item_id="item-2",
+        item_id=2,
         depth="context",
         calls_made=1,
         time_ms=50,
@@ -170,5 +170,5 @@ async def test_get_enricher_samples(client, stores):
 
 @pytest.mark.asyncio
 async def test_get_enricher_samples_not_found(client):
-    r = await client.get("/api/enrichers/nonexistent/samples")
+    r = await client.get("/api/enrichers/999999/samples")
     assert r.status_code == 404

@@ -79,7 +79,7 @@ async def test_get_card_by_item_id(stores):
     await stores.triage.save_card(card)
     found = await stores.triage.get_card_by_item_id(item.id)
     assert found is not None and found.id == card.id
-    assert await stores.triage.get_card_by_item_id("nonexistent") is None
+    assert await stores.triage.get_card_by_item_id(999999) is None
 
 
 @pytest.mark.asyncio
@@ -99,4 +99,4 @@ async def test_get_card_by_id_and_unknown(stores):
     card = TriageCard(item_id=item.id, card_content={"summary": "x"})
     await stores.triage.save_card(card)
     assert (await stores.triage.get_card(card.id)).id == card.id
-    assert await stores.triage.get_card("nope") is None
+    assert await stores.triage.get_card(999999) is None

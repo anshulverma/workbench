@@ -132,6 +132,15 @@ class GChatAdapter(SourceAdapter):
                 latest_ts = int(latest_time.timestamp())
                 source_id = f"gchat_{thread_name.replace('/', '_')}_{latest_ts}"
 
+                # Deep link to the thread: thread_name is
+                # "spaces/<space>/threads/<thread>" -> chat.google.com/room link.
+                _parts = thread_name.split("/")
+                chat_url = (
+                    f"https://chat.google.com/room/{_parts[1]}/{_parts[3]}"
+                    if len(_parts) >= 4
+                    else None
+                )
+
                 raw_text = json.dumps(
                     {
                         "space_name": space_display,
@@ -157,6 +166,7 @@ class GChatAdapter(SourceAdapter):
                         source_label=f"Chat: {space_display}",
                         raw_text=raw_text,
                         urgency_signals=urgency_signals,
+                        source_url=chat_url,
                     )
                 )
 

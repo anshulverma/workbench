@@ -72,9 +72,9 @@ export function useFeedbackStore() {
 // ---------------------------------------------------------------------------
 
 export interface ServerCorrection {
-  id: string
-  item_id: string
-  rule_id: string | null
+  id: number
+  item_id: number
+  rule_id: number | null
   original_action: string
   corrected_action: string
   reason: string | null
@@ -82,10 +82,10 @@ export interface ServerCorrection {
 }
 
 export interface ServerTuningTask {
-  id: string
-  rule_id: string
+  id: number
+  rule_id: number
   proposed_prompt: string
-  correction_ids: string[]
+  correction_ids: number[]
   status: string
   created_at: string
   resolved_at: string | null
@@ -96,8 +96,8 @@ export interface ServerTuningTask {
 // ---------------------------------------------------------------------------
 
 /** Fetch corrections from the server, optionally filtered by item_id. */
-export function useCorrections(itemId?: string) {
-  const qs = itemId ? `?item_id=${encodeURIComponent(itemId)}` : ''
+export function useCorrections(itemId?: number) {
+  const qs = itemId != null ? `?item_id=${encodeURIComponent(itemId)}` : ''
   return useQuery({
     queryKey: ['feedback', 'corrections', itemId ?? null],
     queryFn: () => apiGet<ServerCorrection[]>(`/api/feedback/corrections${qs}`),
@@ -129,7 +129,7 @@ export function useAddCorrection() {
 export function useDeleteCorrection() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (correctionId: string) =>
+    mutationFn: (correctionId: number) =>
       apiDelete<{ status: string }>(`/api/feedback/corrections/${correctionId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['feedback', 'corrections'] })
@@ -153,7 +153,7 @@ export function useCreateTuningTask() {
 export function useUpdateTuningTask() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ taskId, status }: { taskId: string; status: string }) =>
+    mutationFn: ({ taskId, status }: { taskId: number; status: string }) =>
       apiPatch<ServerTuningTask>(`/api/feedback/tasks/${taskId}?status=${encodeURIComponent(status)}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })
@@ -165,7 +165,7 @@ export function useUpdateTuningTask() {
 export function useDeleteTuningTask() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (taskId: string) =>
+    mutationFn: (taskId: number) =>
       apiDelete<{ status: string }>(`/api/feedback/tasks/${taskId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })

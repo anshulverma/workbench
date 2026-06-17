@@ -24,7 +24,7 @@ async def get_source_rules(rule_id: str, request: Request):
 
 
 @router.patch("/filter-rules/{rule_id}")
-async def update_rule(rule_id: str, updates: dict, request: Request):
+async def update_rule(rule_id: int, updates: dict, request: Request):
     stores = request.app.state.stores
     try:
         return await stores.filter_rules.update_rule(rule_id, updates)
@@ -33,7 +33,7 @@ async def update_rule(rule_id: str, updates: dict, request: Request):
 
 
 @router.delete("/filter-rules/{rule_id}")
-async def delete_rule(rule_id: str, request: Request):
+async def delete_rule(rule_id: int, request: Request):
     stores = request.app.state.stores
     await stores.filter_rules.delete_rule(rule_id)
     return {"status": "deleted"}
@@ -44,7 +44,7 @@ class PromptUpdate(BaseModel):
 
 
 @router.patch("/filter-rules/{rule_id}/prompt")
-async def update_rule_prompt(rule_id: str, body: PromptUpdate, request: Request):
+async def update_rule_prompt(rule_id: int, body: PromptUpdate, request: Request):
     stores = request.app.state.stores
     try:
         return await stores.filter_rules.update_rule(rule_id, {"prompt": body.prompt})

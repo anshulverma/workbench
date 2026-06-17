@@ -23,7 +23,7 @@ async def list_loopbacks(request: Request):
 
 
 @router.get("/loopbacks/{loopback_id}")
-async def get_loopback(loopback_id: str, request: Request):
+async def get_loopback(loopback_id: int, request: Request):
     store = _get_loopbacks_store(request)
     loopback = await store.get_loopback(loopback_id)
     if not loopback:

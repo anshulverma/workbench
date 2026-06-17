@@ -25,16 +25,19 @@ class PgPlanStore(PlanStore):
         return [self._row_to_plan(r) for r in rows]
 
     async def save_plan(self, plan: Plan) -> Plan:
-        await self.pool.execute(
-            """INSERT INTO plans (id, title, status, content, sources, created_at)
-               VALUES ($1, $2, $3, $4, $5::jsonb, $6)""",
-            plan.id,
+        # id is a BIGINT identity column — omit it on INSERT and let the DB
+        # assign one, then write it back onto the passed Plan.
+        row = await self.pool.fetchrow(
+            """INSERT INTO plans (title, status, content, sources, created_at)
+               VALUES ($1, $2, $3, $4::jsonb, $5)
+               RETURNING id""",
             plan.title,
             plan.status,
             plan.content,
             json.dumps(plan.sources),
             plan.created_at,
         )
+        plan.id = row["id"]
         return plan
 
     async def update_plan(self, plan_id: str, updates: PlanUpdate) -> Plan:

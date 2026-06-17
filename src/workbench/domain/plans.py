@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -13,7 +12,7 @@ __all__ = [
 
 
 class Plan(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: int | None = None
     title: str
     status: str = "draft"
     content: str = ""

@@ -32,9 +32,9 @@ export interface FilterRuleCardProps {
   order: number
   total: number
   reorderable?: boolean
-  onToggle: (id: string) => void
-  onDelete: (id: string) => void
-  onMove: (id: string, dir: number) => void
+  onToggle: (id: number) => void
+  onDelete: (id: number) => void
+  onMove: (id: number, dir: number) => void
   onOpen: (rule: FilterRuleExtended) => void
 }
 

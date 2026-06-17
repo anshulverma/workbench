@@ -45,9 +45,13 @@ async def test_poll_returns_raw_items():
     }
     messages_get = MagicMock()
     messages_get.execute.return_value = _make_gmail_message(
-        "msg-1", "Test Subject", "alice@meta.com",
+        "msg-1",
+        "Test Subject",
+        "alice@meta.com",
     )
-    conn.gmail.users.return_value.messages.return_value.list.return_value = messages_list
+    conn.gmail.users.return_value.messages.return_value.list.return_value = (
+        messages_list
+    )
     conn.gmail.users.return_value.messages.return_value.get.return_value = messages_get
 
     config = GmailAdapter.ProviderConfig(label_filters=["INBOX"], max_results=50)
@@ -63,6 +67,8 @@ async def test_poll_returns_raw_items():
     raw = json.loads(items[0].raw_text)
     assert raw["subject"] == "Test Subject"
     assert raw["sender"] == "alice@meta.com"
+    # Source link: deep link to the message in Gmail.
+    assert items[0].source_url == "https://mail.google.com/mail/u/0/#all/msg-1"
 
 
 def test_adapter_type():
@@ -76,7 +82,9 @@ async def test_poll_with_no_messages():
     conn = _mock_connection()
     messages_list = MagicMock()
     messages_list.execute.return_value = {}
-    conn.gmail.users.return_value.messages.return_value.list.return_value = messages_list
+    conn.gmail.users.return_value.messages.return_value.list.return_value = (
+        messages_list
+    )
 
     config = GmailAdapter.ProviderConfig()
     adapter = GmailAdapter(config, connection=conn)
@@ -103,10 +111,14 @@ async def test_poll_extracts_urgency_signals():
     messages_list.execute.return_value = {
         "messages": [{"id": "msg-2"}],
     }
-    msg = _make_gmail_message("msg-2", "Urgent: Review needed", "bob@meta.com", "Please review ASAP")
+    msg = _make_gmail_message(
+        "msg-2", "Urgent: Review needed", "bob@meta.com", "Please review ASAP"
+    )
     messages_get = MagicMock()
     messages_get.execute.return_value = msg
-    conn.gmail.users.return_value.messages.return_value.list.return_value = messages_list
+    conn.gmail.users.return_value.messages.return_value.list.return_value = (
+        messages_list
+    )
     conn.gmail.users.return_value.messages.return_value.get.return_value = messages_get
 
     config = GmailAdapter.ProviderConfig(label_filters=["INBOX"])
@@ -126,13 +138,17 @@ async def test_poll_extracts_urgency_signals():
 @pytest.mark.asyncio
 async def test_html_body_stripped():
     from workbench.providers.source.gmail import _strip_html
+
     assert _strip_html("<p>Hello <b>world</b></p>") == "Hello world"
 
 
 @pytest.mark.asyncio
 async def test_body_cleaning_strips_quoted():
     from workbench.providers.source.gmail import _clean_body
-    body = "New content\n> Quoted line\n> Another quoted\nMore new content\n--\nSignature"
+
+    body = (
+        "New content\n> Quoted line\n> Another quoted\nMore new content\n--\nSignature"
+    )
     cleaned = _clean_body(body)
     assert "> Quoted line" not in cleaned
     assert "Signature" not in cleaned

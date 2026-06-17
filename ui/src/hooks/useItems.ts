@@ -11,7 +11,7 @@ import { apiGet } from '@/lib/api'
 import { pollWhenVisible } from '@/lib/query-client'
 
 export interface Item {
-  id: string
+  id: number
   source_type: string
   source_id: string
   summary: string

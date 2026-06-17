@@ -61,7 +61,7 @@ export function SearchItemDetail({
   onAction,
 }: {
   item: SearchItem | null
-  onAction: (itemId: string, action: ItemAction, value?: string) => void
+  onAction: (itemId: number, action: ItemAction, value?: string) => void
 }) {
   if (!item) {
     return (

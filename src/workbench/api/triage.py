@@ -25,7 +25,7 @@ async def get_pending(request: Request):
 
 
 @router.get("/triage/cards/{card_id}")
-async def get_triage_card(card_id: str, request: Request):
+async def get_triage_card(card_id: int, request: Request):
     stores = request.app.state.stores
     card = await stores.triage.get_card(card_id)
     if not card:
@@ -105,7 +105,7 @@ async def respond_to_triage(response: TriageResponse, request: Request):
         else:
             item = Item(
                 source_type=card.card_content.get("source_type", "unknown"),
-                source_id=card.id,
+                source_id=str(card.id),
                 summary=card.card_content.get("summary", ""),
                 category=ItemCategory.ACTION_ITEM,
                 origin=ItemOrigin.TRIAGED,
@@ -156,7 +156,7 @@ async def respond_to_triage(response: TriageResponse, request: Request):
 
 
 class ConfirmBody(BaseModel):
-    card_id: str
+    card_id: int
     confirm: bool
 
 

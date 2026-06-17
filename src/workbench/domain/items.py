@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -23,6 +22,12 @@ class RawItem(BaseModel):
     source_label: str
     raw_text: str
     urgency_signals: dict[str, Any] = Field(default_factory=dict)
+    # Source identity for "open in source" links. `source_ref` is the stable,
+    # human-readable id (e.g. "D123456", "T123", "#42"); `source_url` is the
+    # canonical external URL. Both are adapter-populated and optional — adapters
+    # with no meaningful URL leave them None and the UI omits the link.
+    source_ref: str | None = None
+    source_url: str | None = None
 
 
 class ExtractedItem(BaseModel):
@@ -33,7 +38,8 @@ class ExtractedItem(BaseModel):
 
 
 class Item(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    # DB-assigned autoincrement id; None until persisted (save_item sets it).
+    id: int | None = None
     source_type: str
     source_id: str
     summary: str
@@ -44,7 +50,7 @@ class Item(BaseModel):
     raw_data: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    parent_item_id: str | None = None
+    parent_item_id: int | None = None
     action_source: str | None = None
     action_category: str | None = None
     snoozed_until: datetime | None = None

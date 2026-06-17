@@ -10,14 +10,14 @@ import { WBFeedback } from '@/lib/feedback-store'
 
 function makeItem(overrides: Partial<FunnelItem> = {}): FunnelItem {
   return {
-    id: 'item_42',
+    id: 42,
     summary: 'Fix auth token refresh',
     source: 'github',
     created_at: '2026-06-10T08:00:00Z',
     stages: [
-      { filterId: 'fr_01', outcome: 'drop', reason: 'Looks like noise', confidence: 85 },
-      { filterId: 'fr_02', outcome: 'pass', reason: 'No match' },
-      { filterId: 'fr_03', outcome: 'include', reason: 'Security related', confidence: 93 },
+      { filterId: '1', outcome: 'drop', reason: 'Looks like noise', confidence: 85 },
+      { filterId: '2', outcome: 'pass', reason: 'No match' },
+      { filterId: '3', outcome: 'include', reason: 'Security related', confidence: 93 },
     ],
     verdict: {
       decision: 'triaged',
@@ -30,9 +30,9 @@ function makeItem(overrides: Partial<FunnelItem> = {}): FunnelItem {
 }
 
 const FILTER_RULES = [
-  { id: 'fr_01', prompt: 'Drop bot-generated noise' },
-  { id: 'fr_02', prompt: 'Skip calendar invites' },
-  { id: 'fr_03', prompt: 'Include security patches' },
+  { id: 1, prompt: 'Drop bot-generated noise' },
+  { id: 2, prompt: 'Skip calendar invites' },
+  { id: 3, prompt: 'Include security patches' },
 ]
 
 beforeEach(() => {
@@ -79,7 +79,7 @@ describe('ItemFunnelDialog', () => {
     )
     expect(screen.getByTestId('funnel-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('dialog-title')).toHaveTextContent('Fix auth token refresh')
-    expect(screen.getByTestId('dialog-title')).toHaveTextContent('item_42')
+    expect(screen.getByTestId('dialog-title')).toHaveTextContent('42')
   })
 
   it('shows the source icon and type', () => {

@@ -31,20 +31,20 @@ function hashNum(s: string): number {
 
 export function ruleById(
   id: string,
-  filterRules: Array<{ id: string; prompt: string }>,
-  enrichers?: Array<{ id: string; label: string }>,
+  filterRules: Array<{ id: number | string; prompt: string }>,
+  enrichers?: Array<{ id: number | string; label: string }>,
 ): { prompt: string } {
-  const rule = filterRules.find((r) => r.id === id)
+  const rule = filterRules.find((r) => String(r.id) === id)
   if (rule) return rule
-  const enr = enrichers?.find((e) => e.id === id)
+  const enr = enrichers?.find((e) => String(e.id) === id)
   if (enr) return { prompt: `${enr.label} — adds context to the item` }
   return { prompt: id }
 }
 
 export function enricherStageFor(
-  item: { id: string; source: string },
+  item: { id: number; source: string },
   enrichers: Enricher[],
-  enrichmentSamples?: Record<string, Array<{ id: string; context: Record<string, string | number | boolean> }>>,
+  enrichmentSamples?: Record<string, Array<{ id: number; context: Record<string, string | number | boolean> }>>,
 ): FunnelStage | null {
   const enr = enrichers.find((e) => e.type === item.source)
   if (!enr) return null
@@ -53,7 +53,7 @@ export function enricherStageFor(
     ? Object.entries(sample.context).slice(0, 4).map(([k, v]) => `${k}: ${v}`).join(' · ')
     : enr.adds.slice(0, 4).join(' · ')
   return {
-    filterId: enr.id,
+    filterId: String(enr.id),
     outcome: 'context',
     reason: `${enr.label} resolved metadata and recorded ${enr.records.join(' + ')} to memory.`,
     context: ctxStr,
@@ -63,7 +63,7 @@ export function enricherStageFor(
 export function itemLog(
   item: FunnelItem,
   enrichers?: Enricher[],
-  enrichmentSamples?: Record<string, Array<{ id: string; context: Record<string, string | number | boolean> }>>,
+  enrichmentSamples?: Record<string, Array<{ id: number; context: Record<string, string | number | boolean> }>>,
 ): FunnelStage[] {
   const base = item.stages ?? []
   if (base.length > 0 && String(base[0].filterId).startsWith('en_')) return base

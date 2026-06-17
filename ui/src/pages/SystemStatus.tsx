@@ -18,6 +18,9 @@ import {
   HardDrive,
   Hexagon,
   MessageCircle,
+  Network,
+  Pause,
+  Play,
   Search,
   Sparkles,
   TriangleAlert,
@@ -28,6 +31,8 @@ import {
 import { StatCard } from '@/components/StatCard'
 import { Mono } from '@/components/Mono'
 import { Portal } from '@/components/Portal'
+import { JsonHighlight } from '@/components/JsonHighlight'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useHealth } from '@/hooks/useStats'
@@ -64,6 +69,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   HardDrive,
   Hexagon,
   MessageCircle,
+  Network,
+  Pause,
+  Play,
   Search,
   Sparkles,
   Workflow,
@@ -191,6 +199,146 @@ const DEFAULT_SYSTEM_LOGS: SystemLogs = {
   disk: [
     { t: '2026-06-10T09:00:20Z', level: 'INFO', msg: 'cache hit for diff hunks phab-1234' },
   ],
+}
+
+// ---- LLM Infra types + vocabularies ---- //
+//
+// Every call WorkBench makes to the AI layer is recorded here. Calls are
+// BATCHED: one request can carry several items (sub-calls). `origin` = which
+// funnel stage/feature triggered it; `purpose` = what it asked the model to do;
+// `stage` = the pipeline stage (filter / enricher / triage / briefing /
+// aggregate), which colors the row.
+
+export interface LLMCall {
+  id: string
+  ts: string
+  origin: string
+  purpose: string
+  stage: string
+  model: string
+  temperature: number
+  status: string
+  batch: number
+  items: string[]
+  tokens_in: number
+  tokens_out: number | null
+  latency_ms: number | null
+}
+
+export interface LLMSubCall {
+  item: string
+  prompt: string
+  completion: string
+  structured: Record<string, unknown> | null
+  tokens_in: number
+  tokens_out: number | null
+}
+
+export interface LLMCallDetailData {
+  sysPrompt: string
+  subcalls: LLMSubCall[]
+}
+
+const LLM_STATUS: Record<string, { color: string; label: string }> = {
+  ok: { color: '#9ad08a', label: 'ok' },
+  running: { color: '#71d2ff', label: 'running' },
+  error: { color: '#e5484d', label: 'error' },
+}
+
+const LLM_STAGE_TONE: Record<string, string> = {
+  filter: '#e5484d',
+  enricher: '#71d2ff',
+  triage: '#f5a623',
+  briefing: '#b79cf7',
+  aggregate: '#9a7af0',
+}
+
+// ---- Default mock LLM-call pool (used when no API is available) ---- //
+
+function buildDefaultLLMCalls(): LLMCall[] {
+  const now = Date.now()
+  const MODELS = ['claude-opus-4-8', 'claude-haiku-4-2']
+  const KIND = [
+    { origin: 'fr_31', purpose: 'classify · drop-confidence', stage: 'filter', model: 1 },
+    { origin: 'fr_29', purpose: 'classify · include-confidence', stage: 'filter', model: 1 },
+    { origin: 'en_github', purpose: 'enrich · summarize diff', stage: 'enricher', model: 0 },
+    { origin: 'triage', purpose: 'score · relevance + priority', stage: 'triage', model: 0 },
+    { origin: 'en_email', purpose: 'enrich · extract entities', stage: 'enricher', model: 1 },
+    { origin: 'briefing', purpose: 'summarize · morning briefing', stage: 'briefing', model: 0 },
+    { origin: 'fr_09', purpose: 'label · noise vs signal', stage: 'filter', model: 1 },
+    { origin: 'aggregate', purpose: 'merge · funnel verdict', stage: 'aggregate', model: 0 },
+  ]
+  const ITEM_POOL = ['D12871', 'D12863', 'eml_5521', 'cal_8841', 'chat_2207', 'itm_8841', 'eml_5488', 'itm_8829']
+  const BATCHES = [1, 1, 3, 1, 5, 2, 1, 4]
+  const calls: LLMCall[] = []
+  for (let i = 0; i < 64; i++) {
+    const k = KIND[i % KIND.length]
+    const batchN = BATCHES[i % 8]
+    const status = i % 19 === 5 ? 'error' : i % 11 === 3 ? 'running' : 'ok'
+    const inTok = 320 + ((i * 137) % 5400)
+    const outTok = 40 + ((i * 51) % 720)
+    const ms = k.model === 0 ? 240 + ((i * 83) % 900) : 90 + ((i * 37) % 260)
+    const items = Array.from({ length: batchN }, (_, j) => ITEM_POOL[(i + j) % ITEM_POOL.length])
+    calls.push({
+      id: 'llm_' + (94120 - i),
+      ts: new Date(now - i * 7400 - (i % 4) * 1300).toISOString(),
+      origin: k.origin,
+      purpose: k.purpose,
+      stage: k.stage,
+      model: MODELS[k.model],
+      temperature: k.stage === 'enricher' ? 0 : 0.2,
+      status,
+      batch: batchN,
+      items,
+      tokens_in: inTok,
+      tokens_out: status === 'running' ? null : outTok,
+      latency_ms: status === 'running' ? null : ms,
+    })
+  }
+  return calls
+}
+
+const DEFAULT_LLM_CALLS = buildDefaultLLMCalls()
+
+// Build the prompt / completion / structured-output detail for one batched call.
+function llmCallDetail(call: LLMCall): LLMCallDetailData {
+  const sysPrompt =
+    {
+      filter:
+        'You are a noise filter. Given an item and a rule, return whether the rule fires and a calibrated confidence.',
+      enricher:
+        'You enrich an item with structured metadata. Resolve linked entities and return facts only — never a verdict.',
+      triage:
+        'You are a triage scorer. Return relevance (0-100) and an estimated priority P0–P3 with a one-line reason.',
+      briefing:
+        'You write a terse morning briefing. Operator voice, no marketing, lead with the highest-priority signal.',
+      aggregate:
+        'You merge per-rule signals into a single verdict. Resolve conflicts, weight independent agreement higher.',
+    }[call.stage] || 'You assist the WorkBench triage pipeline.'
+
+  const subcalls: LLMSubCall[] = call.items.map((itemId, j) => {
+    const inT = Math.round(call.tokens_in / call.batch) + ((j * 13) % 40)
+    const outT = call.tokens_out == null ? null : Math.round(call.tokens_out / call.batch) + ((j * 7) % 18)
+    let structured: Record<string, unknown>
+    if (call.stage === 'filter')
+      structured = { rule: call.origin, item: itemId, fires: j % 2 === 0, confidence: 88 - j * 6 }
+    else if (call.stage === 'enricher')
+      structured = { item: itemId, entities: ['diff:' + itemId, 'author:alice'], ci_status: j % 2 ? 'passing' : 'failing' }
+    else if (call.stage === 'triage')
+      structured = { item: itemId, relevance: 94 - j * 11, priority: ['P0', 'P1', 'P2', 'P3'][j % 4] }
+    else if (call.stage === 'aggregate')
+      structured = { item: itemId, decision: j % 3 === 0 ? 'dropped' : 'triaged', priority: 'P1', confidence: 91 - j * 5 }
+    else structured = { item: itemId, summary: 'one-line summary for ' + itemId }
+    return {
+      item: itemId,
+      prompt: `[item ${itemId}]\n${call.purpose} — evaluate against context and return JSON.`,
+      completion: call.status === 'error' ? '— (request failed)' : JSON.stringify(structured),
+      structured: call.status === 'error' ? null : structured,
+      tokens_in: inT,
+      tokens_out: outT,
+    }
+  })
+  return { sysPrompt, subcalls }
 }
 
 // ---- SystemDiagram component ---- //
@@ -805,6 +953,542 @@ function SystemLogViewer({
   )
 }
 
+// ---- LLMCallDetail dialog ---- //
+//
+// Expanded view of a single LLM invocation. For batched calls a sub-call
+// selector steps through each item's individual prompt / completion / structured
+// output. Mirrors SystemLogViewer's dialog chrome.
+
+function LLMCallDetail({
+  call,
+  onClose,
+}: {
+  call: LLMCall | null
+  onClose: () => void
+}) {
+  const [openSub, setOpenSub] = useState(0)
+
+  // Reset the sub-call selector when the open call changes.
+  useEffect(() => {
+    setOpenSub(0)
+  }, [call?.id])
+
+  if (!call) return null
+
+  const st = LLM_STATUS[call.status] || LLM_STATUS.ok
+  const detail = llmCallDetail(call)
+  const sub = detail.subcalls[openSub] || detail.subcalls[0]
+
+  return (
+    <Portal>
+      <div
+        className="wb-overlay"
+        style={{ alignItems: 'center', paddingTop: 0, zIndex: 120 }}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose()
+        }}
+        data-testid="llm-detail-overlay"
+      >
+        <div
+          className="wb-dialog-card"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${call.id} detail`}
+          style={{
+            width: 'min(760px, 95vw)',
+            padding: 0,
+            overflow: 'hidden',
+            maxHeight: '88vh',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          {/* header */}
+          <div
+            style={{
+              padding: '16px 18px',
+              borderBottom: '1px solid var(--border)',
+              display: 'grid',
+              gap: 10,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '1px 8px',
+                  borderRadius: 'var(--radius-chip,2px)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '.04em',
+                  color: '#0e0e11',
+                  background: LLM_STAGE_TONE[call.stage] || '#71d2ff',
+                }}
+                data-testid="llm-detail-stage"
+              >
+                {call.stage}
+              </span>
+              <Mono style={{ fontSize: 12, color: 'var(--foreground)' }}>{call.id}</Mono>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                  color: st.color,
+                }}
+              >
+                <span style={{ width: 7, height: 7, borderRadius: 9999, background: st.color }} />
+                {st.label}
+              </span>
+              {call.batch > 1 && <Badge variant="secondary">batch ×{call.batch}</Badge>}
+              <button
+                className="wb-iconbtn"
+                style={{ marginLeft: 'auto', width: 28, height: 28 }}
+                aria-label="Close"
+                onClick={onClose}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p style={{ margin: 0, fontSize: 15 }}>{call.purpose}</p>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '4px 18px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                color: 'var(--muted-foreground)',
+              }}
+            >
+              <span>
+                origin <span style={{ color: 'var(--tertiary)' }}>{call.origin}</span>
+              </span>
+              <span>
+                model <span style={{ color: 'var(--foreground)' }}>{call.model}</span>
+              </span>
+              <span>temp {call.temperature}</span>
+              <span>
+                tok ↓{call.tokens_in} ↑{call.tokens_out ?? '—'}
+              </span>
+              <span>{call.latency_ms != null ? call.latency_ms + 'ms' : 'in flight'}</span>
+              <span>{new Date(call.ts).toLocaleTimeString([], { hour12: false })}</span>
+            </div>
+          </div>
+
+          {/* system prompt */}
+          <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+            <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
+              System prompt
+            </span>
+            <p
+              style={{
+                margin: 0,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                lineHeight: 1.5,
+                color: 'var(--muted-foreground)',
+              }}
+            >
+              {detail.sysPrompt}
+            </p>
+          </div>
+
+          {/* sub-call selector (batched) */}
+          {call.batch > 1 && (
+            <div
+              style={{
+                display: 'flex',
+                gap: 6,
+                flexWrap: 'wrap',
+                padding: '10px 18px',
+                borderBottom: '1px solid var(--border)',
+                background: 'var(--surface-lowest)',
+              }}
+              data-testid="llm-subcall-selector"
+            >
+              <span className="label-mono" style={{ fontSize: 10, alignSelf: 'center' }}>
+                {call.batch} items batched:
+              </span>
+              {detail.subcalls.map((sc, i) => (
+                <button
+                  key={i}
+                  onClick={() => setOpenSub(i)}
+                  data-testid={`llm-subcall-${i}`}
+                  style={{
+                    padding: '3px 9px',
+                    cursor: 'pointer',
+                    borderRadius: 'var(--radius-control,4px)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    border: '1px solid',
+                    borderColor: openSub === i ? 'var(--primary)' : 'var(--border)',
+                    background:
+                      openSub === i ? 'color-mix(in srgb, var(--primary) 12%, transparent)' : 'transparent',
+                    color: openSub === i ? 'var(--foreground)' : 'var(--muted-foreground)',
+                  }}
+                >
+                  {sc.item}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* body: input / completion / structured */}
+          <div style={{ overflowY: 'auto', padding: 18, display: 'grid', gap: 14 }}>
+            <div>
+              <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
+                Input{call.batch > 1 ? ` · ${sub.item}` : ''}{' '}
+                <span style={{ color: 'var(--muted-foreground)' }}>↓{sub.tokens_in} tok</span>
+              </span>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 12,
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  background: 'var(--surface-lowest)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-card,6px)',
+                  color: 'var(--foreground)',
+                }}
+              >
+                {sub.prompt}
+              </pre>
+            </div>
+            <div>
+              <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
+                Completion <span style={{ color: 'var(--muted-foreground)' }}>↑{sub.tokens_out ?? '—'} tok</span>
+              </span>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 12,
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  background: 'var(--surface-lowest)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-card,6px)',
+                  color: call.status === 'error' ? 'var(--error-text)' : 'var(--foreground)',
+                }}
+              >
+                {sub.completion}
+              </pre>
+            </div>
+            <div>
+              <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
+                Structured output
+              </span>
+              {sub.structured ? (
+                <div
+                  style={{
+                    borderRadius: 'var(--radius-card,6px)',
+                    border: '1px solid var(--border)',
+                    overflow: 'hidden',
+                  }}
+                  data-testid="llm-structured-output"
+                >
+                  <JsonHighlight json={JSON.stringify(sub.structured, null, 2)} />
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--error-text)' }}>
+                  // no structured output — call failed
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Portal>
+  )
+}
+
+// ---- LLMInfra component ---- //
+//
+// A live-tailing log of every LLM invocation, with stat rollups. New rows
+// stream in (pausable) and flash on arrival; clicking a row opens its detail.
+
+function LLMInfra({ pool = DEFAULT_LLM_CALLS }: { pool?: LLMCall[] }) {
+  const [rows, setRows] = useState<LLMCall[]>(() => pool.slice(0, 14))
+  const [live, setLive] = useState(true)
+  const [detail, setDetail] = useState<LLMCall | null>(null)
+  const [q, setQ] = useState('')
+  const cursor = useRef(14)
+  const scroller = useRef<HTMLDivElement>(null)
+
+  // Stream a new synthetic row in every ~1.9s while live.
+  useEffect(() => {
+    if (!live) return undefined
+    const id = setInterval(() => {
+      setRows((prev) => {
+        const base = pool[cursor.current % pool.length]
+        cursor.current += 1
+        const row: LLMCall = {
+          ...base,
+          id: 'llm_' + (94250 + cursor.current),
+          ts: new Date().toISOString(),
+        }
+        return [...prev, row].slice(-80)
+      })
+    }, 1900)
+    return () => clearInterval(id)
+  }, [live, pool])
+
+  // Auto-scroll to the newest row while live.
+  useEffect(() => {
+    const el = scroller.current
+    if (el && live) el.scrollTop = el.scrollHeight
+  }, [rows, live])
+
+  const query = q.trim().toLowerCase()
+  const shown = query
+    ? rows.filter((c) =>
+        (c.origin + ' ' + c.purpose + ' ' + c.stage + ' ' + c.items.join(' ') + ' ' + c.model)
+          .toLowerCase()
+          .includes(query),
+      )
+    : rows
+
+  const withLatency = pool.filter((c) => c.latency_ms != null)
+  const calls24 = pool.length * 47
+  const errRate = Math.round((pool.filter((c) => c.status === 'error').length / pool.length) * 100)
+  const avgMs = Math.round(
+    withLatency.reduce((s, c) => s + (c.latency_ms ?? 0), 0) / Math.max(1, withLatency.length),
+  )
+  const batched = Math.round((pool.filter((c) => c.batch > 1).length / pool.length) * 100)
+  const fmt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour12: false })
+
+  const COLS = '64px 88px minmax(0,1fr) 60px 96px 64px'
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }} data-testid="llm-infra">
+      <div
+        className="grid grid-cols-4 gap-4"
+        data-testid="llm-stat-cards"
+      >
+        <StatCard label="Calls (24h)" value={<Mono>{calls24.toLocaleString()}</Mono>} />
+        <StatCard label="Avg Latency" value={<Mono>{avgMs}ms</Mono>} />
+        <StatCard label="Error Rate" value={<Mono>{errRate}%</Mono>} danger={errRate > 3} />
+        <StatCard label="Batched" value={<Mono>{batched}%</Mono>} />
+      </div>
+
+      <Card>
+        <CardHeader
+          divided
+          className="flex flex-row items-center justify-between gap-2.5 px-4 py-3"
+        >
+          <CardTitle className="wb-section-h">LLM Invocation Log</CardTitle>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '4px 9px',
+                borderRadius: 'var(--radius-control,4px)',
+                border: '1px solid var(--border)',
+                background: 'var(--surface-lowest)',
+              }}
+            >
+              <Search size={13} style={{ color: 'var(--muted-foreground)' }} />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="filter…"
+                aria-label="Filter LLM calls"
+                data-testid="llm-search-input"
+                style={{
+                  width: 120,
+                  background: 'transparent',
+                  border: 0,
+                  outline: 'none',
+                  color: 'var(--foreground)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                }}
+              />
+            </div>
+            <button
+              onClick={() => setLive((v) => !v)}
+              aria-pressed={live}
+              data-testid="llm-live-toggle"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 10px',
+                cursor: 'pointer',
+                borderRadius: 'var(--radius-control,4px)',
+                border: '1px solid var(--border)',
+                background: live ? 'color-mix(in srgb, var(--success) 12%, transparent)' : 'transparent',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                color: live ? 'var(--success)' : 'var(--muted-foreground)',
+              }}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 9999,
+                  background: live ? 'var(--success)' : 'var(--muted-foreground)',
+                  animation: live ? 'wb-pulse 1.6s ease infinite' : 'none',
+                }}
+              />
+              {live ? 'live' : 'paused'}
+              {live ? <Pause size={11} /> : <Play size={11} />}
+            </button>
+          </div>
+        </CardHeader>
+        <CardContent style={{ padding: 0 }}>
+          {/* column header */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: COLS,
+              gap: 8,
+              alignItems: 'center',
+              padding: '8px 16px',
+              borderBottom: '1px solid var(--border)',
+              background: 'var(--surface-high)',
+            }}
+          >
+            {['Time', 'Origin', 'Purpose', 'Batch', 'Tokens', 'Status'].map((h, i) => (
+              <span key={h} className="label-mono" style={{ fontSize: 10, textAlign: i >= 3 ? 'right' : 'left' }}>
+                {h}
+              </span>
+            ))}
+          </div>
+          <div
+            ref={scroller}
+            className="wb-log"
+            data-testid="llm-log-lines"
+            style={{ height: 360, padding: 0, border: 0, borderRadius: 0, fontFamily: 'var(--font-sans)' }}
+          >
+            {shown.length === 0 ? (
+              <div
+                style={{
+                  padding: 24,
+                  textAlign: 'center',
+                  color: 'var(--muted-foreground)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                }}
+              >
+                // no matching LLM calls
+              </div>
+            ) : (
+              shown.map((c, ri) => {
+                const st = LLM_STATUS[c.status] || LLM_STATUS.ok
+                const newest = ri === shown.length - 1
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setDetail(c)}
+                    className={newest && live ? 'wb-tail-new' : ''}
+                    title={`Open ${c.id}`}
+                    data-testid="llm-log-row"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: COLS,
+                      gap: 8,
+                      alignItems: 'center',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '7px 16px',
+                      background: 'transparent',
+                      border: 0,
+                      borderBottom: '1px solid color-mix(in srgb, var(--border) 55%, transparent)',
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'var(--accent)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent'
+                    }}
+                  >
+                    <Mono style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{fmt(c.ts)}</Mono>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: 2,
+                          background: LLM_STAGE_TONE[c.stage] || '#71d2ff',
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Mono
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--tertiary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {c.origin}
+                      </Mono>
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 13,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        color: 'var(--foreground)',
+                      }}
+                    >
+                      {c.purpose}
+                    </span>
+                    <span style={{ textAlign: 'right' }}>
+                      {c.batch > 1 ? (
+                        <Mono style={{ fontSize: 11, color: 'var(--brand)' }}>×{c.batch}</Mono>
+                      ) : (
+                        <span style={{ color: 'var(--muted-foreground)' }}>—</span>
+                      )}
+                    </span>
+                    <Mono style={{ fontSize: 11, textAlign: 'right', color: 'var(--muted-foreground)' }}>
+                      ↓{c.tokens_in} ↑{c.tokens_out ?? '·'}
+                    </Mono>
+                    <span
+                      style={{
+                        justifySelf: 'end',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 11,
+                        color: st.color,
+                      }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: 9999, background: st.color }} />
+                      {st.label}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <LLMCallDetail call={detail} onClose={() => setDetail(null)} />
+    </div>
+  )
+}
+
 // ---- Main page component ---- //
 
 function isUnauthorized(err: unknown): boolean {
@@ -814,6 +1498,7 @@ function isUnauthorized(err: unknown): boolean {
 export function SystemStatus() {
   const health = useHealth()
   const [logNode, setLogNode] = useState<SystemNode | null>(null)
+  const [tab, setTab] = useState<'diagram' | 'llm'>('diagram')
 
   // In a real implementation these would come from an API hook.
   // For now use the built-in defaults.
@@ -913,6 +1598,38 @@ export function SystemStatus() {
         />
       </div>
 
+      {/* Sub-view tabs: the system diagram vs the LLM infra invocation log. */}
+      <div
+        className="flex gap-1.5 border-b border-border"
+        role="tablist"
+        data-testid="system-tabs"
+      >
+        {([
+          ['diagram', 'System Diagram', Network],
+          ['llm', 'LLM Infra', Sparkles],
+        ] as const).map(([key, label, IconComp]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+            data-testid={`system-tab-${key}`}
+            className="-mb-px inline-flex cursor-pointer items-center gap-1.5 border-0 bg-transparent px-3.5 py-2.5 font-mono text-xs font-semibold uppercase tracking-wider"
+            style={{
+              borderBottom: `2px solid ${tab === key ? 'var(--primary)' : 'transparent'}`,
+              color: tab === key ? 'var(--foreground)' : 'var(--muted-foreground)',
+            }}
+          >
+            <IconComp size={14} />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'llm' ? (
+        <LLMInfra />
+      ) : (
+        <>
       {isDegraded && (
         <div
           role="status"
@@ -989,6 +1706,8 @@ export function SystemStatus() {
           </div>
         </CardContent>
       </Card>
+        </>
+      )}
 
       <SystemLogViewer
         node={logNode}
@@ -1053,4 +1772,14 @@ export function SystemStatusSummary() {
 }
 
 // Re-export for testing
-export { DEFAULT_SYSTEM_STATUS, DEFAULT_SYSTEM_LOGS, SYS_STATUS, ROLE_TONE }
+export {
+  DEFAULT_SYSTEM_STATUS,
+  DEFAULT_SYSTEM_LOGS,
+  SYS_STATUS,
+  ROLE_TONE,
+  DEFAULT_LLM_CALLS,
+  LLM_STATUS,
+  LLM_STAGE_TONE,
+  llmCallDetail,
+  LLMInfra,
+}

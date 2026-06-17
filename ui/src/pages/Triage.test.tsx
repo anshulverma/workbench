@@ -69,6 +69,22 @@ const CARD_BACKED = {
   created_at: iso(5 * 60_000),
 }
 
+// A task card carrying source identity (source_ref + source_url) — exercises
+// the source-type badge and the "open in source" link.
+const CARD_LINKED = {
+  id: 'c4',
+  card_content: {
+    summary: 'Triage incoming task',
+    source_type: 'meta_tasks',
+    source_ref: 'T123456',
+    source_url: 'https://www.internalfb.com/tasks/?t=123456',
+  },
+  options: [{ label: 'Add todo', action: 'add_todo' }],
+  relevance_score: 70,
+  status: 'sent',
+  created_at: iso(60_000),
+}
+
 function baseHandlers() {
   return [
     http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok' })),
@@ -405,6 +421,36 @@ describe('Triage page', () => {
     await screen.findByText('Review auth PR')
     expect(screen.getByText(/focus by theme/i)).toBeInTheDocument()
     expect(screen.getAllByTestId('theme-card').length).toBeGreaterThan(0)
+  })
+
+  // --- Source-type badge + "open in source" link ---
+
+  it('renders a source-type badge that labels the card kind', async () => {
+    server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD_LINKED])))
+    renderPage()
+    await screen.findByText('Triage incoming task')
+    // meta_tasks → friendly "task" label on the badge
+    const badge = screen.getByTestId('source-type-badge')
+    expect(badge).toHaveTextContent(/task/i)
+  })
+
+  it('renders the source ref as an external link to source_url', async () => {
+    server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD_LINKED])))
+    renderPage()
+    await screen.findByText('Triage incoming task')
+    const link = screen.getByRole('link', { name: /T123456/ })
+    expect(link).toHaveAttribute('href', 'https://www.internalfb.com/tasks/?t=123456')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+  })
+
+  it('shows the source-type badge but no link when source_url is absent', async () => {
+    server.use(http.get('/api/triage/pending', () => HttpResponse.json([CARD])))
+    renderPage()
+    await screen.findByText('Review auth PR')
+    // github card has no source_url → badge present, but no source link
+    expect(screen.getByTestId('source-type-badge')).toHaveTextContent(/github/i)
+    expect(screen.queryByTestId('source-link')).not.toBeInTheDocument()
   })
 
   it('card summary is a clickable button that opens ItemFunnelDialog', async () => {

@@ -99,7 +99,7 @@ async def test_get_card_by_id_returns_full_card(triage_app, auth_headers):
 async def test_get_unknown_card_returns_404(triage_app, auth_headers):
     app, _ = triage_app
     client = await _client(app)
-    resp = await client.get("/api/triage/cards/does-not-exist", headers=auth_headers)
+    resp = await client.get("/api/triage/cards/999999", headers=auth_headers)
     assert resp.status_code == 404
     await client.aclose()
 

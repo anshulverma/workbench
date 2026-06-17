@@ -5,7 +5,7 @@ export type StageOutcome = FilterAction | 'pass' | 'skip'
 export type FilterOrigin = 'learned' | 'explicit'
 
 export interface FilterRuleExtended {
-  id: string
+  id: number
   prompt: string
   action: FilterAction
   sources: string[]
@@ -19,7 +19,7 @@ export interface FilterRuleExtended {
 }
 
 export interface Enricher {
-  id: string
+  id: number
   type: string
   label: string
   depth: 'shallow' | 'deep'
@@ -32,7 +32,7 @@ export interface Enricher {
 }
 
 export interface LoopBack {
-  id: string
+  id: number
   label: string
   trigger: string
   condition: string
@@ -60,7 +60,7 @@ export interface Verdict {
 }
 
 export interface FunnelItem {
-  id: string
+  id: number
   summary: string
   source: string
   created_at: string
@@ -70,7 +70,7 @@ export interface FunnelItem {
 }
 
 export interface EnrichmentSample {
-  id: string
+  id: number
   summary: string
   context: Record<string, string | number | boolean>
   entities?: string[]
@@ -80,5 +80,5 @@ export type FunnelOrderEntryKind = 'enricher' | 'filter' | 'loopback'
 
 export interface FunnelOrderEntry {
   kind: FunnelOrderEntryKind
-  id: string
+  id: number
 }

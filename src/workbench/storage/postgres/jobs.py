@@ -11,13 +11,15 @@ class PgJobStore(JobStore):
         self.pool = pool
 
     async def save_job(self, job: PipelineJob) -> PipelineJob:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT and let the DB
+        # assign one, then write it back onto the passed job.
+        row = await self.pool.fetchrow(
             """INSERT INTO jobs
-               (id, trigger, status, input_hash, items_extracted,
+               (trigger, status, input_hash, items_extracted,
                 items_included, items_triaged, items_dropped, items_failed,
                 error, created_at, completed_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)""",
-            job.id,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               RETURNING id""",
             job.trigger.value,
             job.status.value,
             job.input_hash,
@@ -30,6 +32,7 @@ class PgJobStore(JobStore):
             job.created_at,
             job.completed_at,
         )
+        job.id = row["id"]
         return job
 
     async def get_job(self, job_id: str) -> PipelineJob | None:

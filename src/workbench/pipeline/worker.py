@@ -84,7 +84,7 @@ class IngestionQueueWorker:
         async with self._semaphore:
             try:
                 raw_item = RawItem(
-                    id=entry.source_id or entry.id,
+                    id=entry.source_id or str(entry.id),
                     source_type=entry.source_type,
                     source_label="",
                     raw_text=entry.raw_content,

@@ -49,7 +49,7 @@ export interface ChatContext {
 export type ItemContext = DiffContext | EmailContext | MeetingContext | ChatContext
 
 export interface SearchItem {
-  id: string
+  id: number
   kind: ItemKind
   summary: string
   source: string

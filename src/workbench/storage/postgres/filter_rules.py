@@ -19,14 +19,16 @@ class PgFilterRuleStore(FilterRuleStore):
         return [self._row_to_rule(r) for r in rows]
 
     async def add_rule(self, rule: FilterRule) -> FilterRule:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT and let the DB
+        # assign one, then write it back onto the passed FilterRule.
+        row = await self.pool.fetchrow(
             """INSERT INTO filter_rules
-               (id, source_type, pattern, prompt, action, priority,
+               (source_type, pattern, prompt, action, priority,
                 created_from_interaction_id, sources, confidence,
                 origin, matched, enabled, label, order_index)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb,
-                       $9, $10, $11, $12, $13, $14)""",
-            rule.id,
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb,
+                       $8, $9, $10, $11, $12, $13)
+               RETURNING id""",
             rule.source_type,
             rule.pattern,
             rule.prompt,
@@ -41,6 +43,7 @@ class PgFilterRuleStore(FilterRuleStore):
             rule.label,
             rule.order_index,
         )
+        rule.id = row["id"]
         return rule
 
     async def get_source_rules(self, source_type: str) -> list[FilterRule]:
@@ -51,7 +54,7 @@ class PgFilterRuleStore(FilterRuleStore):
         )
         return [self._row_to_rule(r) for r in rows]
 
-    async def update_rule(self, rule_id: str, updates: dict) -> FilterRule:
+    async def update_rule(self, rule_id: int, updates: dict) -> FilterRule:
         sets: list[str] = []
         params: list = []
         idx = 1
@@ -81,10 +84,10 @@ class PgFilterRuleStore(FilterRuleStore):
         )
         return self._row_to_rule(row)
 
-    async def delete_rule(self, rule_id: str) -> None:
+    async def delete_rule(self, rule_id: int) -> None:
         await self.pool.execute("DELETE FROM filter_rules WHERE id = $1", rule_id)
 
-    async def reorder_rules(self, rule_ids: list[str]) -> None:
+    async def reorder_rules(self, rule_ids: list[int]) -> None:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 for idx, rule_id in enumerate(rule_ids):

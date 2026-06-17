@@ -188,7 +188,7 @@ function makeMockStage(overrides?: Partial<FunnelStageType>): FunnelStageType {
 
 function makeMockItem(overrides?: Partial<FunnelItem>): FunnelItem {
   return {
-    id: 'itm_test',
+    id: 1,
     summary: 'Test item for correction',
     source: 'github',
     created_at: '2026-06-10T12:00:00Z',
@@ -431,7 +431,7 @@ describe('accessibility', () => {
         isLast={true}
         item={item}
         editable={true}
-        filterRules={[{ id: 'fr_01', prompt: 'Test rule prompt' }]}
+        filterRules={[{ id: 1, prompt: 'Test rule prompt' }]}
       />,
     )
 

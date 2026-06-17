@@ -120,7 +120,7 @@ async def search_items(
 
 
 @router.patch("/items/{item_id}")
-async def update_item(item_id: str, updates: ItemUpdate, request: Request):
+async def update_item(item_id: int, updates: ItemUpdate, request: Request):
     stores = request.app.state.stores
     item = await stores.items.get_item(item_id)
     if not item:
@@ -129,7 +129,7 @@ async def update_item(item_id: str, updates: ItemUpdate, request: Request):
 
 
 @router.delete("/items/{item_id}")
-async def archive_item(item_id: str, request: Request):
+async def archive_item(item_id: int, request: Request):
     stores = request.app.state.stores
     await stores.items.archive_item(item_id)
     return {"status": "archived"}
@@ -140,7 +140,7 @@ class SnoozeBody(BaseModel):
 
 
 @router.post("/items/{item_id}/snooze")
-async def snooze_item(item_id: str, body: SnoozeBody, request: Request):
+async def snooze_item(item_id: int, body: SnoozeBody, request: Request):
     stores = request.app.state.stores
     item = await stores.items.get_item(item_id)
     if not item:

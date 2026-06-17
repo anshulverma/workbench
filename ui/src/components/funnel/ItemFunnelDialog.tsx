@@ -49,11 +49,11 @@ export function ItemFunnelDialog({
   item: FunnelItem | SearchItem | null
   open: boolean
   onClose: () => void
-  filterRules?: Array<{ id: string; prompt: string }>
-  enrichers?: Array<{ id: string; label: string }>
+  filterRules?: Array<{ id: number; prompt: string }>
+  enrichers?: Array<{ id: number; label: string }>
   enrichmentSamples?: Record<
     string,
-    Array<{ id: string; context: Record<string, string | number | boolean> }>
+    Array<{ id: number; context: Record<string, string | number | boolean> }>
   >
 }) {
   if (!open || !item) return null

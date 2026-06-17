@@ -60,6 +60,7 @@ import {
 } from '@/components/ui/dialog'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { sourceLabel } from '@/lib/source'
 
 const PRIORITY_VARIANT: Record<string, 'p0' | 'p1' | 'p2' | 'p3'> = {
   P0: 'p0',
@@ -169,8 +170,31 @@ function TriageCardItem({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
-          <div className="flex items-center gap-2">
-            <Mono className="text-xs text-muted-foreground">{card.id}</Mono>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              variant="outline"
+              data-testid="source-type-badge"
+              className="shrink-0 uppercase"
+            >
+              {sourceLabel(card.card_content?.source_type)}
+            </Badge>
+            {card.card_content?.source_url ? (
+              <a
+                data-testid="source-link"
+                href={card.card_content.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 font-mono text-xs text-primary underline"
+              >
+                {card.card_content.source_ref ?? 'open'} ↗
+              </a>
+            ) : (
+              card.card_content?.source_ref && (
+                <Mono className="text-xs text-muted-foreground">
+                  {card.card_content.source_ref}
+                </Mono>
+              )
+            )}
             {typeof card.relevance_score === 'number' && (
               <Badge variant="secondary" className="shrink-0">
                 relevance {card.relevance_score}

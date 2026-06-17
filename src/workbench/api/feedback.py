@@ -27,7 +27,7 @@ def _get_feedback_store(request: Request):
 @router.get("/feedback/corrections")
 async def list_corrections(
     request: Request,
-    item_id: str | None = Query(None),
+    item_id: int | None = Query(None),
 ):
     store = _get_feedback_store(request)
     return await store.get_corrections(item_id=item_id)
@@ -40,7 +40,7 @@ async def add_correction(correction: FeedbackCorrection, request: Request):
 
 
 @router.delete("/feedback/corrections/{correction_id}")
-async def delete_correction(correction_id: str, request: Request):
+async def delete_correction(correction_id: int, request: Request):
     store = _get_feedback_store(request)
     await store.delete_correction(correction_id)
     return {"status": "deleted"}
@@ -62,13 +62,13 @@ async def add_task(task: FilterTuningTask, request: Request):
 
 
 @router.patch("/feedback/tasks/{task_id}")
-async def update_task_status(task_id: str, request: Request, status: str = Query(...)):
+async def update_task_status(task_id: int, request: Request, status: str = Query(...)):
     store = _get_feedback_store(request)
     return await store.update_task(task_id, status)
 
 
 @router.delete("/feedback/tasks/{task_id}")
-async def delete_task(task_id: str, request: Request):
+async def delete_task(task_id: int, request: Request):
     store = _get_feedback_store(request)
     await store.delete_task(task_id)
     return {"status": "deleted"}

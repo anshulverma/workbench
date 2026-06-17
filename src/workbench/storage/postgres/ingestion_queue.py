@@ -14,14 +14,16 @@ class PgIngestionQueueStore(IngestionQueueStore):
         self.pool = pool
 
     async def enqueue(self, entry: IngestionQueueEntry) -> IngestionQueueEntry:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT and let the DB
+        # assign one, then write it back onto the passed entry.
+        row = await self.pool.fetchrow(
             """INSERT INTO ingestion_queue
-               (id, raw_content, source_type, source_id, urgency_signals,
+               (raw_content, source_type, source_id, urgency_signals,
                 urgency_score, job_id, status, attempt, max_attempts,
                 next_retry_at, error, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10,
-                       $11, $12, $13, $14)""",
-            entry.id,
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9,
+                       $10, $11, $12, $13)
+               RETURNING id""",
             entry.raw_content,
             entry.source_type,
             entry.source_id,
@@ -36,6 +38,7 @@ class PgIngestionQueueStore(IngestionQueueStore):
             entry.created_at,
             entry.updated_at,
         )
+        entry.id = row["id"]
         return entry
 
     async def dequeue(self, limit: int = 1) -> list[IngestionQueueEntry]:

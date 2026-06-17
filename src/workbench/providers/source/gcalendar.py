@@ -18,7 +18,9 @@ def _compute_event_hash(event: dict) -> str:
     """Compute a deterministic hash of meaningful event fields for change detection."""
     title = event.get("summary", "")
     desc = event.get("description", "")
-    start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", ""))
+    start = event.get("start", {}).get(
+        "dateTime", event.get("start", {}).get("date", "")
+    )
     end = event.get("end", {}).get("dateTime", event.get("end", {}).get("date", ""))
     location = event.get("location", "")
     status = event.get("status", "")
@@ -53,14 +55,19 @@ class GCalendarAdapter(SourceAdapter):
         items: list[RawItem] = []
 
         for cal_id in self._config.calendar_ids:
+
             def _fetch_events(cid=cal_id):
-                result = self._connection.calendar.events().list(
-                    calendarId=cid,
-                    timeMin=time_min,
-                    timeMax=time_max,
-                    singleEvents=True,
-                    orderBy="startTime",
-                ).execute()
+                result = (
+                    self._connection.calendar.events()
+                    .list(
+                        calendarId=cid,
+                        timeMin=time_min,
+                        timeMax=time_max,
+                        singleEvents=True,
+                        orderBy="startTime",
+                    )
+                    .execute()
+                )
                 return result.get("items", [])
 
             events = await asyncio.to_thread(_fetch_events)
@@ -105,19 +112,21 @@ class GCalendarAdapter(SourceAdapter):
                 except (ValueError, TypeError):
                     logger.debug("Could not parse event start time %r", start_str)
 
-                raw_text = json.dumps({
-                    "summary": summary,
-                    "organizer": organizer,
-                    "attendees": attendees,
-                    "location": event.get("location", ""),
-                    "description": event.get("description", ""),
-                    "start": start_str,
-                    "end": end_str,
-                    "is_recurring": is_recurring,
-                    "recurring_event_id": recurring_event_id,
-                    "link": event.get("htmlLink", ""),
-                    "status": event.get("status", ""),
-                })
+                raw_text = json.dumps(
+                    {
+                        "summary": summary,
+                        "organizer": organizer,
+                        "attendees": attendees,
+                        "location": event.get("location", ""),
+                        "description": event.get("description", ""),
+                        "start": start_str,
+                        "end": end_str,
+                        "is_recurring": is_recurring,
+                        "recurring_event_id": recurring_event_id,
+                        "link": event.get("htmlLink", ""),
+                        "status": event.get("status", ""),
+                    }
+                )
 
                 urgency_signals = {
                     "is_recurring": is_recurring,
@@ -128,12 +137,15 @@ class GCalendarAdapter(SourceAdapter):
                     "organizer": organizer,
                 }
 
-                items.append(RawItem(
-                    id=f"cal_{event_id}",
-                    source_type="calendar",
-                    source_label=f"Calendar: {summary[:80]}",
-                    raw_text=raw_text,
-                    urgency_signals=urgency_signals,
-                ))
+                items.append(
+                    RawItem(
+                        id=f"cal_{event_id}",
+                        source_type="calendar",
+                        source_label=f"Calendar: {summary[:80]}",
+                        raw_text=raw_text,
+                        urgency_signals=urgency_signals,
+                        source_url=event.get("htmlLink") or None,
+                    )
+                )
 
         return items

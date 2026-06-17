@@ -98,7 +98,7 @@ async def test_get_actions_grouped(client, app_with_state):
         status=ItemStatus.ACTIVE,
         action_source="triage_response",
         action_category="delegation",
-        parent_item_id="parent-1",
+        parent_item_id=1,
     )
     item2 = Item(
         source_type="diff",
@@ -258,7 +258,7 @@ async def test_snooze_action(client, app_with_state):
 
 @pytest.mark.asyncio
 async def test_action_not_found(client):
-    r = await client.post("/api/actions/nonexistent/done")
+    r = await client.post("/api/actions/999999/done")
     assert r.status_code == 404
 
 

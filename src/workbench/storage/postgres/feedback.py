@@ -30,12 +30,14 @@ class PgFeedbackStore(FeedbackStore):
     async def add_correction(
         self, correction: FeedbackCorrection
     ) -> FeedbackCorrection:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT, let the DB assign
+        # one, then write it back onto the passed correction.
+        row = await self.pool.fetchrow(
             """INSERT INTO feedback_corrections
-               (id, item_id, rule_id, original_action, corrected_action,
+               (item_id, rule_id, original_action, corrected_action,
                 reason, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-            correction.id,
+               VALUES ($1, $2, $3, $4, $5, $6)
+               RETURNING id""",
             correction.item_id,
             correction.rule_id,
             correction.original_action,
@@ -43,6 +45,7 @@ class PgFeedbackStore(FeedbackStore):
             correction.reason,
             correction.created_at,
         )
+        correction.id = row["id"]
         return correction
 
     async def delete_correction(self, correction_id: str) -> None:
@@ -64,12 +67,14 @@ class PgFeedbackStore(FeedbackStore):
         return [self._row_to_task(r) for r in rows]
 
     async def add_task(self, task: FilterTuningTask) -> FilterTuningTask:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT, let the DB assign
+        # one, then write it back onto the passed task.
+        row = await self.pool.fetchrow(
             """INSERT INTO filter_tuning_tasks
-               (id, rule_id, proposed_prompt, correction_ids, status,
+               (rule_id, proposed_prompt, correction_ids, status,
                 created_at, resolved_at)
-               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)""",
-            task.id,
+               VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+               RETURNING id""",
             task.rule_id,
             task.proposed_prompt,
             json.dumps(task.correction_ids),
@@ -77,6 +82,7 @@ class PgFeedbackStore(FeedbackStore):
             task.created_at,
             task.resolved_at,
         )
+        task.id = row["id"]
         return task
 
     async def update_task(self, task_id: str, status: str) -> FilterTuningTask:

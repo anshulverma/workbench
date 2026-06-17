@@ -41,9 +41,9 @@ export function FilterDetailDialog({
   if (!rule) return null
 
   const matchingItems = items.filter((it) =>
-    it.stages.some((s) => s.filterId === rule.id),
+    it.stages.some((s) => s.filterId === String(rule.id)),
   )
-  const corrections = fb.feedbackForFilter(rule.id)
+  const corrections = fb.feedbackForFilter(String(rule.id))
 
   return (
     <Portal>
@@ -95,9 +95,9 @@ export function FilterDetailDialog({
               </button>
             </div>
             <p style={{ margin: 0, fontSize: 15, lineHeight: 1.45 }}>
-              "{fb.promptFor(rule.id, rule.prompt)}"
+              "{fb.promptFor(String(rule.id), rule.prompt)}"
             </p>
-            {fb.promptFor(rule.id, null as unknown as string) && (
+            {fb.promptFor(String(rule.id), null as unknown as string) && (
               <p
                 style={{
                   margin: '6px 0 0',
@@ -274,9 +274,9 @@ export function FilterDetailDialog({
                 <tbody>
                   {matchingItems.map((it) => {
                     const stage = it.stages.find(
-                      (s) => s.filterId === rule.id,
+                      (s) => s.filterId === String(rule.id),
                     )
-                    const corrected = fb.overrideFor(it.id, rule.id)
+                    const corrected = fb.overrideFor(String(it.id), String(rule.id))
                     const srcIconName = SRC_ICON[it.source] ?? 'Database'
                     const SrcIcon = getIcon(srcIconName)
 

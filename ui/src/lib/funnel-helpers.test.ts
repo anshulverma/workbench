@@ -3,7 +3,7 @@ import type { Enricher, FunnelItem, FunnelStage } from './types/funnel'
 import { buildFlowMatrix, enricherStageFor, itemLog, stageDuration, stageTimings } from './funnel-helpers'
 
 const makeItem = (overrides: Partial<FunnelItem> = {}): FunnelItem => ({
-  id: 'item_1',
+  id: 1,
   summary: 'Test item',
   source: 'github',
   created_at: '2026-06-11T00:00:00Z',
@@ -15,7 +15,7 @@ const makeItem = (overrides: Partial<FunnelItem> = {}): FunnelItem => ({
 })
 
 const githubEnricher: Enricher = {
-  id: 'en_github',
+  id: 101,
   type: 'github',
   label: 'GitHub enricher',
   depth: 'shallow',
@@ -29,15 +29,15 @@ const githubEnricher: Enricher = {
 
 describe('enricherStageFor', () => {
   it('returns an enrichment stage for a matching source', () => {
-    const result = enricherStageFor({ id: 'item_1', source: 'github' }, [githubEnricher])
+    const result = enricherStageFor({ id: 1, source: 'github' }, [githubEnricher])
     expect(result).not.toBeNull()
-    expect(result!.filterId).toBe('en_github')
+    expect(result!.filterId).toBe('101')
     expect(result!.outcome).toBe('context')
     expect(result!.context).toContain('author')
   })
 
   it('returns null when no enricher matches the source', () => {
-    const result = enricherStageFor({ id: 'item_1', source: 'unknown' }, [githubEnricher])
+    const result = enricherStageFor({ id: 1, source: 'unknown' }, [githubEnricher])
     expect(result).toBeNull()
   })
 })
@@ -46,7 +46,7 @@ describe('itemLog', () => {
   it('prepends enricher stage when not already present', () => {
     const item = makeItem({ source: 'github' })
     const log = itemLog(item, [githubEnricher])
-    expect(log[0].filterId).toBe('en_github')
+    expect(log[0].filterId).toBe('101')
     expect(log[0].outcome).toBe('context')
     expect(log.length).toBe(2)
   })

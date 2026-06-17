@@ -11,7 +11,7 @@ async def get_dead_letters(request: Request):
 
 
 @router.post("/dead-letter/{entry_id}/retry")
-async def retry_dead_letter(entry_id: str, request: Request):
+async def retry_dead_letter(entry_id: int, request: Request):
     stores = request.app.state.stores
     entries = await stores.ingestion_queue.get_dead_letters()
     if not any(e.id == entry_id for e in entries):
@@ -21,7 +21,7 @@ async def retry_dead_letter(entry_id: str, request: Request):
 
 
 @router.delete("/dead-letter/{entry_id}")
-async def purge_dead_letter(entry_id: str, request: Request):
+async def purge_dead_letter(entry_id: int, request: Request):
     stores = request.app.state.stores
     await stores.ingestion_queue.purge_dead_letter(entry_id)
     return {"status": "purged"}

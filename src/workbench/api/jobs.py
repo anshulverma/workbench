@@ -17,7 +17,7 @@ async def list_jobs(
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: str, request: Request):
+async def get_job(job_id: int, request: Request):
     stores = request.app.state.stores
     job = await stores.jobs.get_job(job_id)
     if not job:

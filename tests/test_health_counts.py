@@ -8,7 +8,7 @@ async def _enqueue(stores, status, n):
         e = IngestionQueueEntry(
             raw_content=f"c{i}",
             source_type="github",
-            job_id=f"j-{status}-{i}",
+            job_id=1,
             status=QueueEntryStatus(status),
         )
         await stores.ingestion_queue.enqueue(e)

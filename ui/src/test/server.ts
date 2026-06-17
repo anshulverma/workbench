@@ -25,17 +25,17 @@ import type {
 
 const CORRECTIONS: ServerCorrection[] = [
   {
-    id: 'cor_01',
-    item_id: 'itm_1',
-    rule_id: 'fr_01',
+    id: 1,
+    item_id: 1,
+    rule_id: 1,
     original_action: 'drop',
     corrected_action: 'include',
     reason: 'This CI notification was actually relevant to my deploy',
     created_at: '2026-06-09T08:30:00Z',
   },
   {
-    id: 'cor_02',
-    item_id: 'itm_2',
+    id: 2,
+    item_id: 2,
     rule_id: null,
     original_action: 'include',
     corrected_action: 'drop',
@@ -46,20 +46,20 @@ const CORRECTIONS: ServerCorrection[] = [
 
 const TUNING_TASKS: ServerTuningTask[] = [
   {
-    id: 'task_01',
-    rule_id: 'fr_01',
+    id: 1,
+    rule_id: 1,
     proposed_prompt:
       'Drop CI notifications about passing builds — but kept and surfaced cases like "Deploy notification for my service" (you corrected this).',
-    correction_ids: ['cor_01'],
+    correction_ids: [1],
     status: 'open',
     created_at: '2026-06-09T08:31:00Z',
     resolved_at: null,
   },
   {
-    id: 'task_02',
-    rule_id: 'fr_02',
+    id: 2,
+    rule_id: 2,
     proposed_prompt: 'Include any diff mentioning my team — refined.',
-    correction_ids: ['cor_02'],
+    correction_ids: [2],
     status: 'applied',
     created_at: '2026-06-09T10:16:00Z',
     resolved_at: '2026-06-09T10:20:00Z',
@@ -72,7 +72,7 @@ const TUNING_TASKS: ServerTuningTask[] = [
 
 const FILTER_RULES: FilterRuleExtended[] = [
   {
-    id: 'fr_01',
+    id: 1,
     prompt: 'Drop CI notifications about passing builds',
     action: 'drop',
     sources: ['github'],
@@ -83,7 +83,7 @@ const FILTER_RULES: FilterRuleExtended[] = [
     order_index: 0,
   },
   {
-    id: 'fr_02',
+    id: 2,
     prompt: 'Include any diff mentioning my team',
     action: 'include',
     sources: ['github', 'email'],
@@ -97,7 +97,7 @@ const FILTER_RULES: FilterRuleExtended[] = [
 
 const ENRICHERS: Enricher[] = [
   {
-    id: 'en_github',
+    id: 101,
     type: 'github',
     label: 'GitHub Metadata',
     depth: 'shallow',
@@ -112,7 +112,7 @@ const ENRICHERS: Enricher[] = [
 
 const LOOPBACKS: LoopBack[] = [
   {
-    id: 'lb_repush',
+    id: 201,
     label: 'Re-push stale',
     trigger: 'When an item was triaged >24h ago but no action taken',
     condition: 'status === "triaged" && age_hours > 24',
@@ -125,7 +125,7 @@ const LOOPBACKS: LoopBack[] = [
 
 const FUNNEL_ITEMS: FunnelItem[] = [
   {
-    id: 'itm_1',
+    id: 1,
     summary: 'PR #42: Fix login bug',
     source: 'github',
     created_at: '2026-06-10T12:00:00Z',
@@ -157,7 +157,7 @@ const FUNNEL_ITEMS: FunnelItem[] = [
     },
   },
   {
-    id: 'itm_2',
+    id: 2,
     summary: 'Weekly ops digest',
     source: 'email',
     created_at: '2026-06-10T06:00:00Z',
@@ -178,16 +178,16 @@ const FUNNEL_ITEMS: FunnelItem[] = [
 ]
 
 const FUNNEL_ORDER: FunnelOrderEntry[] = [
-  { kind: 'enricher', id: 'en_github' },
-  { kind: 'filter', id: 'fr_01' },
-  { kind: 'filter', id: 'fr_02' },
-  { kind: 'loopback', id: 'lb_repush' },
+  { kind: 'enricher', id: 101 },
+  { kind: 'filter', id: 1 },
+  { kind: 'filter', id: 2 },
+  { kind: 'loopback', id: 201 },
 ]
 
 const ENRICHMENT_SAMPLES: Record<string, EnrichmentSample[]> = {
-  en_github: [
+  '101': [
     {
-      id: 'itm_1',
+      id: 1,
       summary: 'PR #42: Fix login bug',
       context: { author: 'alice', files_changed: 3, ci_status: 'passing' },
       entities: ['alice', 'meta/workbench'],
@@ -240,7 +240,7 @@ export function handlers() {
       const url = new URL(request.url)
       const itemId = url.searchParams.get('item_id')
       const result = itemId
-        ? CORRECTIONS.filter((c) => c.item_id === itemId)
+        ? CORRECTIONS.filter((c) => String(c.item_id) === itemId)
         : CORRECTIONS
       return HttpResponse.json(result)
     }),
@@ -248,8 +248,8 @@ export function handlers() {
     http.post('/api/feedback/corrections', async ({ request }) => {
       const body = (await request.json()) as Partial<ServerCorrection>
       const created: ServerCorrection = {
-        id: `cor_${Math.random().toString(36).slice(2, 7)}`,
-        item_id: body.item_id ?? 'itm_x',
+        id: Math.floor(Math.random() * 1_000_000),
+        item_id: body.item_id ?? 99,
         rule_id: body.rule_id ?? null,
         original_action: body.original_action ?? 'pass',
         corrected_action: body.corrected_action ?? 'include',
@@ -276,8 +276,8 @@ export function handlers() {
     http.post('/api/feedback/tasks', async ({ request }) => {
       const body = (await request.json()) as Partial<ServerTuningTask>
       const created: ServerTuningTask = {
-        id: `task_${Math.random().toString(36).slice(2, 7)}`,
-        rule_id: body.rule_id ?? 'fr_x',
+        id: Math.floor(Math.random() * 1_000_000),
+        rule_id: body.rule_id ?? 99,
         proposed_prompt: body.proposed_prompt ?? 'refined prompt',
         correction_ids: body.correction_ids ?? [],
         status: body.status ?? 'open',
@@ -290,7 +290,7 @@ export function handlers() {
     http.patch('/api/feedback/tasks/:taskId', ({ request, params }) => {
       const url = new URL(request.url)
       const newStatus = url.searchParams.get('status') ?? 'applied'
-      const task = TUNING_TASKS.find((t) => t.id === params.taskId)
+      const task = TUNING_TASKS.find((t) => String(t.id) === params.taskId)
       if (!task) return HttpResponse.json({ detail: 'not found' }, { status: 404 })
       return HttpResponse.json({ ...task, status: newStatus, resolved_at: new Date().toISOString() })
     }),
@@ -305,7 +305,7 @@ export function handlers() {
     http.get('/api/funnel/loopbacks', () => HttpResponse.json(LOOPBACKS)),
     http.get('/api/funnel/items', () => HttpResponse.json(FUNNEL_ITEMS)),
     http.get('/api/funnel/items/:id', ({ params }) => {
-      const item = FUNNEL_ITEMS.find((it) => it.id === params.id)
+      const item = FUNNEL_ITEMS.find((it) => String(it.id) === params.id)
       return item
         ? HttpResponse.json(item)
         : HttpResponse.json({ detail: 'not found' }, { status: 404 })
@@ -326,7 +326,7 @@ export function handlers() {
     http.post('/api/funnel/filter-rules', async ({ request }) => {
       const body = (await request.json()) as Partial<FilterRuleExtended>
       const created: FilterRuleExtended = {
-        id: `fr_${Math.random().toString(36).slice(2, 7)}`,
+        id: Math.floor(Math.random() * 1_000_000),
         prompt: body.prompt ?? '',
         action: body.action ?? 'drop',
         sources: body.sources ?? [],
@@ -347,7 +347,7 @@ export function handlers() {
     http.get('/api/enrichers', () => HttpResponse.json(ENRICHERS)),
 
     http.get('/api/enrichers/:id', ({ params }) => {
-      const enricher = ENRICHERS.find((e) => e.id === params.id)
+      const enricher = ENRICHERS.find((e) => String(e.id) === params.id)
       return enricher
         ? HttpResponse.json(enricher)
         : HttpResponse.json({ detail: 'not found' }, { status: 404 })
@@ -362,7 +362,7 @@ export function handlers() {
     http.get('/api/loopbacks', () => HttpResponse.json(LOOPBACKS)),
 
     http.get('/api/loopbacks/:id', ({ params }) => {
-      const lb = LOOPBACKS.find((l) => l.id === params.id)
+      const lb = LOOPBACKS.find((l) => String(l.id) === params.id)
       return lb
         ? HttpResponse.json(lb)
         : HttpResponse.json({ detail: 'not found' }, { status: 404 })
@@ -387,7 +387,7 @@ export function handlers() {
     // ---------- Filter rules CRUD ----------
     http.patch('/api/filter-rules/:id', async ({ request, params }) => {
       const body = (await request.json()) as Partial<FilterRuleExtended>
-      const rule = FILTER_RULES.find((r) => r.id === params.id)
+      const rule = FILTER_RULES.find((r) => String(r.id) === params.id)
       if (!rule) return HttpResponse.json({ detail: 'not found' }, { status: 404 })
       return HttpResponse.json({ ...rule, ...body })
     }),
@@ -398,7 +398,7 @@ export function handlers() {
 
     http.patch('/api/filter-rules/:id/prompt', async ({ request, params }) => {
       const body = (await request.json()) as { prompt: string }
-      const rule = FILTER_RULES.find((r) => r.id === params.id)
+      const rule = FILTER_RULES.find((r) => String(r.id) === params.id)
       if (!rule) return HttpResponse.json({ detail: 'not found' }, { status: 404 })
       return HttpResponse.json({ ...rule, prompt: body.prompt })
     }),

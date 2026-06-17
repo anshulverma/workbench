@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api'
+import { sourceLabel } from '@/lib/source'
 
 export function TriageDetail() {
   const { cardId = '' } = useParams()
@@ -44,6 +45,12 @@ export function TriageDetail() {
   const risk = (sections.risk ?? {}) as { factors?: string[]; watch_outs?: string[] }
   const hunks = (sections.hunks ?? []) as Hunk[]
   const diffUrl = (sections.diff_url as string | undefined) ?? undefined
+  // Universal source identity (any source type). The diff-specific "View in
+  // Phabricator" button (diffUrl) takes precedence for diffs; this generic
+  // link covers tasks and every other source that carries a source_url.
+  const sourceType = c.card_content.source_type
+  const sourceRef = c.card_content.source_ref
+  const sourceUrl = c.card_content.source_url
   const summary = (sections.summary as string) ?? c.card_content.summary ?? '(no summary)'
   const whyCare = (sections.why_care as string) ?? ''
   const change = (sections.change as string | undefined) ?? undefined
@@ -53,9 +60,14 @@ export function TriageDetail() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <h1 className="text-lg font-semibold">{summary}</h1>
-        {typeof c.relevance_score === 'number' && (
-          <Badge variant="secondary">relevance {c.relevance_score}</Badge>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge variant="outline" data-testid="source-type-badge" className="uppercase">
+            {sourceLabel(sourceType)}
+          </Badge>
+          {typeof c.relevance_score === 'number' && (
+            <Badge variant="secondary">relevance {c.relevance_score}</Badge>
+          )}
+        </div>
       </div>
 
       {change && (
@@ -70,7 +82,7 @@ export function TriageDetail() {
         {metadata.team ? ` (${metadata.team})` : ''} — {metadata.status ?? ''}
       </div>
 
-      {diffUrl && (
+      {diffUrl ? (
         <a
           href={diffUrl}
           target="_blank"
@@ -79,6 +91,18 @@ export function TriageDetail() {
         >
           View in Phabricator
         </a>
+      ) : (
+        sourceUrl && (
+          <a
+            data-testid="source-link"
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+          >
+            Open {sourceRef ?? 'in source'} ↗
+          </a>
+        )
       )}
 
       <section>

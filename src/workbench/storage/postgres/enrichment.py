@@ -13,12 +13,14 @@ class PgEnrichmentTraceStore(EnrichmentTraceStore):
         self.pool = pool
 
     async def log_trace(self, trace: EnrichmentTrace) -> None:
-        await self.pool.execute(
+        # id is a BIGINT identity column — omit it on INSERT and write the
+        # DB-assigned value back onto the trace.
+        row = await self.pool.fetchrow(
             """INSERT INTO enrichment_trace
-               (id, item_id, depth, calls_made, time_ms,
+               (item_id, depth, calls_made, time_ms,
                 context_retrieved, timestamp)
-               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)""",
-            trace.id,
+               VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+               RETURNING id""",
             trace.item_id,
             trace.depth,
             trace.calls_made,
@@ -26,6 +28,7 @@ class PgEnrichmentTraceStore(EnrichmentTraceStore):
             json.dumps(trace.context_retrieved),
             trace.timestamp,
         )
+        trace.id = row["id"]
 
     async def get_traces(self, filters: TraceFilters) -> list[EnrichmentTrace]:
         query = "SELECT * FROM enrichment_trace WHERE 1=1"

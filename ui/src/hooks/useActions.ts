@@ -11,10 +11,10 @@ import { toast } from 'sonner'
 import { ApiError, apiGet, apiPost } from '@/lib/api'
 
 export interface Action {
-  id: string
+  id: number
   summary: string
   priority: string
-  parent_item: { id: string; summary: string } | null
+  parent_item: { id: number; summary: string } | null
   action_source: string
   action_category: string | null
   created_at: string
@@ -65,7 +65,7 @@ export function useCreateAction() {
 export function useMarkDone() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiPost(`/api/actions/${id}/done`),
+    mutationFn: (id: number) => apiPost(`/api/actions/${id}/done`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['actions'] })
       toast.success('Marked done')
@@ -77,7 +77,7 @@ export function useMarkDone() {
 export function useChangePriority() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, priority }: { id: string; priority: string }) =>
+    mutationFn: ({ id, priority }: { id: number; priority: string }) =>
       apiPost(`/api/actions/${id}/priority`, { priority }),
     onSuccess: (_data, { priority }) => {
       qc.invalidateQueries({ queryKey: ['actions'] })
@@ -90,7 +90,7 @@ export function useChangePriority() {
 export function useSnooze() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, hours }: { id: string; hours: number }) =>
+    mutationFn: ({ id, hours }: { id: number; hours: number }) =>
       apiPost(`/api/actions/${id}/snooze`, { hours }),
     onSuccess: (_data, { hours }) => {
       qc.invalidateQueries({ queryKey: ['actions'] })

@@ -144,6 +144,17 @@ async def generate_card(
         )
     )
 
+    # Surface source identity into card_content for the UI's source-type badge
+    # and "open in source" link. Done centrally here so every generation path
+    # (registered generator, default LLM, template fallback) gets it uniformly.
+    # source_type is backfilled (setdefault) in case a path omitted it; the ref
+    # and URL are adapter-populated and only set when present.
+    card.card_content.setdefault("source_type", source_type)
+    if item.raw_item.source_ref:
+        card.card_content["source_ref"] = item.raw_item.source_ref
+    if item.raw_item.source_url:
+        card.card_content["source_url"] = item.raw_item.source_url
+
     return card
 
 
