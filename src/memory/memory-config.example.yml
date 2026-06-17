@@ -9,6 +9,17 @@ neo4j:
 
 storage:
   postgres_dsn: ${oc.env:MEMORY_PG_DSN,postgres://memory:memory@localhost:5432/memory}
+  # DSN of the SEPARATE workbench Postgres DB. Only needed when
+  # llm_tracking_enabled is true (full-fidelity LLM capture writes rows into the
+  # workbench-owned llm_calls table; ADR 0059).
+  # workbench_dsn: ${oc.env:WORKBENCH_PG_DSN,}
+
+# Full-fidelity LLM capture into the workbench llm_calls table (ADR 0059).
+# OFF by default. Requires storage.workbench_dsn set and migration 013 applied
+# to the workbench DB (a startup preflight checks the table exists and disables
+# capture with a single warning if it is absent). The write is best-effort and
+# never blocks or breaks a memory ingestion.
+llm_tracking_enabled: false
 
 llm:
   client_class: memory.llm.DefaultLLMClient
