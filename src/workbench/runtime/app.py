@@ -513,6 +513,7 @@ def create_app() -> FastAPI:
         identity,
         items,
         jobs,
+        llm,
         loopbacks,
         memory,
         messenger,
@@ -550,6 +551,7 @@ def create_app() -> FastAPI:
         enrichers.router,
         loopbacks.router,
         funnel.router,
+        llm.router,
     ]:
         app.include_router(r)
 
