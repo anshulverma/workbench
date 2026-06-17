@@ -335,6 +335,25 @@ async def test_ingestion_queue_enqueue_dequeue(stores):
 
 
 @pytest.mark.asyncio
+async def test_ingestion_queue_preserves_source_link(stores):
+    """source_ref/source_url must survive enqueue -> dequeue so the worker can
+    rebuild the RawItem with the card's 'open in source' link."""
+    entry = IngestionQueueEntry(
+        raw_content="diff content",
+        source_type="diff",
+        source_id="D789",
+        source_ref="D789",
+        source_url="https://www.internalfb.com/D789",
+        urgency_score=50,
+        job_id=1,
+    )
+    await stores.ingestion_queue.enqueue(entry)
+    dequeued = await stores.ingestion_queue.dequeue(limit=1)
+    assert dequeued[0].source_ref == "D789"
+    assert dequeued[0].source_url == "https://www.internalfb.com/D789"
+
+
+@pytest.mark.asyncio
 async def test_ingestion_queue_dead_letter(stores):
     entry = IngestionQueueEntry(
         raw_content="bad content",

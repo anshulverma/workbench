@@ -89,6 +89,8 @@ class IngestionQueueWorker:
                     source_label="",
                     raw_text=entry.raw_content,
                     urgency_signals=entry.urgency_signals,
+                    source_ref=entry.source_ref,
+                    source_url=entry.source_url,
                 )
 
                 job = await self.stores.jobs.get_job(entry.job_id)

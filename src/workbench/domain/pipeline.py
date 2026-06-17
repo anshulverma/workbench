@@ -34,6 +34,10 @@ class IngestionQueueEntry(BaseModel):
     raw_content: str
     source_type: str
     source_id: str | None = None
+    # Source-link identity carried from the adapter's RawItem so the worker can
+    # rebuild it post-dequeue (the queued-path card's "open in source" link).
+    source_ref: str | None = None
+    source_url: str | None = None
     urgency_signals: dict[str, Any] = Field(default_factory=dict)
     urgency_score: int = 50
     job_id: int

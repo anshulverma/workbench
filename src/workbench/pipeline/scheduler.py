@@ -364,6 +364,8 @@ class WorkbenchScheduler:
                     urgency_signals=ri.urgency_signals,
                     trigger=trigger,
                     urgency_score=prescored.get(id(ri)),
+                    source_ref=ri.source_ref,
+                    source_url=ri.source_url,
                 )
                 enqueued += 1
             except Exception as e:

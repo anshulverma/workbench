@@ -18,15 +18,17 @@ class PgIngestionQueueStore(IngestionQueueStore):
         # assign one, then write it back onto the passed entry.
         row = await self.pool.fetchrow(
             """INSERT INTO ingestion_queue
-               (raw_content, source_type, source_id, urgency_signals,
-                urgency_score, job_id, status, attempt, max_attempts,
-                next_retry_at, error, created_at, updated_at)
-               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9,
-                       $10, $11, $12, $13)
+               (raw_content, source_type, source_id, source_ref, source_url,
+                urgency_signals, urgency_score, job_id, status, attempt,
+                max_attempts, next_retry_at, error, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10,
+                       $11, $12, $13, $14, $15)
                RETURNING id""",
             entry.raw_content,
             entry.source_type,
             entry.source_id,
+            entry.source_ref,
+            entry.source_url,
             json.dumps(entry.urgency_signals),
             entry.urgency_score,
             entry.job_id,
@@ -170,6 +172,8 @@ class PgIngestionQueueStore(IngestionQueueStore):
             raw_content=row["raw_content"],
             source_type=row["source_type"],
             source_id=row["source_id"],
+            source_ref=row["source_ref"],
+            source_url=row["source_url"],
             urgency_signals=signals,
             urgency_score=row["urgency_score"],
             job_id=row["job_id"],

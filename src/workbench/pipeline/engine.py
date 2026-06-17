@@ -142,6 +142,8 @@ class PipelineEngine:
         urgency_signals: dict | None = None,
         trigger: JobTrigger = JobTrigger.MANUAL,
         urgency_score: int | None = None,
+        source_ref: str | None = None,
+        source_url: str | None = None,
     ) -> PipelineJob:
         """Enqueue a raw item. When ``urgency_score`` is provided (e.g. the
         scheduler pre-scored a batch via ``score_urgency_many``), the per-item
@@ -177,6 +179,8 @@ class PipelineEngine:
             raw_content=raw_text,
             source_type=source_type,
             source_id=source_id,
+            source_ref=source_ref,
+            source_url=source_url,
             urgency_signals=urgency_signals or {},
             urgency_score=urgency_score,
             job_id=job.id,
