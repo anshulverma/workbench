@@ -54,3 +54,8 @@ async def stores(pg_pool):
         await pg_pool.execute(f"TRUNCATE {table} CASCADE")
     yield s
     await s.close()
+
+
+@pytest.fixture
+async def llm_calls_store(stores):
+    return stores.llm_calls
