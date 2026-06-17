@@ -11,6 +11,7 @@ TABLES = [
     "filter_tuning_tasks",
     "enrichers",
     "loopbacks",
+    "llm_calls",
     "ingestion_runs",
     "ingestion_queue",
     "config",
