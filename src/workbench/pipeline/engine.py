@@ -350,7 +350,14 @@ class PipelineEngine:
             )
             await self.stores.items.save_item(item)
 
-            enrichment = await enrich_item(self.enricher, ext_item, memory=self.memory)
+            # Diffs MUST be enriched at "deep" on first triage so the card has
+            # curated hunks — the DiffEnricher only fetches them in deep mode
+            # (the default "shallow" yields "No code hunks ..."). Re-triage reuses
+            # the stored hunks and only re-fetches on code_updated (ADR 0032).
+            depth = "deep" if ext_item.raw_item.source_type == "diff" else "shallow"
+            enrichment = await enrich_item(
+                self.enricher, ext_item, depth, memory=self.memory
+            )
             card = await generate_card(
                 self.llm,
                 ext_item,
