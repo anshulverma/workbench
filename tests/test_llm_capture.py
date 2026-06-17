@@ -148,3 +148,40 @@ async def test_sink_none_passthrough_with_new_params():
 
     with pytest.raises(ValueError, match="boom"):
         await record_plugboard_call(client="c", model="m", sink=None, do_call=_raise)
+
+
+async def test_sink_exception_does_not_break_call():
+    """A raising sink must never alter the LLM call result (seam guard).
+
+    On the SUCCESS path the response is still returned (the sink's own
+    exception is swallowed). On the ERROR path the ORIGINAL exception still
+    propagates -- the sink guard must not swallow the real call failure.
+    """
+    resp = SimpleNamespace(
+        usage=SimpleNamespace(
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        ),
+        content=[SimpleNamespace(text="hello")],
+    )
+
+    def raising_sink(_rec):
+        raise RuntimeError("sink blew up")
+
+    # SUCCESS path: response still returned despite the raising sink.
+    result = await record_plugboard_call(
+        client="c",
+        model="m",
+        sink=raising_sink,
+        do_call=lambda: _aval(resp),
+    )
+    assert result is resp
+
+    # ERROR path: the original ValueError still propagates (not the sink's
+    # RuntimeError, and not swallowed entirely).
+    with pytest.raises(ValueError, match="boom"):
+        await record_plugboard_call(
+            client="c", model="m", sink=raising_sink, do_call=_raise
+        )

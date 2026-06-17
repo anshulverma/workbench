@@ -4,11 +4,13 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 import structlog
 from fastapi import FastAPI
 
 from workbench import __version__
+from workbench.domain.llm_calls import LlmCallRecord, LlmSubcall
 from workbench.runtime.auth import BearerTokenMiddleware
 from workbench.config import AppConfig, load_config
 from workbench.telemetry.instrumentation import InstrumentedLLMProvider
@@ -34,6 +36,83 @@ def get_config() -> AppConfig:
     config_path = os.environ.get("WORKBENCH_CONFIG", "config.yml")
     override_path = os.environ.get("WORKBENCH_CONFIG_OVERRIDE")
     return load_config(config_path, override_path)
+
+
+def _to_llm_record(rec) -> LlmCallRecord | None:
+    """Map a PlugboardCallRecord (transport view) to a persistable LlmCallRecord.
+
+    Returns None for context-less calls (pipeline calls are always wrapped with
+    an LLMCallContext; a missing context is defensive and means "don't persist").
+
+    ``started_at`` is computed at sink time as ``now - latency``: the sink runs
+    synchronously in the LLM call's task right after the call returns, so this
+    closely approximates the real call-start. Do NOT defer this to the writer
+    task (write-time would be wrong). See ADR 0057.
+    """
+    if rec.context is None:
+        logger.debug("plugboard record has no context; skipping llm_calls persist")
+        return None
+
+    started_at = datetime.now(timezone.utc) - timedelta(seconds=rec.latency_s or 0.0)
+    subcalls = [
+        LlmSubcall(
+            item=s["item"],
+            prompt=s.get("prompt", ""),
+            completion=s.get("completion", ""),
+            structured=s.get("structured"),
+            tokens_in=(s.get("tokens_in") or 0),
+            tokens_out=s.get("tokens_out"),
+        )
+        for s in (rec.subcalls or [])
+    ]
+    return LlmCallRecord(
+        started_at=started_at,
+        origin=rec.context.origin,
+        purpose=rec.context.purpose,
+        stage=rec.context.stage,
+        model=rec.model,
+        temperature=rec.temperature,
+        status="error" if rec.error_type else "ok",
+        error_type=rec.error_type,
+        batch=rec.item_count,
+        items=[s["item"] for s in (rec.subcalls or [])],
+        tokens_in=rec.input_tokens,
+        tokens_out=None if rec.error_type else rec.output_tokens,
+        cache_read_tokens=rec.cache_read_tokens,
+        cache_write_tokens=rec.cache_write_tokens,
+        latency_ms=round((rec.latency_s or 0.0) * 1000),
+        system_prompt=rec.system_prompt,
+        subcalls=subcalls,
+        tokens_estimated=rec.tokens_estimated,
+        is_fallback=rec.is_fallback,
+    )
+
+
+async def _drain_once(queue: asyncio.Queue, store, max_batch: int = 50) -> None:
+    """Drain one batch from ``queue`` and persist via ``store.save_many``.
+
+    Blocks on the first item, then opportunistically drains up to ``max_batch``
+    more without blocking. None entries are filtered out. ``task_done`` is called
+    for every item consumed (including Nones) so ``queue.join()`` stays accurate.
+    A failed ``save_many`` drops the batch rather than crashing the loop.
+    """
+    first = await queue.get()
+    batch = [first]
+    try:
+        for _ in range(max_batch):
+            batch.append(queue.get_nowait())
+    except asyncio.QueueEmpty:
+        pass
+
+    records = [r for r in batch if r is not None]
+    try:
+        if records:
+            await store.save_many(records)
+    except Exception:
+        logger.exception("llm_calls writer failed; dropping batch")
+    finally:
+        for _ in batch:
+            queue.task_done()
 
 
 @asynccontextmanager
@@ -101,37 +180,76 @@ async def lifespan(app: FastAPI):
 
     # Wire the plugboard transport-view sink onto the underlying providers.
     # The main LLM is wrapped by InstrumentedLLMProvider, so target its _inner.
-    # Gated on metrics.enabled. Providers never import workbench.telemetry.metrics; the
-    # sink (a closure here) owns all Prometheus knowledge. See ADR 0049.
-    if config.metrics.enabled:
+    # The sink is attached when metrics OR llm_tracking is enabled: metrics own
+    # the Prometheus/aggregator branch (gated on metrics.enabled), llm_tracking
+    # owns the async DB-enqueue branch. Providers never import
+    # workbench.telemetry.metrics; the sink (a closure here) owns all of that
+    # knowledge. The sink runs synchronously in the LLM call's task and must
+    # never block or raise (ADR 0049/0057).
+    app.state.summary_task = None
+    app.state.llm_writer_task = None
+    app.state.llm_write_q = None
+    app.state.llm_dropped = 0
+
+    stores = app.state.stores
+    if config.llm_tracking.enabled and stores.llm_calls is not None:
+        app.state.llm_write_q = asyncio.Queue(maxsize=1000)
+
+    if config.metrics.enabled or config.llm_tracking.enabled:
         _m = app.state.metrics
-        app.state.usage_agg = UsageAggregator()
+        if config.metrics.enabled:
+            app.state.usage_agg = UsageAggregator()
 
         def _plugboard_sink(rec):
-            app.state.usage_agg.record(rec)
-            _m.plugboard_calls.labels(client=rec.client, model=rec.model).inc()
-            _m.plugboard_call_seconds.labels(
-                client=rec.client, model=rec.model
-            ).observe(rec.latency_s)
-            if rec.error_type:
-                _m.plugboard_errors.labels(
-                    client=rec.client, model=rec.model, error_type=rec.error_type
-                ).inc()
-            else:
-                for direction, n in (
-                    ("input", rec.input_tokens),
-                    ("output", rec.output_tokens),
-                    ("cache_read", rec.cache_read_tokens),
-                    ("cache_write", rec.cache_write_tokens),
-                ):
-                    if n:
-                        _m.plugboard_tokens.labels(
-                            client=rec.client, model=rec.model, direction=direction
-                        ).inc(n)
-            if rec.item_count:
-                _m.plugboard_items.labels(client=rec.client, model=rec.model).inc(
-                    rec.item_count
-                )
+            if config.metrics.enabled:
+                app.state.usage_agg.record(rec)
+                _m.plugboard_calls.labels(client=rec.client, model=rec.model).inc()
+                _m.plugboard_call_seconds.labels(
+                    client=rec.client, model=rec.model
+                ).observe(rec.latency_s)
+                if rec.error_type:
+                    _m.plugboard_errors.labels(
+                        client=rec.client, model=rec.model, error_type=rec.error_type
+                    ).inc()
+                else:
+                    for direction, n in (
+                        ("input", rec.input_tokens),
+                        ("output", rec.output_tokens),
+                        ("cache_read", rec.cache_read_tokens),
+                        ("cache_write", rec.cache_write_tokens),
+                    ):
+                        if n:
+                            _m.plugboard_tokens.labels(
+                                client=rec.client,
+                                model=rec.model,
+                                direction=direction,
+                            ).inc(n)
+                if rec.item_count:
+                    _m.plugboard_items.labels(client=rec.client, model=rec.model).inc(
+                        rec.item_count
+                    )
+
+            # Async DB-enqueue branch: map to an LlmCallRecord and hand off to
+            # the writer task. Non-blocking; drop on overload (ADR 0057).
+            #
+            # This sink runs synchronously inside record_plugboard_call AFTER a
+            # successful LLM call and before its response is returned. If anything
+            # here raises (e.g. _to_llm_record hitting a malformed subcall or a
+            # pydantic ValidationError), it must NOT turn a successful LLM call
+            # into a failure -- so the entire mapping+enqueue is guarded and
+            # tracking failures are logged and dropped, never propagated.
+            q = app.state.llm_write_q
+            if q is not None:
+                try:
+                    record = _to_llm_record(rec)
+                    if record is not None:
+                        q.put_nowait(record)
+                except asyncio.QueueFull:
+                    logger.warning("llm_calls write queue full; dropping record")
+                    app.state.llm_dropped += 1
+                except Exception:
+                    logger.exception("llm_calls tracking failed; dropping record")
+                    app.state.llm_dropped += 1
 
         app.state.plugboard_sink = _plugboard_sink
         inner_llm = getattr(app.state.llm, "_inner", app.state.llm)
@@ -139,11 +257,24 @@ async def lifespan(app: FastAPI):
         if app.state.queue_scorer is not None:
             app.state.queue_scorer._sink = _plugboard_sink
 
+        # Async llm_calls writer task: drain the bounded queue in batches and
+        # persist via save_many. A DB failure drops the batch, never the loop.
+        if app.state.llm_write_q is not None:
+            _q = app.state.llm_write_q
+
+            async def _llm_writer_loop():
+                try:
+                    while True:
+                        await _drain_once(_q, app.state.stores.llm_calls, max_batch=50)
+                except asyncio.CancelledError:
+                    return
+
+            app.state.llm_writer_task = asyncio.create_task(_llm_writer_loop())
+
         # Periodic batched structured-log summary of plugboard usage (spec 3.6):
         # drain the aggregator every summary_interval_seconds and emit one
         # llm_usage_summary line; skip empty intervals.
-        app.state.summary_task = None
-        if config.metrics.summary_log:
+        if config.metrics.enabled and config.metrics.summary_log:
             _interval = config.metrics.summary_interval_seconds
 
             async def _summary_loop():
@@ -327,6 +458,13 @@ async def lifespan(app: FastAPI):
         summary_task.cancel()
         try:
             await summary_task
+        except asyncio.CancelledError:
+            pass
+    llm_writer_task = getattr(app.state, "llm_writer_task", None)
+    if llm_writer_task is not None:
+        llm_writer_task.cancel()
+        try:
+            await llm_writer_task
         except asyncio.CancelledError:
             pass
 

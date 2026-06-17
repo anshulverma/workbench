@@ -9,6 +9,7 @@ pluggability). See ADR 0049 / spec 3.3-3.4.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -17,6 +18,8 @@ from workbench.providers.llm.context import (
     LLMCallContext,
     current_llm_call_context,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -76,20 +79,26 @@ async def record_plugboard_call(
         resp = await do_call()
     except Exception as e:
         if sink is not None:
-            sink(
-                PlugboardCallRecord(
-                    client=client,
-                    model=model,
-                    latency_s=time.monotonic() - start,
-                    error_type=type(e).__name__,
-                    item_count=item_count,
-                    context=current_llm_call_context(),
-                    system_prompt=system_prompt,
-                    input_prompt=input_prompt,
-                    temperature=temperature,
-                    is_fallback=is_fallback,
+            # Defense-in-depth: a raising sink must never alter the LLM call
+            # result. Here the original exception MUST still propagate, so guard
+            # the sink itself and only swallow the sink's own failure.
+            try:
+                sink(
+                    PlugboardCallRecord(
+                        client=client,
+                        model=model,
+                        latency_s=time.monotonic() - start,
+                        error_type=type(e).__name__,
+                        item_count=item_count,
+                        context=current_llm_call_context(),
+                        system_prompt=system_prompt,
+                        input_prompt=input_prompt,
+                        temperature=temperature,
+                        is_fallback=is_fallback,
+                    )
                 )
-            )
+            except Exception:
+                logger.exception("plugboard sink raised on error path; ignoring")
         raise
     if sink is not None:
         usage = getattr(resp, "usage", None)
@@ -103,26 +112,31 @@ async def record_plugboard_call(
                 completion = None
                 structured = None
                 subcalls = None
-        sink(
-            PlugboardCallRecord(
-                client=client,
-                model=model,
-                input_tokens=getattr(usage, "input_tokens", 0) or 0,
-                output_tokens=getattr(usage, "output_tokens", 0) or 0,
-                cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
-                cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0)
-                or 0,
-                latency_s=time.monotonic() - start,
-                item_count=item_count,
-                context=current_llm_call_context(),
-                system_prompt=system_prompt,
-                input_prompt=input_prompt,
-                completion=completion,
-                structured=structured,
-                subcalls=subcalls,
-                temperature=temperature,
-                is_fallback=is_fallback,
-                tokens_estimated=tokens_estimated,
+        # Defense-in-depth: a raising sink must never break a SUCCESSFUL call.
+        # Guard the sink so the response is still returned even if it raises.
+        try:
+            sink(
+                PlugboardCallRecord(
+                    client=client,
+                    model=model,
+                    input_tokens=getattr(usage, "input_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "output_tokens", 0) or 0,
+                    cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                    cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0)
+                    or 0,
+                    latency_s=time.monotonic() - start,
+                    item_count=item_count,
+                    context=current_llm_call_context(),
+                    system_prompt=system_prompt,
+                    input_prompt=input_prompt,
+                    completion=completion,
+                    structured=structured,
+                    subcalls=subcalls,
+                    temperature=temperature,
+                    is_fallback=is_fallback,
+                    tokens_estimated=tokens_estimated,
+                )
             )
-        )
+        except Exception:
+            logger.exception("plugboard sink raised on success path; ignoring")
     return resp

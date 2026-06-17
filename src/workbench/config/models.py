@@ -14,6 +14,7 @@ __all__ = [
     "PrivacyConfig",
     "TracingConfig",
     "RetentionConfig",
+    "LlmTrackingConfig",
     "AlertConditions",
     "AlertConfig",
     "SchedulerConfig",
@@ -114,6 +115,12 @@ class RetentionConfig(BaseModel):
     enrichment_traces_days: int = 30
     dead_letters_days: int = 30
     ingestion_runs_days: int = 30
+    llm_calls_days: int = 28
+    llm_calls_max_rows: int | None = None
+
+
+class LlmTrackingConfig(BaseModel):
+    enabled: bool = True
 
 
 class AlertConditions(BaseModel):
@@ -173,6 +180,7 @@ class AppConfig(BaseModel):
     presentation: PresentationConfig = Field(default_factory=PresentationConfig)
     memory: dict | None = None
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    llm_tracking: LlmTrackingConfig = Field(default_factory=LlmTrackingConfig)
     debug: DebugConfig = Field(default_factory=DebugConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
