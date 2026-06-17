@@ -1090,6 +1090,16 @@ async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, in
         config.ingestion_runs_days
     )
 
+    # LLM usage tracking retention (Task 10)
+    if getattr(stores, "llm_calls", None) is not None:
+        results["llm_calls"] = await stores.llm_calls.delete_older_than(
+            config.llm_calls_days
+        )
+        if config.llm_calls_max_rows is not None:
+            results["llm_calls_pruned"] = await stores.llm_calls.prune_to_max_rows(
+                config.llm_calls_max_rows
+            )
+
     total = sum(results.values())
     if total > 0:
         logger.info("retention_cleanup_complete", extra={**results, "total": total})
