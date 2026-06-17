@@ -150,10 +150,19 @@ async def lifespan(app: FastAPI):
 
     # Plugboard observability (ADR 0050): wrap the Graphiti LLM client in place
     # to count calls/latency/errors (tokens best-effort). Separate process =>
-    # own registry. Gated on metrics.enabled.
+    # own registry. ADR 0057: LLM capture must be independent of metrics.enabled.
+    # Instrument the client whenever metrics OR capture is active.
     if config.metrics.enabled:
         app.state.metrics = create_metrics()
         app.state.usage_agg = MemoryUsageAggregator()
+    else:
+        app.state.metrics = None
+        app.state.usage_agg = None
+
+    # Always instrument if metrics enabled OR capture active (writer present + passed preflight).
+    if config.metrics.enabled or (llm_writer is not None and llm_writer.active):
+        # instrument_llm_client handles metrics/aggregator/writer; when metrics
+        # disabled pass None so the wrapper skips metrics instrumentation.
         llm_client = instrument_llm_client(
             llm_client,
             app.state.metrics,
@@ -161,9 +170,6 @@ async def lifespan(app: FastAPI):
             aggregator=app.state.usage_agg,
             writer=llm_writer,
         )
-    else:
-        app.state.metrics = None
-        app.state.usage_agg = None
 
     embedder = create_embedder(config.embedder)
     cross_encoder = create_cross_encoder(config.embedder)

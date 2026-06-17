@@ -156,3 +156,37 @@ async def test_instrument_capture_failure_does_not_break_call():
     assert out == {"entities": ["a", "b"]}
     await asyncio.sleep(0)
     await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_instrument_with_metrics_disabled_but_writer_active():
+    """ADR 0057: LLM capture must be independent of metrics.enabled.
+
+    When llm_tracking_enabled=True but metrics.enabled=False, the client should
+    still be instrumented with the writer, and capture should happen.
+    """
+    conn = _CaptureConn()
+    writer = LlmCallWriter(pool=_CapturePool(conn), enabled=True)
+    await writer.preflight()
+    assert writer.active is True
+
+    # Pass metrics=None (simulating metrics.enabled=False)
+    client = _GraphitiStyleClient()
+    wrapped = instrument_llm_client(client, metrics=None, model="haiku", writer=writer)
+
+    messages = [
+        {"role": "system", "content": "You are an extractor."},
+        {"role": "user", "content": "Extract from: hello"},
+    ]
+    out = await wrapped.generate_response(messages)
+    assert out == {"entities": ["a", "b"]}
+
+    # Capture should happen even with metrics=None
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert len(conn.executed) == 1
+    query, args = conn.executed[0]
+    assert "INSERT INTO llm_calls" in query
+    assert args[1] == "memory_subservice"
+    assert args[3] == "memory"

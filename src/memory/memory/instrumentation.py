@@ -136,13 +136,14 @@ def instrument_llm_client(
             result = await original(*args, **kwargs)
         except Exception as e:
             elapsed = time.monotonic() - start
-            metrics.plugboard_calls.labels(client=client, model=model).inc()
-            metrics.plugboard_errors.labels(
-                client=client, model=model, error_type=type(e).__name__
-            ).inc()
-            metrics.plugboard_call_seconds.labels(client=client, model=model).observe(
-                elapsed
-            )
+            if metrics is not None:
+                metrics.plugboard_calls.labels(client=client, model=model).inc()
+                metrics.plugboard_errors.labels(
+                    client=client, model=model, error_type=type(e).__name__
+                ).inc()
+                metrics.plugboard_call_seconds.labels(
+                    client=client, model=model
+                ).observe(elapsed)
             if aggregator is not None:
                 aggregator.record(model, error=True)
             if writer is not None and writer.active:
@@ -159,10 +160,11 @@ def instrument_llm_client(
                 )
             raise
         elapsed = time.monotonic() - start
-        metrics.plugboard_calls.labels(client=client, model=model).inc()
-        metrics.plugboard_call_seconds.labels(client=client, model=model).observe(
-            elapsed
-        )
+        if metrics is not None:
+            metrics.plugboard_calls.labels(client=client, model=model).inc()
+            metrics.plugboard_call_seconds.labels(client=client, model=model).observe(
+                elapsed
+            )
         if aggregator is not None:
             aggregator.record(model, error=False)
         if writer is not None and writer.active:
