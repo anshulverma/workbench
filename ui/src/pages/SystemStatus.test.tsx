@@ -30,10 +30,124 @@ function healthyHandler() {
   )
 }
 
+// ---- LLM API fixtures + handlers ---- //
+
+const LLM_CALLS = [
+  {
+    id: 'llm_101',
+    ts: '2026-06-16T09:00:00Z',
+    origin: 'fr_31',
+    purpose: 'classify · drop-confidence',
+    stage: 'filter',
+    model: 'claude-haiku-4-2',
+    temperature: 0.2,
+    status: 'ok',
+    batch: 1,
+    items: ['D12871'],
+    tokens_in: 420,
+    tokens_out: 88,
+    latency_ms: 120,
+  },
+  {
+    id: 'llm_102',
+    ts: '2026-06-16T09:01:00Z',
+    origin: 'en_github',
+    purpose: 'enrich · summarize diff',
+    stage: 'enricher',
+    model: 'claude-opus-4-8',
+    temperature: 0,
+    status: 'ok',
+    batch: 3,
+    items: ['D12863', 'D12864', 'D12865'],
+    tokens_in: 1800,
+    tokens_out: 240,
+    latency_ms: 540,
+  },
+  {
+    id: 'llm_103',
+    ts: '2026-06-16T09:02:00Z',
+    origin: 'triage',
+    purpose: 'score · relevance + priority',
+    stage: 'triage',
+    model: 'claude-opus-4-8',
+    temperature: 0.2,
+    status: 'error',
+    batch: 1,
+    items: ['eml_5521'],
+    tokens_in: 600,
+    tokens_out: null,
+    latency_ms: null,
+  },
+]
+
+const LLM_DETAIL = {
+  sysPrompt: 'You are a noise filter. Return whether the rule fires.',
+  subcalls: [
+    {
+      item: 'D12871',
+      prompt: '[item D12871] classify · drop-confidence',
+      completion: '{"fires": false, "confidence": 88}',
+      structured: { fires: false, confidence: 88 },
+      tokens_in: 420,
+      tokens_out: 88,
+    },
+  ],
+}
+
+const LLM_DETAIL_BATCHED = {
+  sysPrompt: 'You enrich an item with structured metadata.',
+  subcalls: [
+    {
+      item: 'D12863',
+      prompt: '[item D12863] enrich · summarize diff',
+      completion: '{"summary": "one"}',
+      structured: { summary: 'one' },
+      tokens_in: 600,
+      tokens_out: 80,
+    },
+    {
+      item: 'D12864',
+      prompt: '[item D12864] enrich · summarize diff',
+      completion: '{"summary": "two"}',
+      structured: { summary: 'two' },
+      tokens_in: 600,
+      tokens_out: 80,
+    },
+    {
+      item: 'D12865',
+      prompt: '[item D12865] enrich · summarize diff',
+      completion: '{"summary": "three"}',
+      structured: { summary: 'three' },
+      tokens_in: 600,
+      tokens_out: 80,
+    },
+  ],
+}
+
+const LLM_METRICS = {
+  calls_24h: 3008,
+  avg_latency_ms: 330,
+  error_rate: 0.04,
+  batched_pct: 0.33,
+  window_hours: 24,
+  as_of: '2026-06-16T09:05:00Z',
+}
+
+function llmHandlers() {
+  return [
+    http.get('/api/llm/calls', () => HttpResponse.json(LLM_CALLS)),
+    http.get('/api/llm/calls/:id', ({ params }) =>
+      HttpResponse.json(params.id === 'llm_102' ? LLM_DETAIL_BATCHED : LLM_DETAIL),
+    ),
+    http.get('/api/llm/metrics', () => HttpResponse.json(LLM_METRICS)),
+  ]
+}
+
 function baseHandlers() {
   return [
     http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok' })),
     healthyHandler(),
+    ...llmHandlers(),
   ]
 }
 
@@ -229,15 +343,14 @@ describe('SystemStatus page', () => {
 
 describe('SystemStatus — LLM Infra sub-tab', () => {
   // The diagram is the default tab; the LLM Infra tab is a sibling sub-view.
-  // We pause the live tail right after switching so the streaming interval
-  // doesn't append rows mid-assertion.
+  // Rows now come from the mocked /api/llm/calls endpoint.
   async function openLLMTab() {
     renderPage()
     expect(await screen.findByTestId('system-status-page')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('system-tab-llm'))
     expect(await screen.findByTestId('llm-infra')).toBeInTheDocument()
-    // Pause the live tail for deterministic assertions.
-    await userEvent.click(screen.getByTestId('llm-live-toggle'))
+    // Wait for the fetched rows to render.
+    await screen.findAllByTestId('llm-log-row')
   }
 
   it('defaults to the diagram tab and hides the LLM panel', async () => {
@@ -252,54 +365,63 @@ describe('SystemStatus — LLM Infra sub-tab', () => {
     expect(screen.getByText('LLM Invocation Log')).toBeInTheDocument()
   })
 
-  it('shows LLM stat rollups (calls, latency, error rate, batched)', async () => {
+  it('shows LLM stat rollups from /api/llm/metrics', async () => {
     await openLLMTab()
     const cards = screen.getByTestId('llm-stat-cards')
     expect(within(cards).getByText('Calls (24h)')).toBeInTheDocument()
     expect(within(cards).getByText('Avg Latency')).toBeInTheDocument()
     expect(within(cards).getByText('Error Rate')).toBeInTheDocument()
     expect(within(cards).getByText('Batched')).toBeInTheDocument()
-    // 64-call pool × 47 = 3,008 calls in 24h.
-    expect(within(cards).getByText('3,008')).toBeInTheDocument()
+    // From LLM_METRICS fixture.
+    await waitFor(() =>
+      expect(within(cards).getByText('3,008')).toBeInTheDocument(),
+    )
+    expect(within(cards).getByText('330ms')).toBeInTheDocument()
+    expect(within(cards).getByText('4%')).toBeInTheDocument() // error_rate 0.04
+    expect(within(cards).getByText('33%')).toBeInTheDocument() // batched_pct 0.33
   })
 
-  it('renders the live-tailing invocation rows', async () => {
+  it('renders the invocation rows from the API', async () => {
     await openLLMTab()
     const rows = screen.getAllByTestId('llm-log-row')
-    expect(rows.length).toBe(14) // initial slice
+    expect(rows.length).toBe(LLM_CALLS.length)
+    expect(screen.getByText('classify · drop-confidence')).toBeInTheDocument()
+    expect(screen.getByText('enrich · summarize diff')).toBeInTheDocument()
   })
 
-  it('filters the invocation log by query', async () => {
+  it('filters the fetched rows by query', async () => {
     await openLLMTab()
     const before = screen.getAllByTestId('llm-log-row').length
     await userEvent.type(screen.getByTestId('llm-search-input'), 'enrich')
     await waitFor(() => {
       expect(screen.getAllByTestId('llm-log-row').length).toBeLessThan(before)
     })
-    // Every visible row is an enrich call.
     for (const row of screen.getAllByTestId('llm-log-row')) {
       expect(row.textContent?.toLowerCase()).toContain('enrich')
     }
   })
 
-  it('opens a call detail dialog with stage + structured output', async () => {
+  it('opens a call detail dialog fetched from /api/llm/calls/:id', async () => {
     await openLLMTab()
     await userEvent.click(screen.getAllByTestId('llm-log-row')[0])
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByTestId('llm-detail-stage')).toBeInTheDocument()
     expect(within(dialog).getByText('System prompt')).toBeInTheDocument()
+    // System prompt text comes from the detail endpoint.
+    expect(
+      await within(dialog).findByText(/noise filter/i),
+    ).toBeInTheDocument()
     expect(within(dialog).getByText('Structured output')).toBeInTheDocument()
   })
 
   it('batched calls expose a sub-call selector to step through items', async () => {
     await openLLMTab()
-    // The 3rd row (index 2, en_github) carries a batch of 3.
-    await userEvent.click(screen.getAllByTestId('llm-log-row')[2])
+    // The 2nd row (index 1, en_github) carries a batch of 3.
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[1])
     const dialog = await screen.findByRole('dialog')
-    const selector = within(dialog).getByTestId('llm-subcall-selector')
+    const selector = await within(dialog).findByTestId('llm-subcall-selector')
     expect(selector).toBeInTheDocument()
     expect(within(dialog).getByText(/batch ×3/i)).toBeInTheDocument()
-    // Three item buttons to switch between sub-calls.
     expect(within(dialog).getByTestId('llm-subcall-0')).toBeInTheDocument()
     expect(within(dialog).getByTestId('llm-subcall-2')).toBeInTheDocument()
   })
