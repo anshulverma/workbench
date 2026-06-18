@@ -4,6 +4,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Overview } from '@/pages/Overview'
 import { Triage } from '@/pages/Triage'
 import { TriageDetail } from '@/pages/TriageDetail'
+import { ItemPage } from '@/pages/ItemPage'
 import { ActionItems } from '@/pages/ActionItems'
 import { Ingestion } from '@/pages/Ingestion'
 import { Sources } from '@/pages/Sources'
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/triage" element={<Triage />} />
           <Route path="/triage/:cardId" element={<TriageDetail />} />
           <Route path="/actions" element={<ActionItems />} />
+          <Route path="/items/*" element={<ItemPage />} />
           <Route path="/ingestion" element={<Ingestion />} />
           <Route path="/sources" element={<Sources />} />
           <Route path="/knowledge" element={<Knowledge />} />
