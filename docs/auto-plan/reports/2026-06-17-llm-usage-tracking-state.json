@@ -1,0 +1,63 @@
+{
+  "topic": "llm-usage-tracking",
+  "domains": ["backend", "observability", "data", "frontend", "api-design"],
+  "iteration": 1,
+  "phase": "harden",
+  "user_model_brief": "Single-user Meta-internal tool. PostgreSQL/asyncpg, repository pattern, Alembic. Config DB-authoritative (ADR 0055). React19+Vite+TanStack. Prefers maximum fidelity/thoroughness over lower effort (see feedback_max_fidelity_preference).",
+  "settled_decisions": [
+    "S1 full fidelity (bodies+context)",
+    "S2 store raw (single-user)",
+    "S3 retention configurable default 28d",
+    "S4 capture everything incl. memory subservice",
+    "S5 polling tail (no SSE)",
+    "S6 one row/call, subcalls nested JSONB",
+    "S7 API field names match UI SystemStatus.tsx",
+    "S8 new LlmCallStore + migration 013",
+    "S9 memory subservice full fidelity (wrap Graphiti)"
+  ],
+  "branches": [
+    {"id": "b001", "topic": "data model + persistence + migration + retention", "confidence": "known", "status": "resolved"},
+    {"id": "b002", "topic": "capture mechanism + context threading + async write", "confidence": "known", "status": "resolved"},
+    {"id": "b003", "topic": "API + UI + transport", "confidence": "known", "status": "resolved"},
+    {"id": "b004", "topic": "metrics + telemetry reconciliation", "confidence": "known", "status": "resolved"},
+    {"id": "b005", "topic": "cross-service capture (memory + enrichers)", "confidence": "known", "status": "resolved"}
+  ],
+  "decisions": [
+    {"id": "d01", "question": "capture fidelity", "answer": "full bodies+context via contextvars + extended record_plugboard_call", "source": "user+ADR0056", "status": "resolved"},
+    {"id": "d02", "question": "scope", "answer": "main_llm(extract/filter/triage/aggregate)+queue_scorer(scoring)+memory(memory); enrichers/briefing do not call LLMs", "source": "user+research", "status": "resolved"},
+    {"id": "d03", "question": "body privacy", "answer": "store raw", "source": "user", "status": "resolved"},
+    {"id": "d04", "question": "retention", "answer": "28d configurable + optional row cap, daily sweep", "source": "user+research", "status": "resolved"},
+    {"id": "d05", "question": "memory subservice", "answer": "full fidelity, wrap Graphiti, write to workbench DSN", "source": "user+ADR0059", "status": "resolved"},
+    {"id": "d06", "question": "row granularity", "answer": "one row/call, subcalls nested; single=one subcall", "source": "grilling", "status": "resolved"},
+    {"id": "d07", "question": "running status", "answer": "never persisted; completed-only tail", "source": "ADR0061", "status": "resolved"},
+    {"id": "d08", "question": "sync->async write", "answer": "bounded queue + writer task, drop on full/error", "source": "ADR0057", "status": "resolved"},
+    {"id": "d09", "question": "batch tokens", "answer": "proportional split, tokens_estimated; fallback=is_fallback rows", "source": "grilling+research", "status": "resolved"},
+    {"id": "d10", "question": "stat card source", "answer": "SQL over llm_calls 24h rolling UTC", "source": "ADR0058", "status": "resolved"},
+    {"id": "d11", "question": "transport", "answer": "TanStack polling, no SSE", "source": "ADR0060", "status": "resolved"},
+    {"id": "d12", "question": "detail payload", "answer": "lazy on click; list rows summary only", "source": "grilling", "status": "resolved"},
+    {"id": "d13", "question": "stages added to UI", "answer": "extract, scoring, memory added to LLM_STAGE_TONE", "source": "research", "status": "resolved"},
+    {"id": "d14", "question": "gating", "answer": "llm_tracking.enabled (default true), independent of metrics.enabled", "source": "grilling", "status": "resolved"},
+    {"id": "d15", "question": "API typing", "answer": "bare dict + hand-written TS (no response_model)", "source": "ADR-skip", "status": "resolved"}
+  ],
+  "unresolved": [],
+  "preference_updates": ["feedback_max_fidelity_preference"],
+  "artifacts": {
+    "spec": "docs/auto-plan/specs/2026-06-17-llm-usage-tracking-design.md",
+    "adrs": ["docs/adr/0056-llm-call-provenance-via-contextvars.md", "docs/adr/0057-sync-sink-async-llm-writer-bridge.md", "docs/adr/0058-llm-calls-table-source-of-truth.md", "docs/adr/0059-cross-service-llm-capture-shared-db-write.md", "docs/adr/0060-polling-not-sse-for-live-tails.md", "docs/adr/0061-running-status-not-persisted.md"],
+    "plan": "docs/auto-plan/plans/2026-06-17-llm-usage-tracking.md"
+  },
+  "harden": {
+    "enabled": true,
+    "max_passes": 20,
+    "current_pass": 5,
+    "convergence_status": "converged",
+    "snapshots_dir": "docs/auto-plan/reports/snapshots",
+    "passes": [
+      {"pass": 1, "status": "complete", "judge_verdict": "baseline", "judge_rationale": "Baseline artifacts (spec, 6 ADRs, plan) from the normal run.", "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}},
+      {"pass": 2, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Ungated the plugboard sink from metrics.enabled (would capture zero rows when metrics.enabled=false), fixed temperature non-null TS contract, made /{id} 404 explicit, added CONTEXT.md glossary; judge spotted 1 open gap (temperature coalesce not propagated to plan Task 8).", "gaps_filled": ["sink ungating", "temperature non-null contract", "/{id} 404", "CONTEXT glossary"], "metrics": {"material_changes": 5, "minor_changes": 2, "open_gaps": 1, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 6}},
+      {"pass": 3, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Closed the open gap — propagated temperature coalesce + /{id} contract into plan Task 8 + added a temperature-type test assertion (counted material).", "gaps_filled": ["spec<->plan temperature/{id} consistency"], "metrics": {"material_changes": 1, "minor_changes": 1, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 1}},
+      {"pass": 4, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Fixed dangling/incorrect ADR citations in the spec (API typing mis-cited 0059; memory column-contract mis-cited 0058 -> 0059; response_model -> house convention).", "gaps_filled": ["ADR citation correctness"], "metrics": {"material_changes": 1, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 1}},
+      {"pass": 5, "status": "complete", "judge_verdict": "CONVERGED", "judge_rationale": "Zero material edits; all five checks pass (no UNRESOLVED, ADR citations correct, field names consistent spec<->plan<->UI, every File-Change has a plan task, numeric defaults consistent).", "gaps_filled": [], "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}}
+    ]
+  }
+}

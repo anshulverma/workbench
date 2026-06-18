@@ -1,0 +1,28 @@
+digraph llm_usage_tracking {
+  rankdir=TB; node [shape=box, style=filled, fontname="Helvetica"];
+  root [label="LLM Usage Tracking\n(5 branches)", fillcolor=lightgray];
+
+  b1 [label="Data model + persistence\n+ migration 013 + retention", fillcolor=palegreen];
+  b2 [label="Capture mechanism\n(contextvars + sink->writer)", fillcolor=palegreen];
+  b3 [label="API + UI + transport", fillcolor=palegreen];
+  b4 [label="Metrics + telemetry\nreconciliation", fillcolor=palegreen];
+  b5 [label="Cross-service capture\n(memory + enrichers)", fillcolor=lightskyblue];
+
+  root -> b1; root -> b2; root -> b3; root -> b4; root -> b5;
+
+  d_fid   [label="Full fidelity (user)", fillcolor=lightskyblue];
+  d_raw   [label="Store raw (user)", fillcolor=lightskyblue];
+  d_ret   [label="Retention 28d (user)", fillcolor=lightskyblue];
+  d_mem   [label="Memory: wrap Graphiti (user)", fillcolor=lightskyblue];
+  d_run   [label="running not persisted", fillcolor=lightyellow];
+  d_stage [label="add extract/scoring/memory\nstages (discovered)", fillcolor=lightyellow];
+  d_gate  [label="sink ungated from\nmetrics.enabled (harden p2)", fillcolor=lightyellow];
+
+  b1 -> d_ret; b1 -> d_run;
+  b2 -> d_fid; b2 -> d_gate;
+  b3 -> d_stage; b3 -> d_raw;
+  b5 -> d_mem;
+
+  adr [label="ADRs 0056-0061", shape=note, fillcolor=white];
+  b2 -> adr; b5 -> adr;
+}
