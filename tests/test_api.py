@@ -298,3 +298,58 @@ async def test_process_creates_queue_entry(client, app_with_state):
     stores = app_with_state.state.stores
     depth = await stores.ingestion_queue.queue_depth()
     assert depth == 1
+
+
+@pytest.mark.asyncio
+async def test_get_item_by_path(client, app_with_state):
+    from workbench.domain import Item, ItemCategory, ItemOrigin, ItemStatus
+
+    stores = app_with_state.state.stores
+
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-api-1",
+            summary="root",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    c1 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-api-1",
+            summary="c1",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    gc = await stores.items.allocate_child(
+        c1,
+        Item(
+            source_type="diff",
+            source_id="D-api-1",
+            summary="gc",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+
+    resp = await client.get(f"/api/items/{c1.path}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["item"]["path"] == c1.path
+    assert [a["path"] for a in body["ancestors"]] == [root.path]
+    assert len(body["children"]) == 1
+    assert body["children"][0]["path"] == gc.path
+    assert body["children"][0]["has_children"] is False
+
+    missing = await client.get("/api/items/999.9")
+    assert missing.status_code == 404

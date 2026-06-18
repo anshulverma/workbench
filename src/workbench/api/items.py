@@ -119,6 +119,35 @@ async def search_items(
     return {"q": q, "results": results, "total": len(results)}
 
 
+@router.get("/items/{path}")
+async def get_item_by_path(path: str, request: Request):
+    stores = request.app.state.stores
+    item = await stores.items.get_by_path(path)
+    if not item:
+        raise HTTPException(404, "Item not found")
+    ancestors = await stores.items.get_ancestors(item)
+    children = await stores.items.get_children(item.id)
+    return {
+        "item": item.model_dump(mode="json"),
+        "ancestors": [
+            {"id": a.id, "path": a.path, "summary": a.summary, "status": a.status}
+            for a in ancestors
+        ],
+        "children": [
+            {
+                "id": c.id,
+                "path": c.path,
+                "seq": c.seq,
+                "summary": c.summary,
+                "status": c.status,
+                "priority": c.priority,
+                "has_children": has,
+            }
+            for c, has in children
+        ],
+    }
+
+
 @router.patch("/items/{item_id}")
 async def update_item(item_id: int, updates: ItemUpdate, request: Request):
     stores = request.app.state.stores
