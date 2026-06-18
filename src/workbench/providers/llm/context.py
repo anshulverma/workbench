@@ -20,11 +20,14 @@ class LLMCallContext:
         origin: Where the call originates (e.g., "gchat_source", "triage_pipeline").
         purpose: Why we're calling the LLM (e.g., "extract_events", "score_urgency").
         stage: Pipeline stage (e.g., "extract", "filter", "triage").
+        item_paths: Real item path ids this call concerns (one per item; a
+            batched call carries all of them). Empty when no lineage is stamped.
     """
 
     origin: str
     purpose: str
     stage: str
+    item_paths: tuple[str, ...] = ()
 
 
 # Module-level contextvar for ambient context
@@ -39,13 +42,21 @@ def current_llm_call_context() -> LLMCallContext | None:
 
 
 @contextmanager
-def llm_call_context(*, origin: str, purpose: str, stage: str):
+def llm_call_context(
+    *,
+    origin: str,
+    purpose: str,
+    stage: str,
+    item_paths: tuple[str, ...] | list[str] = (),
+):
     """Set LLM call context for the duration of this block.
 
     Args:
         origin: Where the call originates (e.g., "gchat_source").
         purpose: Why we're calling the LLM (e.g., "extract_events").
         stage: Pipeline stage (e.g., "extract", "filter", "triage").
+        item_paths: Real item path ids this call concerns. A batched call may
+            carry several. Defaults to empty (no lineage stamped).
 
     Yields:
         None
@@ -55,7 +66,9 @@ def llm_call_context(*, origin: str, purpose: str, stage: str):
             # LLM calls here can read current_llm_call_context()
             ...
     """
-    context = LLMCallContext(origin=origin, purpose=purpose, stage=stage)
+    context = LLMCallContext(
+        origin=origin, purpose=purpose, stage=stage, item_paths=tuple(item_paths)
+    )
     token = _current.set(context)
     try:
         yield

@@ -205,3 +205,48 @@ def test_app_module_has_no_bare_stores_reference():
     # any ``stores.llm_calls`` is reached via a local bound from app.state.
     assert "app.state.stores = await create_stores" in inspect.getsource(app_mod)
     assert "stores = app.state.stores" in src
+
+
+def test_to_llm_record_prefers_context_item_paths():
+    """When the context carries item_paths, items records those lineage refs
+    (batched call -> all paths), not the free-text subcall items."""
+    rec = PlugboardCallRecord(
+        client="plugboard",
+        model="claude-sonnet",
+        input_tokens=10,
+        output_tokens=5,
+        latency_s=1.0,
+        item_count=2,
+        context=LLMCallContext(
+            origin="filter",
+            purpose="score_relevance",
+            stage="filter",
+            item_paths=("123.1", "123.2"),
+        ),
+        subcalls=[
+            {"item": "free-text-1", "prompt": "p1", "completion": "c1"},
+            {"item": "free-text-2", "prompt": "p2", "completion": "c2"},
+        ],
+    )
+
+    out = _to_llm_record(rec)
+    assert out.items == ["123.1", "123.2"]
+
+
+def test_to_llm_record_falls_back_when_item_paths_empty():
+    """Empty item_paths preserves the legacy subcall-derived items."""
+    rec = PlugboardCallRecord(
+        client="plugboard",
+        model="claude-sonnet",
+        input_tokens=10,
+        output_tokens=5,
+        latency_s=1.0,
+        item_count=1,
+        context=LLMCallContext(
+            origin="gchat_source", purpose="extract_events", stage="extract"
+        ),
+        subcalls=[{"item": "item-x", "prompt": "p", "completion": "c"}],
+    )
+
+    out = _to_llm_record(rec)
+    assert out.items == ["item-x"]

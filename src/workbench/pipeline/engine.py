@@ -257,6 +257,12 @@ class PipelineEngine:
             # Batched relevance scoring (ADR 0048): gather per-item facts/rules
             # concurrently, score all items in one call, then route each item
             # through the single-item helper with its precomputed score.
+            # Resolve the ingestion root once (root-only resolver) so each
+            # extracted item is nested as a depth-1 child under it (D2/D3).
+            root = await self.stores.items.get_item_by_source_id(
+                raw_item.source_type, raw_item.id
+            )
+
             precomputed: list[tuple[int, int] | None] = [None] * len(items)
             if self.batch_relevance and items:
                 contexts = await asyncio.gather(
@@ -271,17 +277,14 @@ class PipelineEngine:
                     (it, facts, rules) for it, (facts, rules) in zip(items, contexts)
                 ]
                 with llm_call_context(
-                    origin="filter", purpose="score_relevance", stage="filter"
+                    origin="filter",
+                    purpose="score_relevance",
+                    stage="filter",
+                    item_paths=((root.path,) if root else ()),
                 ):
                     precomputed = await self.llm.score_relevance_many(
                         ctx_for_scoring, max_batch_size=self.max_batch_size
                     )
-
-            # Resolve the ingestion root once (root-only resolver) so each
-            # extracted item is nested as a depth-1 child under it (D2/D3).
-            root = await self.stores.items.get_item_by_source_id(
-                raw_item.source_type, raw_item.id
-            )
 
             for ext_item, score in zip(items, precomputed):
                 try:
