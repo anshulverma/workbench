@@ -173,7 +173,6 @@ class PipelineEngine:
         # exist. source_id may be None for ad-hoc enqueues; only born when set.
         # No id is stashed on the queue entry — extraction re-resolves the root
         # by (source_type, source_id) via get_item_by_source_id.
-        root_item = None
         if source_id:
             # Root carries the source snapshot so the scheduler change-detector
             # diffs the root on re-poll. VERIFIED shape invariant: the ONLY
@@ -183,7 +182,7 @@ class PipelineEngine:
             # RawItem.raw_text to the JSON-encoded source record, so this single
             # {"raw_text", "source_type", "id"} shape is correct for ALL source
             # types. No adapter reads any other raw_data key for change-detection.
-            root_item = await self.stores.items.create_root(
+            await self.stores.items.create_root(
                 Item(
                     source_type=source_type,
                     source_id=source_id,
