@@ -38,6 +38,28 @@ class ItemStore(ABC):
     @abstractmethod
     async def save_item(self, item: Item) -> Item: ...
     @abstractmethod
+    async def create_root(self, item: Item) -> Item:
+        """Insert a depth-0 item and set path = str(id) (D1/D3)."""
+        ...
+
+    @abstractmethod
+    async def allocate_child(self, parent: Item, child: Item) -> Item:
+        """Insert a child: seq = MAX(seq)+1 over siblings, path = parent.path.seq."""
+        ...
+
+    @abstractmethod
+    async def get_by_path(self, path: str) -> Item | None: ...
+    @abstractmethod
+    async def get_ancestors(self, item: Item) -> list[Item]:
+        """Root-first chain of ancestors of ``item`` (excludes item itself)."""
+        ...
+
+    @abstractmethod
+    async def get_children(self, parent_id: int) -> list[tuple[Item, bool]]:
+        """Direct children of ``parent_id``, each with a has_children flag."""
+        ...
+
+    @abstractmethod
     async def update_item(self, item_id: int, updates: ItemUpdate) -> Item: ...
     @abstractmethod
     async def archive_item(self, item_id: int) -> None: ...

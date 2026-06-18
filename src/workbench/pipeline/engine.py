@@ -10,8 +10,10 @@ from workbench.domain import (
     ExtractedItem,
     IngestionQueueEntry,
     Item,
+    ItemCategory,
     ItemOrigin,
     ItemStatus,
+    ItemUpdate,
     JobStatus,
     JobTrigger,
     PipelineJob,
@@ -166,6 +168,38 @@ class PipelineEngine:
         )
         await self.stores.jobs.save_job(job)
 
+        # Birth the root Item now (D3): the autoincrement assigns #123
+        # immediately, so the id is stable for the whole journey (incl. the
+        # LLM pre-persist window). Status INGESTED -> EXTRACTED once children
+        # exist. source_id may be None for ad-hoc enqueues; only born when set.
+        # No id is stashed on the queue entry — extraction re-resolves the root
+        # by (source_type, source_id) via get_item_by_source_id.
+        if source_id:
+            # Root carries the source snapshot so the scheduler change-detector
+            # diffs the root on re-poll. VERIFIED shape invariant: the ONLY
+            # change-detection consumer is scheduler._parse_raw, which reads only
+            # raw_data["raw_text"] and json.loads-es it; every in-scope adapter
+            # (diff/Phabricator, meta_tasks, google_docs, gmail, github) sets
+            # RawItem.raw_text to the JSON-encoded source record, so this single
+            # {"raw_text", "source_type", "id"} shape is correct for ALL source
+            # types. No adapter reads any other raw_data key for change-detection.
+            await self.stores.items.create_root(
+                Item(
+                    source_type=source_type,
+                    source_id=source_id,
+                    summary=(raw_text[:200] if raw_text else ""),
+                    category=ItemCategory.INFORMATIONAL,
+                    origin=ItemOrigin.AUTO_INCLUDED,
+                    priority=Priority.PENDING,
+                    status=ItemStatus.INGESTED,
+                    raw_data={
+                        "raw_text": raw_text,
+                        "source_type": source_type,
+                        "id": source_id,
+                    },
+                )
+            )
+
         if urgency_score is None:
             urgency_score = 50
             if self.queue_scorer and urgency_signals:
@@ -223,6 +257,12 @@ class PipelineEngine:
             # Batched relevance scoring (ADR 0048): gather per-item facts/rules
             # concurrently, score all items in one call, then route each item
             # through the single-item helper with its precomputed score.
+            # Resolve the ingestion root once (root-only resolver) so each
+            # extracted item is nested as a depth-1 child under it (D2/D3).
+            root = await self.stores.items.get_item_by_source_id(
+                raw_item.source_type, raw_item.id
+            )
+
             precomputed: list[tuple[int, int] | None] = [None] * len(items)
             if self.batch_relevance and items:
                 contexts = await asyncio.gather(
@@ -237,7 +277,10 @@ class PipelineEngine:
                     (it, facts, rules) for it, (facts, rules) in zip(items, contexts)
                 ]
                 with llm_call_context(
-                    origin="filter", purpose="score_relevance", stage="filter"
+                    origin="filter",
+                    purpose="score_relevance",
+                    stage="filter",
+                    item_paths=((root.path,) if root else ()),
                 ):
                     precomputed = await self.llm.score_relevance_many(
                         ctx_for_scoring, max_batch_size=self.max_batch_size
@@ -245,12 +288,20 @@ class PipelineEngine:
 
             for ext_item, score in zip(items, precomputed):
                 try:
-                    await self._process_extracted_item(ext_item, job, precomputed=score)
+                    await self._process_extracted_item(
+                        ext_item, job, precomputed=score, root=root
+                    )
                 except Exception as e:
                     logger.error(f"Failed to process extracted item: {e}")
                     if job:
                         job.items_failed += 1
                         await self.stores.jobs.update_job(job)
+
+            # Children now exist under the root -> move root to EXTRACTED.
+            if root is not None and items:
+                await self.stores.items.update_item(
+                    root.id, ItemUpdate(status=ItemStatus.EXTRACTED)
+                )
         except Exception as e:
             logger.error("Pipeline processing failed: %s", e, exc_info=True)
             raise
@@ -260,6 +311,7 @@ class PipelineEngine:
         ext_item: ExtractedItem,
         job: PipelineJob | None,
         precomputed: tuple[int, int] | None = None,
+        root: Item | None = None,
     ) -> None:
         # Resolve the routing thresholds for THIS item's source (ADR0044): a
         # per-source override if configured, otherwise the global PipelineConfig
@@ -308,7 +360,10 @@ class PipelineEngine:
                 verdict_priority=Priority.P2.value,
                 verdict_confidence=confidence,
             )
-            await self.stores.items.save_item(item)
+            if root is not None:
+                item = await self.stores.items.allocate_child(root, item)
+            else:
+                await self.stores.items.save_item(item)
             await self.memory.record_pipeline_decision(
                 item, "auto_include", f"relevance={relevance}"
             )
@@ -333,7 +388,10 @@ class PipelineEngine:
                 verdict_priority=Priority.P3.value,
                 verdict_confidence=confidence,
             )
-            await self.stores.items.save_item(item)
+            if root is not None:
+                item = await self.stores.items.allocate_child(root, item)
+            else:
+                await self.stores.items.save_item(item)
             if self.record_drop_decisions:
                 await self.memory.record_pipeline_decision(
                     item, "auto_drop", f"relevance={relevance}"
@@ -357,7 +415,10 @@ class PipelineEngine:
                 verdict_priority=Priority.PENDING.value,
                 verdict_confidence=confidence,
             )
-            await self.stores.items.save_item(item)
+            if root is not None:
+                item = await self.stores.items.allocate_child(root, item)
+            else:
+                await self.stores.items.save_item(item)
 
             # Diffs MUST be enriched at "deep" on first triage so the card has
             # curated hunks — the DiffEnricher only fetches them in deep mode

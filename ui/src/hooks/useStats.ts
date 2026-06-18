@@ -177,6 +177,9 @@ export interface ActivityItem {
   source_type: string
   summary: string | null
   created_at: string | null
+  // Lineage path id. Not yet emitted by /api/activity (Task 14 deferred-gated);
+  // present here so the LiveTail link lights up once the payload carries it.
+  path?: string
 }
 
 export interface QueueStats {

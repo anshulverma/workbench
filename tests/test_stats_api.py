@@ -6,6 +6,8 @@ and /api/activity endpoints against the live PostgreSQL test DB.
 Fixtures (mock_llm, app_with_state, client) mirror tests/test_api.py.
 """
 
+import itertools
+
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, patch
@@ -106,10 +108,16 @@ async def client(app_with_state):
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+_item_counter = itertools.count()
+
+
 def _item(source, status, priority, category):
+    # Each root must have a distinct (source_type, source_id): migration 014 adds
+    # a partial UNIQUE(source_type, source_id) WHERE parent_item_id IS NULL, and
+    # save_item self-heals these rootless items into roots.
     return Item(
         source_type=source,
-        source_id="x",
+        source_id=f"x{next(_item_counter)}",
         summary="s",
         category=category,
         origin=ItemOrigin.TRIAGED,

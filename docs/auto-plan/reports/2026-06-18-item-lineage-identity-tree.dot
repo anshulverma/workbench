@@ -1,0 +1,19 @@
+digraph item_lineage_identity {
+  rankdir=LR;
+  node [shape=box, style=filled, fontname="Helvetica"];
+
+  root [label="item-lineage-identity", fillcolor=white];
+  b1 [label="b1 identity representation", fillcolor=lightskyblue];
+  b2 [label="b2 tree shape & lifecycle", fillcolor=palegreen];
+  b3 [label="b3 birth at ingestion & LLM", fillcolor=palegreen];
+  b4 [label="b4 data model & constraints", fillcolor=lightskyblue];
+  b5 [label="b5 API & UI", fillcolor=lightskyblue];
+  b6 [label="b6 migration & testing", fillcolor=palegreen];
+  b7 [label="b7 change-detection / archival\n(discovered pass 2-3)", fillcolor=lightyellow];
+
+  root -> b1; root -> b2; root -> b3; root -> b4; root -> b5; root -> b6;
+  b3 -> b7;
+  b2 -> b7;
+
+  // legend: lightskyblue=user input, palegreen=auto/code-verified, lightyellow=discovered
+}

@@ -244,13 +244,18 @@ async def test_execute_creates_user_todos_as_items(mock_stores, card):
 
     await scheduler._execute_interpreted_response(interpreted, card)
 
-    # Two user todos -> two save_item calls (plus the original update_item for the system action)
-    assert mock_stores.items.save_item.call_count == 2
-    first_call = mock_stores.items.save_item.call_args_list[0][0][0]
-    assert first_call.summary == "Assign to bob"
-    assert first_call.action_category == "delegation"
-    assert first_call.parent_item_id == 1
-    assert first_call.action_source == "triage_response"
+    # card.item_id is set, so each user todo is nested under the parent item via
+    # allocate_child (which assigns seq/path/parent_item_id) rather than save_item.
+    parent = await mock_stores.items.get_item(card.item_id)
+    assert mock_stores.items.allocate_child.call_count == 2
+    mock_stores.items.save_item.assert_not_called()
+    first_parent, first_child = mock_stores.items.allocate_child.call_args_list[0][0]
+    assert first_parent is parent
+    assert first_child.summary == "Assign to bob"
+    assert first_child.action_category == "delegation"
+    assert first_child.action_source == "triage_response"
+    # parent_item_id is NOT set manually -- allocate_child sets it.
+    assert first_child.parent_item_id is None
 
 
 @pytest.mark.asyncio
@@ -340,3 +345,84 @@ async def test_awaiting_confirmation_yes_executes_pending(mock_stores):
     mock_stores.items.update_item.assert_called_once_with(
         1, ItemUpdate(status=ItemStatus.ARCHIVED)
     )
+
+
+# --- triage-response actions nest via allocate_child (real Postgres) ---
+
+
+@pytest.fixture
+async def scheduler_with_card(stores):
+    """Real-store scheduler whose card.item_id points at a persisted depth-1 item.
+
+    Builds: root (create_root) -> depth-1 parent (allocate_child) -> a TriageCard
+    saved with item_id = parent_item.id. Returns (scheduler, card, parent_item).
+    """
+    from workbench.pipeline.scheduler import WorkbenchScheduler
+
+    root = await stores.items.create_root(
+        Item(
+            source_type="github",
+            source_id="D-fttr-1",
+            summary="root",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    parent_item = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="github",
+            source_id="D-fttr-1",
+            summary="parent",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+
+    saved_card = await stores.triage.save_card(
+        TriageCard(
+            item_id=parent_item.id,
+            status="sent",
+            card_content={"summary": "Review PR #200", "source_type": "github"},
+            options=[TriageOption(label="Skip", action="skip")],
+        )
+    )
+
+    scheduler = WorkbenchScheduler(
+        stores=stores,
+        memory=AsyncMock(),
+        pipeline=AsyncMock(),
+        messenger=AsyncMock(),
+        config=MagicMock(
+            triage=MagicMock(
+                daily_cap=20, expiry_days=7, triage_poll_interval_seconds=10
+            ),
+            scheduler=MagicMock(poll_interval_minutes=15, morning_briefing_hour=9),
+            logging=MagicMock(timezone="America/Los_Angeles"),
+        ),
+    )
+    return scheduler, saved_card, parent_item
+
+
+@pytest.mark.asyncio
+async def test_user_todo_action_is_allocated_as_child(stores, scheduler_with_card):
+    scheduler, card, parent_item = scheduler_with_card
+
+    interpreted = InterpretedResponse(
+        explanation="add a follow-up",
+        system_actions=[],
+        user_todos=[UserTodo(summary="ping reviewer", action_category="communication")],
+    )
+    await scheduler._execute_interpreted_response(interpreted, card)
+
+    children = await stores.items.get_children(parent_item.id)
+    assert len(children) == 1
+    action, _ = children[0]
+    assert action.summary == "ping reviewer"
+    assert action.path == f"{parent_item.path}.1"
+    assert action.parent_item_id == parent_item.id
+    assert action.action_source == "triage_response"

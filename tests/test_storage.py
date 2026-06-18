@@ -468,3 +468,337 @@ async def test_ingestion_queue_recover_stuck(stores):
 
     depth = await stores.ingestion_queue.queue_depth()
     assert depth == 1
+
+
+# ── Item lineage (create_root) ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_root_sets_path_to_id(stores):
+    item = Item(
+        source_type="diff",
+        source_id="D-root-1",
+        summary="root",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.INGESTED,
+    )
+    saved = await stores.items.create_root(item)
+    assert saved.id is not None
+    assert saved.seq is None
+    assert saved.path == str(saved.id)
+    assert saved.parent_item_id is None
+
+    fetched = await stores.items.get_item(saved.id)
+    assert fetched.path == str(saved.id)
+    assert fetched.status == ItemStatus.INGESTED
+
+
+@pytest.mark.asyncio
+async def test_save_item_self_heals_root_path(stores):
+    # A brand-new rootless item with no path is a standalone root: save_item
+    # must self-heal path = str(id) so the NOT NULL constraint is satisfied.
+    item = Item(
+        source_type="manual",
+        source_id="self-heal-1",
+        summary="standalone",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.ACTIVE,
+    )
+    saved = await stores.items.save_item(item)
+    assert saved.id is not None
+    assert saved.path == str(saved.id)
+    assert saved.parent_item_id is None
+
+    fetched = await stores.items.get_item(saved.id)
+    assert fetched.path == str(saved.id)
+
+
+@pytest.mark.asyncio
+async def test_save_item_preserves_existing_path(stores):
+    # An item that already carries a path (e.g. a child allocated elsewhere)
+    # must not have its path clobbered by save_item.
+    item = Item(
+        source_type="manual",
+        source_id="self-heal-2",
+        summary="prepathed",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.ACTIVE,
+        path="999999.7",
+        seq=7,
+        parent_item_id=999999,
+    )
+    saved = await stores.items.save_item(item)
+    assert saved.path == "999999.7"
+    fetched = await stores.items.get_item(saved.id)
+    assert fetched.path == "999999.7"
+
+
+@pytest.mark.asyncio
+async def test_allocate_child_paths(stores):
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    c1 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="c1",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    c2 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="c2",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    assert c1.seq == 1 and c1.path == f"{root.id}.1"
+    assert c2.seq == 2 and c2.path == f"{root.id}.2"
+    assert c1.parent_item_id == root.id
+
+    gc = await stores.items.allocate_child(
+        c1,
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="gc",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    assert gc.seq == 1 and gc.path == f"{root.id}.1.1"
+
+
+@pytest.mark.asyncio
+async def test_allocate_child_concurrent_no_collision(stores):
+    # Determinism: allocate_child takes pg_advisory_xact_lock(parent.id) as the
+    # first statement in its txn, serializing all 8 siblings on the same parent
+    # so seq allocation cannot collide even though the pool max_size (~5) is
+    # smaller than the fan-out. The result must be exactly paths .1 .. .8 with 8
+    # distinct seqs, every time.
+    import asyncio as _asyncio
+
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-cc-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+
+    def _mk(n):
+        return Item(
+            source_type="diff",
+            source_id="D-cc-1",
+            summary=f"c{n}",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        )
+
+    results = await _asyncio.gather(
+        *(stores.items.allocate_child(root, _mk(n)) for n in range(8))
+    )
+    paths = sorted(r.path for r in results)
+    assert paths == sorted(f"{root.id}.{i}" for i in range(1, 9))
+    assert len({r.seq for r in results}) == 8
+
+
+@pytest.mark.asyncio
+async def test_deletion_leaves_gap_without_renumber(stores):
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    c1 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="c1",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    c2 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="c2",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    await stores.items.pool.execute("DELETE FROM items WHERE id = $1", c1.id)
+    c3 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="c3",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    assert c2.path == f"{root.id}.2"
+    assert c3.path == f"{root.id}.3"  # gap left by c1, never reused
+
+
+@pytest.mark.asyncio
+async def test_duplicate_root_for_source_blocked(stores):
+    import asyncpg
+
+    await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-dup-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    with pytest.raises(asyncpg.exceptions.UniqueViolationError):
+        await stores.items.create_root(
+            Item(
+                source_type="diff",
+                source_id="D-dup-1",
+                summary="r2",
+                category=ItemCategory.ACTION_ITEM,
+                origin=ItemOrigin.MANUAL,
+                priority="P2",
+                status=ItemStatus.INGESTED,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_by_path_and_ancestors_and_children(stores):
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="root",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    c1 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="c1",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    c2 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="c2",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    gc = await stores.items.allocate_child(
+        c1,
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="gc",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+
+    # get_by_path
+    by_path = await stores.items.get_by_path(gc.path)
+    assert by_path is not None and by_path.id == gc.id
+    assert await stores.items.get_by_path("999.9.9") is None
+
+    # ancestors: root-first, excludes self
+    anc = await stores.items.get_ancestors(gc)
+    assert [a.path for a in anc] == [root.path, c1.path]
+
+    # children with has_children flags
+    kids = await stores.items.get_children(root.id)
+    by_id = {item.id: has for item, has in kids}
+    assert by_id[c1.id] is True  # c1 has gc
+    assert by_id[c2.id] is False  # c2 has none
+    assert sorted(item.seq for item, _ in kids) == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_save_item_rejects_child_without_path(stores):
+    """Gap 2: save_item must raise ValueError when a NEW item has parent_item_id
+    set but no path — children must go through allocate_child."""
+    orphan = Item(
+        source_type="manual",
+        source_id="orphan-1",
+        summary="orphan child",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.ACTIVE,
+        parent_item_id=999999,  # parent set
+        path=None,  # but no path
+    )
+    with pytest.raises(ValueError, match="cannot persist a child item.*without a path"):
+        await stores.items.save_item(orphan)

@@ -856,7 +856,13 @@ class WorkbenchScheduler:
                 # FIX 34: Defer returns early
                 return
 
-        # Create user todos as action items
+        # Create user todos as action items. When the card is tied to an item,
+        # nest each action under that parent via allocate_child so it gets a
+        # proper depth-2+ seq/path (e.g. parent 123.1 -> action 123.1.1);
+        # allocate_child sets parent_item_id. Otherwise fall back to save_item.
+        parent_item = (
+            await self.stores.items.get_item(card.item_id) if card.item_id else None
+        )
         for todo in interpreted.user_todos:
             new_item = Item(
                 source_type=card.card_content.get("source_type", "unknown"),
@@ -866,11 +872,13 @@ class WorkbenchScheduler:
                 origin=ItemOrigin.TRIAGED,
                 priority=Priority.P2,
                 status=ItemStatus.ACTIVE,
-                parent_item_id=card.item_id,
                 action_source="triage_response",
                 action_category=todo.action_category,
             )
-            await self.stores.items.save_item(new_item)
+            if parent_item is not None:
+                await self.stores.items.allocate_child(parent_item, new_item)
+            else:
+                await self.stores.items.save_item(new_item)
 
         # Mark card as responded
         card.status = "responded"

@@ -44,12 +44,17 @@ async def get_actions(
         if item.parent_item_id:
             parent_item = await stores.items.get_item(item.parent_item_id)
             if parent_item:
-                parent = {"id": parent_item.id, "summary": parent_item.summary}
+                parent = {
+                    "id": parent_item.id,
+                    "summary": parent_item.summary,
+                    "path": parent_item.path,
+                }
         categories[cat].append(
             {
                 "id": item.id,
                 "summary": item.summary,
                 "priority": item.priority,
+                "path": item.path,
                 "parent_item": parent,
                 "action_source": item.action_source,
                 "action_category": item.action_category,
@@ -107,6 +112,7 @@ async def create_action(request: Request, body: CreateActionBody):
         "id": item.id,
         "summary": item.summary,
         "priority": item.priority.value,
+        "path": item.path,
         "parent_item": None,
         "action_source": item.action_source,
         "action_category": item.action_category,

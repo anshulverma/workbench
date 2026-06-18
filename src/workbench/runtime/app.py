@@ -75,7 +75,11 @@ def _to_llm_record(rec) -> LlmCallRecord | None:
         status="error" if rec.error_type else "ok",
         error_type=rec.error_type,
         batch=rec.item_count,
-        items=[s["item"] for s in (rec.subcalls or [])],
+        items=(
+            list(rec.context.item_paths)
+            if rec.context and rec.context.item_paths
+            else [s["item"] for s in (rec.subcalls or [])]
+        ),
         tokens_in=rec.input_tokens,
         tokens_out=None if rec.error_type else rec.output_tokens,
         cache_read_tokens=rec.cache_read_tokens,

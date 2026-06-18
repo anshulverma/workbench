@@ -36,6 +36,7 @@ const ACTIONS = {
         id: 'a1',
         summary: 'Fix bug',
         priority: 'P1',
+        path: '1.1.1',
         parent_item: { id: 'p1', summary: 'Parent thread' },
         action_source: 'triage_response',
         action_category: 'review',
@@ -199,6 +200,12 @@ describe('Action Items page', () => {
       name: /set priority for a1/i,
     }) as HTMLSelectElement
     expect(prioritySelect.value).toBe('P1')
+  })
+
+  it('links an action to its item lineage page', async () => {
+    renderActions()
+    const link = await screen.findByRole('link', { name: '#1.1.1' })
+    expect(link).toHaveAttribute('href', '/items/1.1.1')
   })
 
   it('renders the empty state when there are no actions', async () => {

@@ -53,7 +53,7 @@ async def search_items(
                priority, status, created_at, updated_at,
                tags, llm_summary, enriched_context, funnel_log,
                verdict_action, verdict_priority, verdict_confidence,
-               action_source
+               action_source, path
           FROM items
          WHERE summary ILIKE '%' || $1 || '%' ESCAPE '\\'
     """
@@ -102,6 +102,7 @@ async def search_items(
                 "priority": r["priority"],
                 "status": r["status"],
                 "kind": "action" if r.get("action_source") else "item",
+                "path": r.get("path"),
                 "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                 "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
                 "tags": tags or [],
@@ -117,6 +118,35 @@ async def search_items(
         )
 
     return {"q": q, "results": results, "total": len(results)}
+
+
+@router.get("/items/{path}")
+async def get_item_by_path(path: str, request: Request):
+    stores = request.app.state.stores
+    item = await stores.items.get_by_path(path)
+    if not item:
+        raise HTTPException(404, "Item not found")
+    ancestors = await stores.items.get_ancestors(item)
+    children = await stores.items.get_children(item.id)
+    return {
+        "item": item.model_dump(mode="json"),
+        "ancestors": [
+            {"id": a.id, "path": a.path, "summary": a.summary, "status": a.status}
+            for a in ancestors
+        ],
+        "children": [
+            {
+                "id": c.id,
+                "path": c.path,
+                "seq": c.seq,
+                "summary": c.summary,
+                "status": c.status,
+                "priority": c.priority,
+                "has_children": has,
+            }
+            for c, has in children
+        ],
+    }
 
 
 @router.patch("/items/{item_id}")

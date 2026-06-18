@@ -98,7 +98,7 @@ const LLM_DETAIL_BATCHED = {
   sysPrompt: 'You enrich an item with structured metadata.',
   subcalls: [
     {
-      item: 'D12863',
+      item: '5.1',
       prompt: '[item D12863] enrich · summarize diff',
       completion: '{"summary": "one"}',
       structured: { summary: 'one' },
@@ -106,7 +106,7 @@ const LLM_DETAIL_BATCHED = {
       tokens_out: 80,
     },
     {
-      item: 'D12864',
+      item: 'relevance batch',
       prompt: '[item D12864] enrich · summarize diff',
       completion: '{"summary": "two"}',
       structured: { summary: 'two' },
@@ -424,6 +424,21 @@ describe('SystemStatus — LLM Infra sub-tab', () => {
     expect(within(dialog).getByText(/batch ×3/i)).toBeInTheDocument()
     expect(within(dialog).getByTestId('llm-subcall-0')).toBeInTheDocument()
     expect(within(dialog).getByTestId('llm-subcall-2')).toBeInTheDocument()
+  })
+
+  it('links a path-shaped subcall item to its lineage page', async () => {
+    await openLLMTab()
+    // The 2nd row (index 1, en_github) carries a batch of 3 with subcall items
+    // [5.1, relevance batch, D12865].
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[1])
+    const dialog = await screen.findByRole('dialog')
+    await within(dialog).findByTestId('llm-subcall-selector')
+    const link = await within(dialog).findByRole('link', { name: '#5.1' })
+    expect(link).toHaveAttribute('href', '/items/5.1')
+    // free-text item stays a plain label, not a link
+    expect(
+      within(dialog).queryByRole('link', { name: /relevance batch/ }),
+    ).toBeNull()
   })
 
   it('closes the call detail dialog', async () => {

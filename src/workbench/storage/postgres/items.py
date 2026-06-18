@@ -41,47 +41,218 @@ class PgItemStore(ItemStore):
         return self._row_to_item(row) if row else None
 
     async def save_item(self, item: Item) -> Item:
-        # id is a BIGINT identity column — omit it on INSERT and let the DB
-        # assign one, then write it back onto the passed Item so callers that
-        # link to it (e.g. card.item_id = item.id) see the real value.
-        row = await self.pool.fetchrow(
-            """INSERT INTO items
-               (source_type, source_id, summary, category, origin,
-                priority, status, raw_data, created_at, updated_at,
-                parent_item_id, action_source, action_category,
-                snoozed_until, completed_at,
-                tags, llm_summary, enriched_context, funnel_log,
-                verdict_action, verdict_priority, verdict_confidence)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
-                       $10, $11, $12, $13, $14, $15,
-                       $16::jsonb, $17, $18::jsonb, $19::jsonb,
-                       $20, $21, $22)
-               RETURNING id""",
-            item.source_type,
-            item.source_id,
-            item.summary,
-            item.category.value,
-            item.origin.value,
-            item.priority.value,
-            item.status.value,
-            json.dumps(item.raw_data),
-            item.created_at,
-            item.updated_at,
-            item.parent_item_id,
-            item.action_source,
-            item.action_category,
-            item.snoozed_until,
-            item.completed_at,
-            json.dumps(item.tags),
-            item.llm_summary,
-            json.dumps(item.enriched_context),
-            json.dumps(item.funnel_log),
-            item.verdict_action,
-            item.verdict_priority,
-            item.verdict_confidence,
-        )
-        item.id = row["id"]
+        # save_item INSERTs a brand-new item (the id is a BIGINT identity column,
+        # omitted on INSERT and assigned by the DB, then written back onto the
+        # passed Item so callers that link to it — e.g. card.item_id = item.id —
+        # see the real value). `path` is NOT NULL (migration 014).
+        #
+        # Self-heal the lineage path so call sites never have to deal with it
+        # (D1 allocation seam): a new rootless item with no path is a standalone
+        # root, so we assign path = str(id) — the same root semantics as
+        # create_root. An item that arrives WITH a path keeps it (no clobber); a
+        # new item that has a parent but no path is a misuse — children must be
+        # created via allocate_child so they get a correct seq/path — and is
+        # rejected rather than silently persisted pathless.
+        if not item.path and item.parent_item_id is not None:
+            raise ValueError(
+                "save_item: cannot persist a child item (parent_item_id set) "
+                "without a path; create children via allocate_child"
+            )
+        self_heal_root = not item.path
+        # Empty placeholder satisfies NOT NULL on INSERT; replaced with str(id)
+        # in the same txn for the self-heal case.
+        insert_path = item.path if item.path else ""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """INSERT INTO items
+                       (source_type, source_id, summary, category, origin,
+                        priority, status, raw_data, created_at, updated_at,
+                        parent_item_id, action_source, action_category,
+                        snoozed_until, completed_at,
+                        tags, llm_summary, enriched_context, funnel_log,
+                        verdict_action, verdict_priority, verdict_confidence,
+                        seq, path)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
+                               $10, $11, $12, $13, $14, $15,
+                               $16::jsonb, $17, $18::jsonb, $19::jsonb,
+                               $20, $21, $22, $23, $24)
+                       RETURNING id""",
+                    item.source_type,
+                    item.source_id,
+                    item.summary,
+                    item.category.value,
+                    item.origin.value,
+                    item.priority.value,
+                    item.status.value,
+                    json.dumps(item.raw_data),
+                    item.created_at,
+                    item.updated_at,
+                    item.parent_item_id,
+                    item.action_source,
+                    item.action_category,
+                    item.snoozed_until,
+                    item.completed_at,
+                    json.dumps(item.tags),
+                    item.llm_summary,
+                    json.dumps(item.enriched_context),
+                    json.dumps(item.funnel_log),
+                    item.verdict_action,
+                    item.verdict_priority,
+                    item.verdict_confidence,
+                    item.seq,
+                    insert_path,
+                )
+                item.id = row["id"]
+                if self_heal_root:
+                    item.path = str(item.id)
+                    await conn.execute(
+                        "UPDATE items SET path = $1 WHERE id = $2",
+                        item.path,
+                        item.id,
+                    )
         return item
+
+    async def create_root(self, item: Item) -> Item:
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """INSERT INTO items
+                       (source_type, source_id, summary, category, origin,
+                        priority, status, raw_data, created_at, updated_at,
+                        parent_item_id, action_source, action_category,
+                        snoozed_until, completed_at, tags, llm_summary,
+                        enriched_context, funnel_log, verdict_action,
+                        verdict_priority, verdict_confidence, seq, path)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,
+                               NULL,$11,$12,$13,$14,$15::jsonb,$16,
+                               $17::jsonb,$18::jsonb,$19,$20,$21,NULL,'')
+                       RETURNING id""",
+                    item.source_type,
+                    item.source_id,
+                    item.summary,
+                    item.category.value,
+                    item.origin.value,
+                    item.priority.value,
+                    item.status.value,
+                    json.dumps(item.raw_data),
+                    item.created_at,
+                    item.updated_at,
+                    item.action_source,
+                    item.action_category,
+                    item.snoozed_until,
+                    item.completed_at,
+                    json.dumps(item.tags),
+                    item.llm_summary,
+                    json.dumps(item.enriched_context),
+                    json.dumps(item.funnel_log),
+                    item.verdict_action,
+                    item.verdict_priority,
+                    item.verdict_confidence,
+                )
+                item.id = row["id"]
+                item.seq = None
+                item.path = str(item.id)
+                await conn.execute(
+                    "UPDATE items SET path = $1 WHERE id = $2", item.path, item.id
+                )
+        return item
+
+    async def allocate_child(self, parent: Item, child: Item) -> Item:
+        # seq = MAX(seq)+1 over siblings, computed and inserted in one txn. A
+        # txn-scoped advisory lock on parent.id serializes concurrent siblings so
+        # the read-then-insert is race-free regardless of pool size; the
+        # UNIQUE(parent_item_id, seq) constraint + retry are a backstop (D1
+        # allocation seam, D4 append-only gaps).
+        for _ in range(20):
+            try:
+                async with self.pool.acquire() as conn:
+                    async with conn.transaction():
+                        await conn.execute(
+                            "SELECT pg_advisory_xact_lock($1)", parent.id
+                        )
+                        seq_row = await conn.fetchrow(
+                            "SELECT COALESCE(MAX(seq), 0) + 1 AS seq "
+                            "FROM items WHERE parent_item_id = $1",
+                            parent.id,
+                        )
+                        seq = int(seq_row["seq"])
+                        path = f"{parent.path}.{seq}"
+                        row = await conn.fetchrow(
+                            """INSERT INTO items
+                               (source_type, source_id, summary, category, origin,
+                                priority, status, raw_data, created_at, updated_at,
+                                parent_item_id, action_source, action_category,
+                                snoozed_until, completed_at, tags, llm_summary,
+                                enriched_context, funnel_log, verdict_action,
+                                verdict_priority, verdict_confidence, seq, path)
+                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,
+                                       $11,$12,$13,$14,$15,$16::jsonb,$17,
+                                       $18::jsonb,$19::jsonb,$20,$21,$22,$23,$24)
+                               RETURNING id""",
+                            child.source_type,
+                            child.source_id,
+                            child.summary,
+                            child.category.value,
+                            child.origin.value,
+                            child.priority.value,
+                            child.status.value,
+                            json.dumps(child.raw_data),
+                            child.created_at,
+                            child.updated_at,
+                            parent.id,
+                            child.action_source,
+                            child.action_category,
+                            child.snoozed_until,
+                            child.completed_at,
+                            json.dumps(child.tags),
+                            child.llm_summary,
+                            json.dumps(child.enriched_context),
+                            json.dumps(child.funnel_log),
+                            child.verdict_action,
+                            child.verdict_priority,
+                            child.verdict_confidence,
+                            seq,
+                            path,
+                        )
+                child.id = row["id"]
+                child.seq = seq
+                child.path = path
+                child.parent_item_id = parent.id
+                return child
+            except asyncpg.exceptions.UniqueViolationError:
+                continue
+        raise RuntimeError(
+            f"allocate_child: exhausted retries allocating seq under {parent.id}"
+        )
+
+    async def get_by_path(self, path: str) -> Item | None:
+        row = await self.pool.fetchrow("SELECT * FROM items WHERE path = $1", path)
+        return self._row_to_item(row) if row else None
+
+    async def get_ancestors(self, item: Item) -> list[Item]:
+        # Ancestors are the strict path prefixes: "123.1.2" -> ["123", "123.1"].
+        if not item.path or "." not in item.path:
+            return []
+        segments = item.path.split(".")
+        prefixes = [".".join(segments[: i + 1]) for i in range(len(segments) - 1)]
+        rows = await self.pool.fetch(
+            "SELECT * FROM items WHERE path = ANY($1::text[]) ORDER BY length(path), path",
+            prefixes,
+        )
+        return [self._row_to_item(r) for r in rows]
+
+    async def get_children(self, parent_id: int) -> list[tuple[Item, bool]]:
+        rows = await self.pool.fetch(
+            """SELECT c.*,
+                      EXISTS (SELECT 1 FROM items g WHERE g.parent_item_id = c.id)
+                          AS has_children
+                 FROM items c
+                WHERE c.parent_item_id = $1
+                ORDER BY c.seq""",
+            parent_id,
+        )
+        return [(self._row_to_item(r), bool(r["has_children"])) for r in rows]
 
     async def update_item(self, item_id: str, updates: ItemUpdate) -> Item:
         sets: list[str] = []
@@ -125,6 +296,7 @@ class PgItemStore(ItemStore):
     ) -> Item | None:
         row = await self.pool.fetchrow(
             "SELECT * FROM items WHERE source_type = $1 AND source_id = $2 "
+            "AND parent_item_id IS NULL "
             "AND status NOT IN ('archived', 'done') "
             "ORDER BY created_at DESC LIMIT 1",
             source_type,
@@ -248,6 +420,8 @@ class PgItemStore(ItemStore):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             parent_item_id=row.get("parent_item_id"),
+            seq=row.get("seq"),
+            path=row.get("path"),
             action_source=row.get("action_source"),
             action_category=row.get("action_category"),
             tags=tags if tags else [],

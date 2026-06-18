@@ -72,6 +72,10 @@ def _result(material=False, terminal=False, ctype="status_changed"):
 
 
 async def _save_item(stores, source_id, status=ItemStatus.ACTIVE, **raw):
+    # A tracked source item is a root (parent_item_id IS NULL) under the lineage
+    # model, so it must be born via create_root to get a materialized path. The
+    # scheduler change-detection loop resolves it through the root-only
+    # get_item_by_source_id.
     item = Item(
         source_type="diff",
         source_id=source_id,
@@ -82,7 +86,7 @@ async def _save_item(stores, source_id, status=ItemStatus.ACTIVE, **raw):
         status=status,
         raw_data={"raw_text": json.dumps(raw or {"status": "needs_review"})},
     )
-    return await stores.items.save_item(item)
+    return await stores.items.create_root(item)
 
 
 @pytest.fixture
@@ -219,3 +223,49 @@ async def test_partial_set_does_not_archive_absent_items(sched, stores):
         JobTrigger.POLL,
     )
     assert (await stores.items.get_item(item.id)).status == ItemStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_seen_root_and_children_not_archived_on_complete_poll(sched, stores):
+    # Gap-1 regression: get_active_by_source returns roots AND children; a root
+    # whose stable source_id is present in a complete poll's seen_ids must NOT be
+    # archived, and neither must its children (they share the same stable
+    # source_id, set via the worker reconstructing raw_item.id = entry.source_id).
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D7",
+            summary="root",
+            category=ItemCategory.INFORMATIONAL,
+            origin=ItemOrigin.AUTO_INCLUDED,
+            priority="P2",
+            status=ItemStatus.EXTRACTED,
+            raw_data={
+                "raw_text": '{"status":"needs_review"}',
+                "source_type": "diff",
+                "id": "D7",
+            },
+        )
+    )
+    child = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D7",
+            summary="extracted",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    # Complete poll that still contains D7 (raw id "D7_222" -> stable_id "D7").
+    await sched._route_poll_results(
+        "src",
+        _Adapter(complete=True),
+        _Detector(_result()),
+        [_raw("D7_222")],
+        JobTrigger.POLL,
+    )
+    assert (await stores.items.get_item(root.id)).status == ItemStatus.EXTRACTED
+    assert (await stores.items.get_item(child.id)).status == ItemStatus.ACTIVE

@@ -8,7 +8,10 @@ from workbench.providers.memory.noop import NoopMemoryLayer
 from workbench.providers.enrichment.stub import StubEnricher
 from workbench.domain import (
     ExtractedItem,
+    Item,
     ItemCategory,
+    ItemOrigin,
+    Priority,
     RawItem,
     TriageCard,
     TriageOption,
@@ -147,15 +150,17 @@ async def test_process_raw_item_auto_include(stores, mock_llm):
     mock_llm.score_relevance.return_value = (85, 90)
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
-    job = await engine.enqueue("diff content", "diff")
+    job = await engine.enqueue("diff content", "diff", source_id="D123_100")
     raw = RawItem(
         id="D123_100", source_type="diff", source_label="D123", raw_text="diff content"
     )
     await engine.process_raw_item(raw, job.id)
 
-    items = await stores.items.get_items(ItemFilters())
+    # Root (EXTRACTED) + one extracted child (ACTIVE) now share the source id.
+    items = await stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE))
     assert len(items) == 1
     assert items[0].status == ItemStatus.ACTIVE
+    assert items[0].parent_item_id is not None
 
 
 @pytest.mark.asyncio
@@ -163,7 +168,7 @@ async def test_process_raw_item_auto_drop(stores, mock_llm):
     mock_llm.score_relevance.return_value = (10, 90)
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
-    job = await engine.enqueue("spam content", "email")
+    job = await engine.enqueue("spam content", "email", source_id="E1")
     raw = RawItem(
         id="E1", source_type="email", source_label="email", raw_text="spam content"
     )
@@ -171,11 +176,11 @@ async def test_process_raw_item_auto_drop(stores, mock_llm):
 
     # Dropped items are now persisted (status=DROPPED) so the Ingestion funnel
     # can show what was filtered out, but excluded from the active/triage feeds.
-    all_items = await stores.items.get_items(ItemFilters())
-    assert len(all_items) == 1
-    assert all_items[0].status == ItemStatus.DROPPED
-    assert all_items[0].verdict_action == "drop"
-    assert all_items[0].funnel_log
+    dropped = await stores.items.get_items(ItemFilters(status=ItemStatus.DROPPED))
+    assert len(dropped) == 1
+    assert dropped[0].status == ItemStatus.DROPPED
+    assert dropped[0].verdict_action == "drop"
+    assert dropped[0].funnel_log
     assert await stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE)) == []
     assert (
         await stores.items.get_items(ItemFilters(status=ItemStatus.PENDING_TRIAGE))
@@ -188,7 +193,7 @@ async def test_process_raw_item_triage(stores, mock_llm):
     mock_llm.score_relevance.return_value = (50, 50)
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
-    job = await engine.enqueue("ambiguous content", "email")
+    job = await engine.enqueue("ambiguous content", "email", source_id="E2")
     raw = RawItem(
         id="E2", source_type="email", source_label="email", raw_text="ambiguous content"
     )
@@ -228,10 +233,10 @@ async def test_auto_include_populates_raw_data(stores, mock_llm):
         raw_text='{"number": 123, "title": "fix auth"}',
         urgency_signals={"type": "pull_request"},
     )
-    job = await engine.enqueue(raw.raw_text, "diff")
+    job = await engine.enqueue(raw.raw_text, "diff", source_id="D123")
     await engine.process_raw_item(raw, job.id)
 
-    items = await stores.items.get_items(ItemFilters())
+    items = await stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE))
     assert len(items) == 1
     assert items[0].raw_data != {}
     assert items[0].raw_data["raw_text"] == '{"number": 123, "title": "fix auth"}'
@@ -248,7 +253,7 @@ async def test_triage_item_populates_raw_data(stores, mock_llm):
         source_label="D456",
         raw_text='{"number": 456, "title": "add tests"}',
     )
-    job = await engine.enqueue(raw.raw_text, "diff")
+    job = await engine.enqueue(raw.raw_text, "diff", source_id="D456")
     await engine.process_raw_item(raw, job.id)
 
     items = await stores.items.get_items(ItemFilters(status=ItemStatus.PENDING_TRIAGE))
@@ -477,7 +482,9 @@ async def test_e2e_enqueue_to_triage_card(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     worker = IngestionQueueWorker(stores, engine, concurrency=1)
 
-    job = await engine.enqueue("Review the auth migration PR #456", "diff")
+    job = await engine.enqueue(
+        "Review the auth migration PR #456", "diff", source_id="D456-e2e"
+    )
     assert job.status == JobStatus.QUEUED
     assert await stores.ingestion_queue.queue_depth() == 1
 
@@ -513,7 +520,9 @@ async def test_e2e_auto_include(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     worker = IngestionQueueWorker(stores, engine, concurrency=1)
 
-    job = await engine.enqueue("P0 incident: auth service down", "incident")
+    job = await engine.enqueue(
+        "P0 incident: auth service down", "incident", source_id="INC-1"
+    )
     worker.start()
     for _ in range(20):
         if await stores.ingestion_queue.queue_depth() == 0:
@@ -538,7 +547,9 @@ async def test_e2e_auto_drop(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     worker = IngestionQueueWorker(stores, engine, concurrency=1)
 
-    job = await engine.enqueue("CI bot comment: lint passed", "github")
+    job = await engine.enqueue(
+        "CI bot comment: lint passed", "github", source_id="GH-ci-1"
+    )
     worker.start()
     for _ in range(20):
         if await stores.ingestion_queue.queue_depth() == 0:
@@ -707,3 +718,131 @@ async def test_process_populates_funnel_log_and_verdict(
     rel = next(e for e in saved.funnel_log if e["stage"] == "relevance")
     assert rel["confidence"] == 88
     assert "relevance 42" in rel["reason"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_births_root_item(stores, mock_llm):
+    engine = PipelineEngine(
+        stores=stores,
+        memory=NoopMemoryLayer(),
+        llm=mock_llm,
+        enricher=StubEnricher(),
+    )
+    await engine.enqueue(
+        raw_text="some diff text",
+        source_type="diff",
+        source_id="D-birth-1",
+        trigger=JobTrigger.MANUAL,
+    )
+    root = await stores.items.get_item_by_source_id("diff", "D-birth-1")
+    assert root is not None
+    assert root.status == ItemStatus.INGESTED
+    assert root.path == str(root.id)
+    assert root.parent_item_id is None
+    assert root.raw_data == {
+        "raw_text": "some diff text",
+        "source_type": "diff",
+        "id": "D-birth-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_enqueue_dedup_does_not_birth_root(stores, mock_llm):
+    # First enqueue births the root and marks (source_type, source_id) processed.
+    engine = PipelineEngine(
+        stores=stores,
+        memory=NoopMemoryLayer(),
+        llm=mock_llm,
+        enricher=StubEnricher(),
+    )
+    await engine.enqueue(
+        raw_text="first text",
+        source_type="diff",
+        source_id="D-dedup-1",
+        trigger=JobTrigger.MANUAL,
+    )
+    root = await stores.items.get_item_by_source_id("diff", "D-dedup-1")
+    assert root is not None
+    original_id = root.id
+
+    # Second enqueue dedups (is_processed) and must NOT create another root.
+    await engine.enqueue(
+        raw_text="second text",
+        source_type="diff",
+        source_id="D-dedup-1",
+        trigger=JobTrigger.MANUAL,
+    )
+    still = await stores.items.get_item_by_source_id("diff", "D-dedup-1")
+    assert still.id == original_id
+    assert still.raw_data["raw_text"] == "first text"
+
+
+@pytest.mark.asyncio
+async def test_extraction_creates_depth1_children_under_root(stores, mock_llm):
+    from workbench.providers.memory.noop import NoopMemoryLayer
+    from workbench.providers.enrichment.stub import StubEnricher
+
+    engine = PipelineEngine(
+        stores=stores,
+        memory=NoopMemoryLayer(),
+        llm=mock_llm,
+        enricher=StubEnricher(),
+    )
+    job = await engine.enqueue(
+        raw_text="diff text body",
+        source_type="diff",
+        source_id="D-ext-1",
+        trigger=JobTrigger.MANUAL,
+    )
+    root = await stores.items.get_item_by_source_id("diff", "D-ext-1")
+
+    raw = RawItem(
+        id="D-ext-1",
+        source_type="diff",
+        source_label="D-ext-1",
+        raw_text="diff text body",
+    )
+    await engine.process_raw_item(raw, job.id)
+
+    children = await stores.items.get_children(root.id)
+    assert len(children) == 1
+    child, _ = children[0]
+    assert child.path == f"{root.id}.1"
+    assert child.parent_item_id == root.id
+
+    refreshed_root = await stores.items.get_item(root.id)
+    assert refreshed_root.status == ItemStatus.EXTRACTED
+
+
+@pytest.mark.asyncio
+async def test_get_item_by_source_id_resolves_root_not_child(stores):
+    # After a root + child share (source_type, source_id), the source-id
+    # resolver must return the root (parent_item_id IS NULL), not the child.
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-res-1",
+            summary="root",
+            category=ItemCategory.INFORMATIONAL,
+            origin=ItemOrigin.AUTO_INCLUDED,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+            raw_data={"raw_text": "{}", "source_type": "diff", "id": "D-res-1"},
+        )
+    )
+    await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-res-1",
+            summary="child",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    resolved = await stores.items.get_item_by_source_id("diff", "D-res-1")
+    assert resolved is not None
+    assert resolved.id == root.id
+    assert resolved.parent_item_id is None

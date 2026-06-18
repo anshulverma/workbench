@@ -3,7 +3,7 @@
 // expanded, hunks via DiffHunks, a prominent View in Phabricator link, and
 // reuses useTriage respond/confirm. Read-only when responded/expired. When a
 // re-triage change section is present, a "What changed" callout leads (ADR 0032).
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useTriageCard } from '@/hooks/useTriageCard'
 import { useRespond } from '@/hooks/useTriage'
 import { DiffHunks, type Hunk } from '@/components/DiffHunks'
@@ -54,6 +54,7 @@ export function TriageDetail() {
   const summary = (sections.summary as string) ?? c.card_content.summary ?? '(no summary)'
   const whyCare = (sections.why_care as string) ?? ''
   const change = (sections.change as string | undefined) ?? undefined
+  const itemPath = (c.card_content.path ?? c.card_content.item_path) as string | undefined
   const readOnly = c.status === 'responded' || c.status === 'expired'
 
   return (
@@ -81,6 +82,19 @@ export function TriageDetail() {
         by {metadata.author ?? '?'}
         {metadata.team ? ` (${metadata.team})` : ''} — {metadata.status ?? ''}
       </div>
+
+      {/* Item lineage link — presence-gated (Task 14): the card payload does not
+          yet carry the lineage path, so this renders nothing today and lights up
+          automatically once the card endpoint resolves the item's path field (also
+          tolerant of the legacy item_path field name for backend flexibility). */}
+      {itemPath && (
+        <Link
+          to={`/items/${itemPath}`}
+          className="font-mono text-xs text-primary hover:underline"
+        >
+          #{itemPath}
+        </Link>
+      )}
 
       {diffUrl ? (
         <a

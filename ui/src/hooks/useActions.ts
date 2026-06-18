@@ -14,6 +14,7 @@ export interface Action {
   id: number
   summary: string
   priority: string
+  path?: string
   parent_item: { id: number; summary: string } | null
   action_source: string
   action_category: string | null

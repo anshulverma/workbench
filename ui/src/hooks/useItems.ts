@@ -21,6 +21,8 @@ export interface Item {
   status: string
   created_at: string
   updated_at: string
+  seq?: number | null
+  path?: string | null
 }
 
 export function useItems(params: { status?: string; priority?: string } = {}) {
@@ -54,4 +56,35 @@ export function useHotFeed(limit = 6) {
     })
     .slice(0, limit)
   return { ...query, items }
+}
+
+export interface ItemChild {
+  id: number
+  path: string
+  seq: number | null
+  summary: string
+  status: string
+  priority: string
+  has_children: boolean
+}
+
+export interface ItemAncestor {
+  id: number
+  path: string
+  summary: string
+  status: string
+}
+
+export interface ItemPageData {
+  item: Item
+  ancestors: ItemAncestor[]
+  children: ItemChild[]
+}
+
+export function useItem(path: string) {
+  return useQuery({
+    queryKey: ['item', path],
+    queryFn: () => apiGet<ItemPageData>(`/api/items/${path}`),
+    enabled: !!path,
+  })
 }
