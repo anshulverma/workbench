@@ -80,12 +80,7 @@ ingestion-stage funnel log. Trees are arbitrary depth: a deeper extraction nests
 further (`#123.1` → `#123.1.1`).
 
 The root and all of its descendants share the same `(source_type, source_id)`
-natural key. The shared `source_id` is the adapter's **stable id**
-(`adapter.stable_id(raw_item)`, e.g. `"D12345"`), not the volatile `RawItem.id`
-(e.g. `"D12345_<updated>"`): the scheduler enqueues with `source_id = stable_id`,
-the worker reconstructs the extraction-time `RawItem.id` from that queued
-`source_id`, and extraction stamps children with `source_id = raw_item.id`, so
-root and children all carry the identical stable `source_id`. Identity is
+natural key (children are built with `source_id = raw_item.id`). Identity is
 disambiguated by `parent_item_id`: the **root is the unique row with
 `parent_item_id IS NULL`** for a given `(source_type, source_id)` (enforced by
 the partial unique index in the Data model section). Any lookup that must return
@@ -96,14 +91,9 @@ the partial unique index in the Data model section). Any lookup that must return
 `PipelineEngine.enqueue` (which already dedupes and creates the job/queue entry)
 also creates the root `Item` row with status `INGESTED`, so the autoincrement
 assigns `#123` immediately. The root carries the **source snapshot** in
-`raw_data` as a `RawItem`-shaped dict
-(`{"raw_text": <source json string>, "source_type": ..., "id": ...}`). The only
-change-detection consumer of this snapshot is `scheduler._parse_raw`, which reads
-**only** `raw_data["raw_text"]` and `json.loads`-es it; every in-scope source
-adapter (diff/Phabricator, meta_tasks, google_docs, gmail, github, …) builds
-`RawItem.raw_text` as the JSON-encoded source record, so this single shape is
-correct and sufficient for the change-detector across **all** source types. (No
-adapter's change-detection reads any other `raw_data` key.)
+`raw_data` as a `RawItem`-shaped dict (`{"raw_text": <source json>, ...}`), so
+the root is the row the scheduler's change-detector diffs against on re-poll
+(`scheduler._parse_raw` reads `raw_data["raw_text"]`).
 
 `process_raw_item` re-resolves the root at extraction time via
 `get_item_by_source_id(source_type, source_id)`. Because root and children share
@@ -123,21 +113,10 @@ lineage references).
 Feed isolation: the `INGESTED`/`EXTRACTED` root statuses are NOT among the
 verdict statuses the active/triage feeds query (`get_items` filters by an exact
 status; the active feed asks for `ACTIVE`, triage for `PENDING_TRIAGE`), so roots
-never surface in those feeds.
-
-Disappearance-archival safety (verified against `scheduler._detect_disappeared`
-+ `get_active_by_source`): `get_active_by_source(source_type)` returns every
-non-archived/non-done row for the source_type — **both roots and children**.
-`_detect_disappeared` archives a returned row only when its `source_id` is absent
-from the complete poll's `seen_ids`, where `seen_ids` is built from
-`adapter.stable_id(raw_item)`. Because root **and** children carry the identical
-stable `source_id` (D2), and that stable id is exactly what `seen_ids` holds, a
-root (and its children) for a source thing still present in a complete poll is
-**never wrongly archived** — its `source_id` is always in `seen_ids`. (A root is
-archived only when its whole source thing genuinely disappears from a complete
-poll, which is the intended behaviour and cascades correctly to its children,
-which share the same `source_id`.) This is exercised by a dedicated test (see
-Testing: disappearance-archival).
+never surface in those feeds. `get_active_by_source` (used only by
+`_detect_disappeared` for poll-completeness archival) does return roots, but a
+root's `source_id` is always present in a complete poll's `seen_ids`, so a root
+is never wrongly archived.
 
 ### D4 — Immutability rules
 
@@ -177,9 +156,7 @@ so it resolves the root (the source artifact), not a child. Both call sites rely
 on this: extraction re-resolves the root to nest children under it, and the
 scheduler change-detection loop resolves the root to diff/update its source
 snapshot. `get_active_by_source` keeps its `status NOT IN ('archived','done')`
-filter and continues to return roots and children alike; both are protected from
-wrongful archival because they share the stable `source_id` that appears in a
-complete poll's `seen_ids` (see D3 disappearance-archival safety).
+filter; roots it returns are protected from archival as described in D3.
 
 ## Pipeline / scheduler changes
 
@@ -190,9 +167,7 @@ complete poll's `seen_ids` (see D3 disappearance-archival safety).
 - `pipeline/scheduler.py`: triage-response action creation uses `allocate_child`
   on the relevant parent (depth-2+). The change-detection loop is unchanged in
   shape but now resolves and updates the root (via the root-only
-  `get_item_by_source_id`); `_detect_disappeared`/`get_active_by_source` are
-  unchanged — roots and children are inherently archival-safe via the shared
-  stable `source_id` (D3).
+  `get_item_by_source_id`).
 - `storage/postgres/items.py`: `get_item_by_source_id` gains
   `AND parent_item_id IS NULL`.
 - `providers/llm/context.py`: add `item_paths` to `LLMCallContext` /
@@ -269,11 +244,6 @@ Additions to `api/items.py` (`/api` prefix):
   extraction creates depth-1 children with verdicts and moves the root to
   `EXTRACTED`; triage response creates depth-2 action under the right parent; LLM
   `items` carry path ids; re-poll change-detection resolves and diffs the root.
-- Disappearance-archival (D3): on a **complete** poll whose `seen_ids` contains a
-  root's (and its children's) shared stable `source_id`, `_detect_disappeared`
-  via `get_active_by_source` does **NOT** archive the root or its children;
-  conversely a source thing genuinely absent from the complete poll is archived
-  (the existing absent-item-archived test stays green).
 - Migration: round-trip on a seeded non-empty DB asserts correct backfilled paths
   across 3 levels.
 - UI: `ItemPage` renders breadcrumb for root vs action, lazy-expands children;
@@ -291,8 +261,6 @@ Additions to `api/items.py` (`/api` prefix):
 
 None outstanding. Granularity (1 source → 1 root, everything derived nests),
 depth (unbounded), and the action-id scheme (`#parent.seq`) are all confirmed.
-Root/child share the same `(source_type, source_id)` (the adapter stable id); the
-root is disambiguated as the `parent_item_id IS NULL` row, and
-`get_item_by_source_id` resolves it root-only. Disappearance-archival safety for
-roots is verified against `_detect_disappeared` + `get_active_by_source` and
-covered by a dedicated test.
+Root/child share the same `(source_type, source_id)`; the root is disambiguated
+as the `parent_item_id IS NULL` row, and `get_item_by_source_id` resolves it
+root-only.

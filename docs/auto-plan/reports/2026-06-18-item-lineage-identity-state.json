@@ -1,0 +1,57 @@
+{
+  "topic": "item-lineage-identity",
+  "domains": ["backend", "frontend", "data-ml"],
+  "iteration": 1,
+  "phase": "harden-complete",
+  "user_model_brief": "Meta engineer on the workbench/workbench-meta personal-assistant pipeline. Wants stable item identity assigned at ingestion and preserved across the whole lifecycle, hierarchical lineage IDs (#123, #123.1, #123.1.2 arbitrary depth), an item page listing sub-actions collapsed, and an action page with parent breadcrumb. Prefers lower-dependency solutions (chose materialized path over ltree), DB-enforced integrity, append-only immutable identity. Stack: FastAPI+Postgres+Alembic backend, React+TS+TanStack Query+Vite UI. TDD with red-green-commit.",
+  "settled_decisions": [
+    {"id": "d1", "q": "ID representation", "a": "materialized path TEXT + per-parent seq SMALLINT, integer surrogate PK kept (ADR 0062)"},
+    {"id": "d2", "q": "tree shape + key", "a": "3-tier: root=source artifact (INGESTED/EXTRACTED); depth-1=extracted items (verdicts); depth-2+=actions; arbitrary depth. Root and descendants share adapter STABLE source_id; root = parent_item_id IS NULL row"},
+    {"id": "d3", "q": "identity birth + LLM + archival", "a": "root born at enqueue (INGESTED) carrying {raw_text,source_type,id} snapshot; re-resolved root-only via get_item_by_source_id (AND parent_item_id IS NULL); LLMCallContext.item_paths -> LlmCallRecord.items; disappearance-archival safe via shared stable source_id"},
+    {"id": "d4", "q": "immutability", "a": "seqs append-only never renumbered; path immutable after insert"},
+    {"id": "d5", "q": "migration", "a": "014_item_lineage, down_revision=013; tests provision schema via alembic upgrade head"},
+    {"id": "d6", "q": "seq concurrency", "a": "pg_advisory_xact_lock(parent.id) serializes sibling allocation; retry backstop"},
+    {"id": "d7", "q": "granularity/depth", "a": "1 source -> 1 root, all derived nest; depth unbounded"}
+  ],
+  "branches": [
+    {"id": "b1", "topic": "identity representation", "confidence": "known", "status": "resolved"},
+    {"id": "b2", "topic": "tree shape & lifecycle", "confidence": "known", "status": "resolved"},
+    {"id": "b3", "topic": "birth at ingestion & LLM linkage", "confidence": "known", "status": "resolved"},
+    {"id": "b4", "topic": "data model & constraints", "confidence": "known", "status": "resolved"},
+    {"id": "b5", "topic": "API & UI", "confidence": "known", "status": "resolved"},
+    {"id": "b6", "topic": "migration & testing", "confidence": "known", "status": "resolved"},
+    {"id": "b7", "topic": "change-detection / archival safety", "confidence": "known", "status": "resolved", "discovered_in": "pass 2-3"}
+  ],
+  "unresolved": [],
+  "artifacts": {
+    "spec": "docs/auto-plan/specs/2026-06-18-item-lineage-identity-design.md",
+    "adrs": ["docs/adr/0062-item-lineage-materialized-path.md"],
+    "plan": "docs/auto-plan/plans/2026-06-18-item-lineage-identity.md"
+  },
+  "harden": {
+    "enabled": true,
+    "max_passes": 10,
+    "current_pass": 4,
+    "convergence_status": "converged",
+    "snapshots_dir": "docs/auto-plan/reports/snapshots",
+    "passes": [
+      {"pass": 1, "status": "complete", "judge_verdict": "BASELINE", "snapshot_path": "docs/auto-plan/reports/snapshots/pass-1 (pruned)",
+       "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}},
+      {"pass": 2, "status": "complete", "judge_verdict": "NOT CONVERGED",
+       "judge_rationale": "Critical cross-artifact bug: get_item_by_source_id returned a child not the root on re-poll (root+children share source key), corrupting scheduler change-detection; root needed source snapshot in raw_data.",
+       "gaps_filled": ["root-only get_item_by_source_id (AND parent_item_id IS NULL)", "root carries source snapshot", "dangling migration ref fixed", "LIKE prefix-guard documented", "feed-isolation documented"],
+       "snapshot_path": "docs/auto-plan/reports/snapshots/pass-2",
+       "metrics": {"material_changes": 10, "minor_changes": 2, "open_gaps": 2, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 12}},
+      {"pass": 3, "status": "complete", "judge_verdict": "NOT CONVERGED (material edits present, 0 open gaps)",
+       "judge_rationale": "Resolved both open gaps by code verification: roots/children share adapter stable source_id (archival-safe); _parse_raw reads only raw_text so snapshot shape correct for all sources. Added disappearance-archival regression test.",
+       "gaps_filled": ["get_active_by_source/_detect_disappeared archival safety verified + regression test", "root raw_data snapshot shape verified for all source types"],
+       "snapshot_path": "docs/auto-plan/reports/snapshots/pass-3",
+       "metrics": {"material_changes": 5, "minor_changes": 2, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 5}},
+      {"pass": 4, "status": "complete", "judge_verdict": "CONVERGED",
+       "judge_rationale": "Zero material edits. All store-method signatures consistent across tasks and call sites; every spec requirement maps to a plan task; no placeholders/UNRESOLVED; no forward refs. Fixed point confirmed.",
+       "gaps_filled": [],
+       "snapshot_path": "docs/auto-plan/reports/snapshots/pass-3 (current == pass-3)",
+       "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}}
+    ]
+  }
+}
