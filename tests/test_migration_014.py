@@ -46,23 +46,30 @@ async def test_migration_014_backfills_three_levels(pg_pool):
     # Temporarily drop NOT NULL to simulate pre-014 state
     await pg_pool.execute("ALTER TABLE items ALTER COLUMN path DROP NOT NULL")
 
-    root = await _insert(pg_pool, source_id="D-root")
-    child = await _insert(pg_pool, parent=root, source_id="c1")
-    grandchild = await _insert(pg_pool, parent=child, source_id="g1")
+    seeded_ids = []
+    try:
+        root = await _insert(pg_pool, source_id="D-root")
+        child = await _insert(pg_pool, parent=root, source_id="c1")
+        grandchild = await _insert(pg_pool, parent=child, source_id="g1")
+        seeded_ids = [root, child, grandchild]
 
-    # Simulate a pre-014 state: clear the freshly-set lineage, then backfill.
-    await pg_pool.execute("UPDATE items SET seq = NULL, path = NULL")
-    await pg_pool.execute(
-        "UPDATE items SET path = id::text WHERE parent_item_id IS NULL"
-    )
-    await pg_pool.execute(_BACKFILL)
+        # Simulate a pre-014 state: clear the freshly-set lineage, then backfill.
+        await pg_pool.execute("UPDATE items SET seq = NULL, path = NULL")
+        await pg_pool.execute(
+            "UPDATE items SET path = id::text WHERE parent_item_id IS NULL"
+        )
+        await pg_pool.execute(_BACKFILL)
 
-    paths = {
-        r["id"]: r["path"] for r in await pg_pool.fetch("SELECT id, path FROM items")
-    }
-    assert paths[root] == str(root)
-    assert paths[child] == f"{root}.1"
-    assert paths[grandchild] == f"{root}.1.1"
-
-    # Restore NOT NULL constraint
-    await pg_pool.execute("ALTER TABLE items ALTER COLUMN path SET NOT NULL")
+        paths = {
+            r["id"]: r["path"]
+            for r in await pg_pool.fetch("SELECT id, path FROM items")
+        }
+        assert paths[root] == str(root)
+        assert paths[child] == f"{root}.1"
+        assert paths[grandchild] == f"{root}.1.1"
+    finally:
+        # Clean up seeded rows before restoring NOT NULL to prevent failures
+        if seeded_ids:
+            await pg_pool.execute("DELETE FROM items WHERE id = ANY($1)", seeded_ids)
+        # Restore NOT NULL constraint
+        await pg_pool.execute("ALTER TABLE items ALTER COLUMN path SET NOT NULL")
