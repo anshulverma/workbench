@@ -38,6 +38,7 @@ from workbench.pipeline.engine import PipelineEngine, enrich_item
 from workbench.pipeline.triage import format_card_for_chat, generate_card
 from workbench.pipeline.worker import DB_UNAVAILABLE
 from workbench.providers.llm.base import LLMProvider
+from workbench.providers.llm.context import llm_call_context
 from workbench.providers.messenger.base import Messenger
 from workbench.storage.base import Stores
 
@@ -346,10 +347,15 @@ class WorkbenchScheduler:
             signalled = [(ri, sid) for (ri, sid) in items if ri.urgency_signals]
             if signalled:
                 try:
-                    scores = await scorer.score_urgency_many(
-                        [(ri.raw_text, ri.urgency_signals) for ri, _ in signalled],
-                        max_batch_size=batching.max_batch_size,
-                    )
+                    with llm_call_context(
+                        origin="queue_scorer",
+                        purpose="score_urgency",
+                        stage="scoring",
+                    ):
+                        scores = await scorer.score_urgency_many(
+                            [(ri.raw_text, ri.urgency_signals) for ri, _ in signalled],
+                            max_batch_size=batching.max_batch_size,
+                        )
                     for (ri, _), s in zip(signalled, scores):
                         prescored[id(ri)] = s
                 except Exception as e:
@@ -629,7 +635,14 @@ class WorkbenchScheduler:
             for resp in responses:
                 text = resp.get("text", "").strip()
                 if text and self.llm:
-                    interpreted = await self.llm.interpret_triage_response(card, text)
+                    with llm_call_context(
+                        origin="aggregate",
+                        purpose="interpret_triage_response",
+                        stage="aggregate",
+                    ):
+                        interpreted = await self.llm.interpret_triage_response(
+                            card, text
+                        )
                     await self._execute_interpreted_response(interpreted, card)
                     return
 
@@ -671,9 +684,14 @@ class WorkbenchScheduler:
                 except ValueError:
                     # Free-text response -- interpret via LLM
                     if self.llm:
-                        interpreted = await self.llm.interpret_triage_response(
-                            card, text
-                        )
+                        with llm_call_context(
+                            origin="aggregate",
+                            purpose="interpret_triage_response",
+                            stage="aggregate",
+                        ):
+                            interpreted = await self.llm.interpret_triage_response(
+                                card, text
+                            )
                         await self._execute_interpreted_response(interpreted, card)
                         return
             return
@@ -1071,6 +1089,16 @@ async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, in
     results["ingestion_runs"] = await stores.ingestion_runs.delete_older_than(
         config.ingestion_runs_days
     )
+
+    # LLM usage tracking retention (Task 10)
+    if getattr(stores, "llm_calls", None) is not None:
+        results["llm_calls"] = await stores.llm_calls.delete_older_than(
+            config.llm_calls_days
+        )
+        if config.llm_calls_max_rows is not None:
+            results["llm_calls_pruned"] = await stores.llm_calls.prune_to_max_rows(
+                config.llm_calls_max_rows
+            )
 
     total = sum(results.values())
     if total > 0:

@@ -10,6 +10,7 @@ from workbench.storage.postgres.ingestion_queue import PgIngestionQueueStore
 from workbench.storage.postgres.interactions import PgInteractionStore
 from workbench.storage.postgres.items import PgItemStore
 from workbench.storage.postgres.jobs import PgJobStore
+from workbench.storage.postgres.llm_calls import PgLlmCallStore
 from workbench.storage.postgres.loopbacks import PgLoopBacksStore
 from workbench.storage.postgres.plans import PgPlanStore
 from workbench.storage.postgres.pool import create_pool
@@ -43,4 +44,5 @@ async def create_postgres_stores(dsn: str) -> Stores:
         loopbacks=PgLoopBacksStore(pool),
         funnel_traces=PgFunnelTracesStore(pool),
         funnel_order=PgFunnelOrderStore(pool),
+        llm_calls=PgLlmCallStore(pool),
     )

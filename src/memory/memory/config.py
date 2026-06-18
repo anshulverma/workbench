@@ -20,6 +20,10 @@ class Neo4jConfig(BaseModel):
 
 class StorageConfig(BaseModel):
     postgres_dsn: str = "postgres://memory:memory@localhost:5432/memory"
+    # DSN of the SEPARATE workbench Postgres DB. Required only when
+    # llm_tracking_enabled is true (the memory process writes full-fidelity LLM
+    # rows directly into the workbench-owned llm_calls table; ADR 0059).
+    workbench_dsn: str | None = None
 
 
 class LLMConfig(BaseModel):
@@ -59,6 +63,10 @@ class MetricsConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
+    # Off by default. When true (and storage.workbench_dsn is set + the
+    # llm_calls table is present), the memory subservice captures full-fidelity
+    # LLM calls and writes them into the workbench-owned llm_calls table.
+    llm_tracking_enabled: bool = False
     server: ServerConfig = Field(default_factory=ServerConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)

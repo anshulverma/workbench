@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from workbench.storage.ingestion_runs import IngestionRunStore
+from workbench.domain.llm_calls import LlmCallRecord
 from workbench.domain import (
     EnricherConfig,
     EnrichmentTrace,
@@ -353,6 +354,32 @@ class FunnelOrderStore(ABC):
     async def toggle_stage(self, stage_id: str, enabled: bool) -> None: ...
 
 
+class LlmCallStore(ABC):
+    @abstractmethod
+    async def save_many(self, records: list[LlmCallRecord]) -> None: ...
+    @abstractmethod
+    async def list_calls(
+        self,
+        *,
+        limit: int,
+        before: tuple[datetime, int] | None = None,
+        stage: str | None = None,
+        status: str | None = None,
+        origin: str | None = None,
+        q: str | None = None,
+    ) -> list[LlmCallRecord]: ...
+    @abstractmethod
+    async def get_by_id(self, call_id: int) -> LlmCallRecord | None: ...
+    @abstractmethod
+    async def count_since(self, since: datetime) -> int: ...
+    @abstractmethod
+    async def metrics_24h(self) -> dict: ...
+    @abstractmethod
+    async def delete_older_than(self, days: int) -> int: ...
+    @abstractmethod
+    async def prune_to_max_rows(self, max_rows: int) -> int: ...
+
+
 class Stores:
     def __init__(
         self,
@@ -375,6 +402,7 @@ class Stores:
         loopbacks: LoopBacksStore | None = None,
         funnel_traces: FunnelTracesStore | None = None,
         funnel_order: FunnelOrderStore | None = None,
+        llm_calls: LlmCallStore | None = None,
     ):
         self.items = items
         self.triage = triage
@@ -394,6 +422,7 @@ class Stores:
         self.loopbacks = loopbacks
         self.funnel_traces = funnel_traces
         self.funnel_order = funnel_order
+        self.llm_calls = llm_calls
 
     async def close(self):
         if self._close_fn:

@@ -36,6 +36,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useHealth } from '@/hooks/useStats'
+import { useLLMCalls, useLLMCallDetail, useLLMMetrics } from '@/hooks/useLLM'
 import { ApiError } from '@/lib/api'
 
 // ---- Status + role vocabularies (matching design prototype) ---- //
@@ -251,94 +252,9 @@ const LLM_STAGE_TONE: Record<string, string> = {
   triage: '#f5a623',
   briefing: '#b79cf7',
   aggregate: '#9a7af0',
-}
-
-// ---- Default mock LLM-call pool (used when no API is available) ---- //
-
-function buildDefaultLLMCalls(): LLMCall[] {
-  const now = Date.now()
-  const MODELS = ['claude-opus-4-8', 'claude-haiku-4-2']
-  const KIND = [
-    { origin: 'fr_31', purpose: 'classify · drop-confidence', stage: 'filter', model: 1 },
-    { origin: 'fr_29', purpose: 'classify · include-confidence', stage: 'filter', model: 1 },
-    { origin: 'en_github', purpose: 'enrich · summarize diff', stage: 'enricher', model: 0 },
-    { origin: 'triage', purpose: 'score · relevance + priority', stage: 'triage', model: 0 },
-    { origin: 'en_email', purpose: 'enrich · extract entities', stage: 'enricher', model: 1 },
-    { origin: 'briefing', purpose: 'summarize · morning briefing', stage: 'briefing', model: 0 },
-    { origin: 'fr_09', purpose: 'label · noise vs signal', stage: 'filter', model: 1 },
-    { origin: 'aggregate', purpose: 'merge · funnel verdict', stage: 'aggregate', model: 0 },
-  ]
-  const ITEM_POOL = ['D12871', 'D12863', 'eml_5521', 'cal_8841', 'chat_2207', 'itm_8841', 'eml_5488', 'itm_8829']
-  const BATCHES = [1, 1, 3, 1, 5, 2, 1, 4]
-  const calls: LLMCall[] = []
-  for (let i = 0; i < 64; i++) {
-    const k = KIND[i % KIND.length]
-    const batchN = BATCHES[i % 8]
-    const status = i % 19 === 5 ? 'error' : i % 11 === 3 ? 'running' : 'ok'
-    const inTok = 320 + ((i * 137) % 5400)
-    const outTok = 40 + ((i * 51) % 720)
-    const ms = k.model === 0 ? 240 + ((i * 83) % 900) : 90 + ((i * 37) % 260)
-    const items = Array.from({ length: batchN }, (_, j) => ITEM_POOL[(i + j) % ITEM_POOL.length])
-    calls.push({
-      id: 'llm_' + (94120 - i),
-      ts: new Date(now - i * 7400 - (i % 4) * 1300).toISOString(),
-      origin: k.origin,
-      purpose: k.purpose,
-      stage: k.stage,
-      model: MODELS[k.model],
-      temperature: k.stage === 'enricher' ? 0 : 0.2,
-      status,
-      batch: batchN,
-      items,
-      tokens_in: inTok,
-      tokens_out: status === 'running' ? null : outTok,
-      latency_ms: status === 'running' ? null : ms,
-    })
-  }
-  return calls
-}
-
-const DEFAULT_LLM_CALLS = buildDefaultLLMCalls()
-
-// Build the prompt / completion / structured-output detail for one batched call.
-function llmCallDetail(call: LLMCall): LLMCallDetailData {
-  const sysPrompt =
-    {
-      filter:
-        'You are a noise filter. Given an item and a rule, return whether the rule fires and a calibrated confidence.',
-      enricher:
-        'You enrich an item with structured metadata. Resolve linked entities and return facts only — never a verdict.',
-      triage:
-        'You are a triage scorer. Return relevance (0-100) and an estimated priority P0–P3 with a one-line reason.',
-      briefing:
-        'You write a terse morning briefing. Operator voice, no marketing, lead with the highest-priority signal.',
-      aggregate:
-        'You merge per-rule signals into a single verdict. Resolve conflicts, weight independent agreement higher.',
-    }[call.stage] || 'You assist the WorkBench triage pipeline.'
-
-  const subcalls: LLMSubCall[] = call.items.map((itemId, j) => {
-    const inT = Math.round(call.tokens_in / call.batch) + ((j * 13) % 40)
-    const outT = call.tokens_out == null ? null : Math.round(call.tokens_out / call.batch) + ((j * 7) % 18)
-    let structured: Record<string, unknown>
-    if (call.stage === 'filter')
-      structured = { rule: call.origin, item: itemId, fires: j % 2 === 0, confidence: 88 - j * 6 }
-    else if (call.stage === 'enricher')
-      structured = { item: itemId, entities: ['diff:' + itemId, 'author:alice'], ci_status: j % 2 ? 'passing' : 'failing' }
-    else if (call.stage === 'triage')
-      structured = { item: itemId, relevance: 94 - j * 11, priority: ['P0', 'P1', 'P2', 'P3'][j % 4] }
-    else if (call.stage === 'aggregate')
-      structured = { item: itemId, decision: j % 3 === 0 ? 'dropped' : 'triaged', priority: 'P1', confidence: 91 - j * 5 }
-    else structured = { item: itemId, summary: 'one-line summary for ' + itemId }
-    return {
-      item: itemId,
-      prompt: `[item ${itemId}]\n${call.purpose} — evaluate against context and return JSON.`,
-      completion: call.status === 'error' ? '— (request failed)' : JSON.stringify(structured),
-      structured: call.status === 'error' ? null : structured,
-      tokens_in: inT,
-      tokens_out: outT,
-    }
-  })
-  return { sysPrompt, subcalls }
+  extract: '#2dd4bf',
+  scoring: '#f5a623',
+  memory: '#d946ef',
 }
 
 // ---- SystemDiagram component ---- //
@@ -967,6 +883,7 @@ function LLMCallDetail({
   onClose: () => void
 }) {
   const [openSub, setOpenSub] = useState(0)
+  const detailQuery = useLLMCallDetail(call?.id ?? null)
 
   // Reset the sub-call selector when the open call changes.
   useEffect(() => {
@@ -976,7 +893,7 @@ function LLMCallDetail({
   if (!call) return null
 
   const st = LLM_STATUS[call.status] || LLM_STATUS.ok
-  const detail = llmCallDetail(call)
+  const detail: LLMCallDetailData = detailQuery.data ?? { sysPrompt: '', subcalls: [] }
   const sub = detail.subcalls[openSub] || detail.subcalls[0]
 
   return (
@@ -1101,7 +1018,7 @@ function LLMCallDetail({
           </div>
 
           {/* sub-call selector (batched) */}
-          {call.batch > 1 && (
+          {call.batch > 1 && detail.subcalls.length > 1 && (
             <div
               style={{
                 display: 'flex',
@@ -1141,6 +1058,20 @@ function LLMCallDetail({
           )}
 
           {/* body: input / completion / structured */}
+          {!sub ? (
+            <div
+              data-testid="llm-detail-loading"
+              style={{
+                padding: 32,
+                textAlign: 'center',
+                color: 'var(--muted-foreground)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+              }}
+            >
+              {detailQuery.isError ? '// failed to load call detail' : '// loading call detail…'}
+            </div>
+          ) : (
           <div style={{ overflowY: 'auto', padding: 18, display: 'grid', gap: 14 }}>
             <div>
               <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
@@ -1207,6 +1138,7 @@ function LLMCallDetail({
               )}
             </div>
           </div>
+          )}
         </div>
       </div>
     </Portal>
@@ -1215,40 +1147,29 @@ function LLMCallDetail({
 
 // ---- LLMInfra component ---- //
 //
-// A live-tailing log of every LLM invocation, with stat rollups. New rows
-// stream in (pausable) and flash on arrival; clicking a row opens its detail.
+// A live tail of every LLM invocation, with stat rollups. Rows are polled from
+// /api/llm/calls (summaries only); clicking a row lazily fetches its detail.
+// The "live" toggle gates the newest-row flash + auto-scroll (the query keeps
+// its last data either way — pausing is cosmetic, not a network pause).
 
-function LLMInfra({ pool = DEFAULT_LLM_CALLS }: { pool?: LLMCall[] }) {
-  const [rows, setRows] = useState<LLMCall[]>(() => pool.slice(0, 14))
+function LLMInfra() {
   const [live, setLive] = useState(true)
   const [detail, setDetail] = useState<LLMCall | null>(null)
   const [q, setQ] = useState('')
-  const cursor = useRef(14)
   const scroller = useRef<HTMLDivElement>(null)
 
-  // Stream a new synthetic row in every ~1.9s while live.
-  useEffect(() => {
-    if (!live) return undefined
-    const id = setInterval(() => {
-      setRows((prev) => {
-        const base = pool[cursor.current % pool.length]
-        cursor.current += 1
-        const row: LLMCall = {
-          ...base,
-          id: 'llm_' + (94250 + cursor.current),
-          ts: new Date().toISOString(),
-        }
-        return [...prev, row].slice(-80)
-      })
-    }, 1900)
-    return () => clearInterval(id)
-  }, [live, pool])
+  const callsQuery = useLLMCalls({ limit: 50 })
+  const metricsQuery = useLLMMetrics()
+
+  // API returns newest-first; render oldest-first so the tail (newest) sits at
+  // the bottom, matching the live-tail UX.
+  const rows = [...(callsQuery.data ?? [])].reverse()
 
   // Auto-scroll to the newest row while live.
   useEffect(() => {
     const el = scroller.current
     if (el && live) el.scrollTop = el.scrollHeight
-  }, [rows, live])
+  }, [rows.length, live])
 
   const query = q.trim().toLowerCase()
   const shown = query
@@ -1259,13 +1180,10 @@ function LLMInfra({ pool = DEFAULT_LLM_CALLS }: { pool?: LLMCall[] }) {
       )
     : rows
 
-  const withLatency = pool.filter((c) => c.latency_ms != null)
-  const calls24 = pool.length * 47
-  const errRate = Math.round((pool.filter((c) => c.status === 'error').length / pool.length) * 100)
-  const avgMs = Math.round(
-    withLatency.reduce((s, c) => s + (c.latency_ms ?? 0), 0) / Math.max(1, withLatency.length),
-  )
-  const batched = Math.round((pool.filter((c) => c.batch > 1).length / pool.length) * 100)
+  const metrics = metricsQuery.data
+  const errRate = metrics ? Math.round(metrics.error_rate * 100) : 0
+  const avgMs = metrics?.avg_latency_ms != null ? Math.round(metrics.avg_latency_ms) : null
+  const batched = metrics ? Math.round(metrics.batched_pct * 100) : 0
   const fmt = (iso: string) => new Date(iso).toLocaleTimeString([], { hour12: false })
 
   const COLS = '64px 88px minmax(0,1fr) 60px 96px 64px'
@@ -1276,8 +1194,11 @@ function LLMInfra({ pool = DEFAULT_LLM_CALLS }: { pool?: LLMCall[] }) {
         className="grid grid-cols-4 gap-4"
         data-testid="llm-stat-cards"
       >
-        <StatCard label="Calls (24h)" value={<Mono>{calls24.toLocaleString()}</Mono>} />
-        <StatCard label="Avg Latency" value={<Mono>{avgMs}ms</Mono>} />
+        <StatCard
+          label="Calls (24h)"
+          value={<Mono>{(metrics?.calls_24h ?? 0).toLocaleString()}</Mono>}
+        />
+        <StatCard label="Avg Latency" value={<Mono>{avgMs == null ? '—' : `${avgMs}ms`}</Mono>} />
         <StatCard label="Error Rate" value={<Mono>{errRate}%</Mono>} danger={errRate > 3} />
         <StatCard label="Batched" value={<Mono>{batched}%</Mono>} />
       </div>
@@ -1377,6 +1298,7 @@ function LLMInfra({ pool = DEFAULT_LLM_CALLS }: { pool?: LLMCall[] }) {
           >
             {shown.length === 0 ? (
               <div
+                data-testid="llm-log-empty"
                 style={{
                   padding: 24,
                   textAlign: 'center',
@@ -1385,7 +1307,11 @@ function LLMInfra({ pool = DEFAULT_LLM_CALLS }: { pool?: LLMCall[] }) {
                   fontSize: 12,
                 }}
               >
-                // no matching LLM calls
+                {callsQuery.isPending
+                  ? '// loading LLM calls…'
+                  : callsQuery.isError
+                    ? '// failed to load LLM calls'
+                    : '// no matching LLM calls'}
               </div>
             ) : (
               shown.map((c, ri) => {
@@ -1777,9 +1703,7 @@ export {
   DEFAULT_SYSTEM_LOGS,
   SYS_STATUS,
   ROLE_TONE,
-  DEFAULT_LLM_CALLS,
   LLM_STATUS,
   LLM_STAGE_TONE,
-  llmCallDetail,
   LLMInfra,
 }

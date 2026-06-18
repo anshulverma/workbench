@@ -17,6 +17,8 @@ async def test_retention_deletes_old_archived_items():
     stores.enrichment.delete_older_than = AsyncMock(return_value=2)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=1)
     stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
+    stores.llm_calls.delete_older_than = AsyncMock(return_value=0)
+    stores.llm_calls.prune_to_max_rows = AsyncMock(return_value=0)
 
     config = RetentionConfig(archived_items_days=90)
     result = await run_retention_cleanup(stores, config)
@@ -35,6 +37,8 @@ async def test_retention_skips_interaction_log():
     stores.enrichment.delete_older_than = AsyncMock(return_value=0)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=0)
     stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
+    stores.llm_calls.delete_older_than = AsyncMock(return_value=0)
+    stores.llm_calls.prune_to_max_rows = AsyncMock(return_value=0)
 
     config = RetentionConfig()
     await run_retention_cleanup(stores, config)
@@ -102,6 +106,8 @@ async def test_retention_passes_correct_days_to_stores():
     stores.enrichment.delete_older_than = AsyncMock(return_value=0)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=0)
     stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
+    stores.llm_calls.delete_older_than = AsyncMock(return_value=0)
+    stores.llm_calls.prune_to_max_rows = AsyncMock(return_value=0)
 
     config = RetentionConfig(
         archived_items_days=120,

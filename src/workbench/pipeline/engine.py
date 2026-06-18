@@ -28,6 +28,7 @@ from workbench.pipeline.filter import (
 from workbench.pipeline.triage import generate_card
 from workbench.providers.enrichment.base import ContextEnricher
 from workbench.providers.llm.base import LLMProvider
+from workbench.providers.llm.context import llm_call_context
 from workbench.storage.base import Stores
 
 logger = logging.getLogger(__name__)
@@ -169,9 +170,14 @@ class PipelineEngine:
             urgency_score = 50
             if self.queue_scorer and urgency_signals:
                 try:
-                    urgency_score = await self.queue_scorer.score_urgency(
-                        raw_text, urgency_signals
-                    )
+                    with llm_call_context(
+                        origin="queue_scorer",
+                        purpose="score_urgency",
+                        stage="scoring",
+                    ):
+                        urgency_score = await self.queue_scorer.score_urgency(
+                            raw_text, urgency_signals
+                        )
                 except Exception as e:
                     logger.warning(f"Queue scorer failed, using default: {e}")
 
@@ -230,9 +236,12 @@ class PipelineEngine:
                 ctx_for_scoring = [
                     (it, facts, rules) for it, (facts, rules) in zip(items, contexts)
                 ]
-                precomputed = await self.llm.score_relevance_many(
-                    ctx_for_scoring, max_batch_size=self.max_batch_size
-                )
+                with llm_call_context(
+                    origin="filter", purpose="score_relevance", stage="filter"
+                ):
+                    precomputed = await self.llm.score_relevance_many(
+                        ctx_for_scoring, max_batch_size=self.max_batch_size
+                    )
 
             for ext_item, score in zip(items, precomputed):
                 try:

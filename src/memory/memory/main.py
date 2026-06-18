@@ -6,6 +6,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import asyncpg
+
 from fastapi import FastAPI, Query
 
 from memory import __version__
@@ -14,6 +16,7 @@ from memory.graphiti_layer import GraphitiMemoryLayer
 from memory.llm import create_llm_client
 from memory.metrics import create_metrics
 from memory.instrumentation import instrument_llm_client, MemoryUsageAggregator
+from memory.llm_capture import LlmCallWriter
 from memory.embedder import create_embedder, create_cross_encoder
 from memory.models import (
     DecisionRecordRequest,
@@ -119,21 +122,54 @@ async def lifespan(app: FastAPI):
 
     llm_client = create_llm_client(config.llm)
 
+    # Full-fidelity LLM capture (ADR 0059): off by default. When enabled, open a
+    # SEPARATE asyncpg pool to the workbench DB and INSERT full rows into the
+    # workbench-owned llm_calls table. Preflight gates on table presence; if
+    # disabled / DSN unset / table absent, capture stays inert (logged once).
+    llm_writer = None
+    app.state.llm_writer = None
+    app.state.workbench_pool = None
+    if config.llm_tracking_enabled:
+        workbench_dsn = config.storage.workbench_dsn
+        if workbench_dsn:
+            try:
+                app.state.workbench_pool = await asyncpg.create_pool(
+                    workbench_dsn, min_size=1, max_size=2
+                )
+            except Exception as e:
+                logger.warning(
+                    "llm_capture: failed to open workbench pool (%s); "
+                    "capture disabled",
+                    e,
+                )
+        llm_writer = LlmCallWriter(
+            pool=app.state.workbench_pool, enabled=config.llm_tracking_enabled
+        )
+        await llm_writer.preflight()
+        app.state.llm_writer = llm_writer
+
     # Plugboard observability (ADR 0050): wrap the Graphiti LLM client in place
     # to count calls/latency/errors (tokens best-effort). Separate process =>
-    # own registry. Gated on metrics.enabled.
+    # own registry. ADR 0057: LLM capture must be independent of metrics.enabled.
+    # Instrument the client whenever metrics OR capture is active.
     if config.metrics.enabled:
         app.state.metrics = create_metrics()
         app.state.usage_agg = MemoryUsageAggregator()
+    else:
+        app.state.metrics = None
+        app.state.usage_agg = None
+
+    # Always instrument if metrics enabled OR capture active (writer present + passed preflight).
+    if config.metrics.enabled or (llm_writer is not None and llm_writer.active):
+        # instrument_llm_client handles metrics/aggregator/writer; when metrics
+        # disabled pass None so the wrapper skips metrics instrumentation.
         llm_client = instrument_llm_client(
             llm_client,
             app.state.metrics,
             config.llm.model,
             aggregator=app.state.usage_agg,
+            writer=llm_writer,
         )
-    else:
-        app.state.metrics = None
-        app.state.usage_agg = None
 
     embedder = create_embedder(config.embedder)
     cross_encoder = create_cross_encoder(config.embedder)
@@ -202,6 +238,8 @@ async def lifespan(app: FastAPI):
             pass
     await graphiti.close()
     await store.close()
+    if app.state.workbench_pool is not None:
+        await app.state.workbench_pool.close()
 
 
 def create_app() -> FastAPI:

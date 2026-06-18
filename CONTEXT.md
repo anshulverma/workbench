@@ -286,3 +286,17 @@ _Avoid_: "source status" alone (ambiguous with the `enabled` flag).
 **Usage aggregator / `llm_usage_summary`**: an in-process per-interval delta of plugboard calls/errors/tokens (keyed by client+model), drained and emitted as one structlog line every `metrics.summary_interval_seconds` (default 30s); emitted by both the main app and the memory service; skipped when the interval was empty. _Avoid_: confusing with Prometheus counters (which stay cumulative).
 
 **record_drop_decisions**: `pipeline.record_drop_decisions` config flag (default `false`) gating whether `auto_drop` decisions are recorded to the memory layer. `auto_include` recording is always on. _Avoid_: implying it gates all memory recording.
+
+**LLM Call Context**: task-local provenance (`origin`, `purpose`, `stage`) carried in a `ContextVar` and set with `llm_call_context(...)` at each pipeline stage entry; read by `record_plugboard_call` to label a captured call. Distinct from **Plugboard client** (a per-provider constant). _Avoid_: conflating `stage` (pipeline position) with `client` (which caller).
+
+**LLM call (durable) / `llm_calls`**: a persisted per-call record in the `llm_calls` table — one row per logical LLM call (a batched call is one row), the source of truth for the LLM Infra page and a queryable history. Captures provenance + system/input prompt + completion + structured output + tokens + latency + status. _Avoid_: "request"/"interaction"; never one row per item.
+
+**Subcall**: a per-item segment of a batched LLM call, stored as a JSONB element in `llm_calls.subcalls` (`item, prompt, completion, structured, tokens_in, tokens_out`). A single (non-batched) call is stored as exactly one subcall. _Avoid_: modeling a subcall as its own table row.
+
+**`tokens_estimated`**: a boolean on an `llm_calls` row/subcall marking that per-item token counts are a proportional split of the batch usage (prompts/completions/structured per item are exact; only tokens are divided). Also set for memory-subservice rows when Graphiti does not surface `usage`. _Avoid_: treating split tokens as exact.
+
+**`is_fallback`**: a boolean marking an `llm_calls` row produced by the per-item single-call fallback after a batch response failed to parse; such rows make token totals an upper bound. _Avoid_: counting fallback rows as independent additional work in dedup'd totals.
+
+**Canonical LLM stage**: the `stage` value on an `llm_calls` row — one of `extract`, `scoring`, `filter`, `triage`, `aggregate`, `memory` (with `enricher`/`briefing` reserved but unused, since enrichers and the morning briefing make no LLM call). Drives the UI `LLM_STAGE_TONE` color. _Avoid_: assuming every UI stage is populated.
+
+**Two-sink model**: LLM usage is recorded to two independent sinks fed from the same call event — the cumulative `plugboard_*` Prometheus counters (ops view) and the rolling-window `llm_calls` table (UI source of truth). They aggregate over different windows and are not expected to match exactly. _Avoid_: treating a mismatch between them as a bug.

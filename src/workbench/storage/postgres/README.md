@@ -8,8 +8,8 @@ interfaces.
 `Stores` aggregate), and one module per entity holding its `Pg*Store`
 implementation — `items.py`, `triage.py`, `jobs.py`, `ingestion_queue.py`,
 `interactions.py`, `filter_rules.py`, `enrichment.py`, `enrichers.py`,
-`feedback.py`, `funnel.py`, `loopbacks.py`, `sources.py`, `config.py`,
-`plans.py`, `processed.py`.
+`feedback.py`, `funnel.py`, `llm_calls.py`, `loopbacks.py`, `sources.py`,
+`config.py`, `plans.py`, `processed.py`.
 
 **What does NOT belong here:** the abstract repository interfaces (those live in
 `storage/`), schema migrations (`migrations/`), or domain models (`domain/`).

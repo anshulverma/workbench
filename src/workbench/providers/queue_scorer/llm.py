@@ -6,6 +6,7 @@ from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
 from workbench.providers.llm.plugboard import record_plugboard_call
+from workbench.providers.llm.anthropic import split_tokens_by_share
 from workbench.providers.queue_scorer.base import QueueScorer
 
 logger = logging.getLogger(__name__)
@@ -44,16 +45,38 @@ class LLMQueueScorer(QueueScorer):
         )
         self._sink = config.on_plugboard_call
 
-    async def score_urgency(self, raw_text: str, urgency_signals: dict) -> int:
+    async def score_urgency(
+        self, raw_text: str, urgency_signals: dict, *, is_fallback: bool = False
+    ) -> int:
         signals_text = (
             json.dumps(urgency_signals, indent=2) if urgency_signals else "None"
         )
         prompt = URGENCY_PROMPT.format(signals=signals_text, content=raw_text[:2000])
+
+        def _urgency_result(resp):
+            text = resp.content[0].text
+            structured = None
+            try:
+                t = text.strip()
+                if "```" in t:
+                    t = (
+                        t.split("```json")[-1].split("```")[0]
+                        if "```json" in t
+                        else t.split("```")[1].split("```")[0]
+                    )
+                structured = json.loads(t.strip())
+            except Exception:
+                structured = None
+            return text, structured, None
+
         try:
             response = await record_plugboard_call(
                 client="queue_scorer",
                 model=self.model,
                 sink=self._sink,
+                input_prompt=prompt,
+                result_extractor=_urgency_result,
+                is_fallback=is_fallback,
                 do_call=lambda: self.client.messages.create(
                     model=self.model,
                     max_tokens=100,
@@ -104,6 +127,48 @@ class LLMQueueScorer(QueueScorer):
             '[{"index": <int>, "urgency": <0-100>}].\n\n'
             f"Items:\n{json.dumps(payload, indent=2)}"
         )
+        item_prompts = {p["index"]: json.dumps(p, indent=2) for p in payload}
+
+        def _batch_urgency_result(resp):
+            text = resp.content[0].text.strip()
+            t = text
+            if "```" in t:
+                t = (
+                    t.split("```json")[-1].split("```")[0]
+                    if "```json" in t
+                    else t.split("```")[1].split("```")[0]
+                )
+            elements: dict[int, dict] = {}
+            try:
+                for d in json.loads(t.strip()):
+                    elements[int(d["index"])] = d
+            except Exception:
+                elements = {}
+            usage = getattr(resp, "usage", None)
+            total_in = getattr(usage, "input_tokens", None) if usage else None
+            total_out = getattr(usage, "output_tokens", None) if usage else None
+            indices = sorted(elements)
+            in_shares = [len(item_prompts.get(idx, "")) for idx in indices]
+            out_shares = [
+                len(json.dumps(elements[idx], separators=(",", ":"))) for idx in indices
+            ]
+            in_split = split_tokens_by_share(in_shares, total_in)
+            out_split = split_tokens_by_share(out_shares, total_out)
+            subcalls = []
+            for pos, idx in enumerate(indices):
+                el = elements[idx]
+                subcalls.append(
+                    {
+                        "item": str(idx),
+                        "prompt": item_prompts.get(idx, ""),
+                        "completion": json.dumps(el),
+                        "structured": el,
+                        "tokens_in": in_split[pos],
+                        "tokens_out": out_split[pos],
+                    }
+                )
+            return text, None, subcalls
+
         parsed: dict[int, int] = {}
         try:
             response = await record_plugboard_call(
@@ -111,6 +176,9 @@ class LLMQueueScorer(QueueScorer):
                 model=self.model,
                 sink=self._sink,
                 item_count=len(chunk),
+                input_prompt=prompt,
+                result_extractor=_batch_urgency_result,
+                tokens_estimated=True,
                 do_call=lambda: self.client.messages.create(
                     model=self.model,
                     max_tokens=min(4096, 40 * len(chunk) + 100),
@@ -133,7 +201,9 @@ class LLMQueueScorer(QueueScorer):
             if i in parsed:
                 results[offset + i] = parsed[i]
             else:
-                results[offset + i] = await self.score_urgency(raw_text, signals)
+                results[offset + i] = await self.score_urgency(
+                    raw_text, signals, is_fallback=True
+                )
 
     async def close(self) -> None:
         if self._http_client:

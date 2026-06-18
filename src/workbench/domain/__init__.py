@@ -21,6 +21,8 @@ from workbench.domain.filters import *  # noqa: F401,F403
 from workbench.domain.filters import __all__ as _filters_all
 from workbench.domain.items import *  # noqa: F401,F403
 from workbench.domain.items import __all__ as _items_all
+from workbench.domain.llm_calls import *  # noqa: F401,F403
+from workbench.domain.llm_calls import __all__ as _llm_calls_all
 from workbench.domain.pipeline import *  # noqa: F401,F403
 from workbench.domain.pipeline import __all__ as _pipeline_all
 from workbench.domain.plans import *  # noqa: F401,F403
@@ -35,6 +37,7 @@ from workbench.domain.triage import __all__ as _triage_all
 __all__ = [
     *_enums_all,
     *_items_all,
+    *_llm_calls_all,
     *_pipeline_all,
     *_triage_all,
     *_diff_all,
