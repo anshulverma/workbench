@@ -51,6 +51,12 @@ class Item(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     parent_item_id: int | None = None
+    # Materialized-path lineage (D1). `seq` is the 1-based index among siblings
+    # (NULL for roots); `path` is the full lineage string ("123", "123.1").
+    # Both are assigned by the store allocation seam (create_root/allocate_child)
+    # and are immutable after insert (D4) — None on an unpersisted Item.
+    seq: int | None = None
+    path: str | None = None
     action_source: str | None = None
     action_category: str | None = None
     snoozed_until: datetime | None = None

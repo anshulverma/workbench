@@ -32,6 +32,11 @@ class ItemStatus(str, Enum):
     # Ingestion funnel can show what was filtered out and why; excluded from the
     # active/triage feeds, which query by their own statuses.
     DROPPED = "dropped"
+    # Lineage lifecycle (D2/D3): a root is born INGESTED at enqueue and moves to
+    # EXTRACTED once its depth-1 children exist. Verdict statuses live on the
+    # children, not the root.
+    INGESTED = "ingested"
+    EXTRACTED = "extracted"
 
 
 class ItemCategory(str, Enum):
