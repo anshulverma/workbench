@@ -98,7 +98,6 @@ async def test_get_actions_grouped(client, app_with_state):
         status=ItemStatus.ACTIVE,
         action_source="triage_response",
         action_category="delegation",
-        parent_item_id=1,
     )
     item2 = Item(
         source_type="diff",

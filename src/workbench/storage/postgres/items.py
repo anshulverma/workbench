@@ -41,48 +41,76 @@ class PgItemStore(ItemStore):
         return self._row_to_item(row) if row else None
 
     async def save_item(self, item: Item) -> Item:
-        # id is a BIGINT identity column — omit it on INSERT and let the DB
-        # assign one, then write it back onto the passed Item so callers that
-        # link to it (e.g. card.item_id = item.id) see the real value.
-        row = await self.pool.fetchrow(
-            """INSERT INTO items
-               (source_type, source_id, summary, category, origin,
-                priority, status, raw_data, created_at, updated_at,
-                parent_item_id, action_source, action_category,
-                snoozed_until, completed_at,
-                tags, llm_summary, enriched_context, funnel_log,
-                verdict_action, verdict_priority, verdict_confidence, seq, path)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
-                       $10, $11, $12, $13, $14, $15,
-                       $16::jsonb, $17, $18::jsonb, $19::jsonb,
-                       $20, $21, $22, $23, $24)
-               RETURNING id""",
-            item.source_type,
-            item.source_id,
-            item.summary,
-            item.category.value,
-            item.origin.value,
-            item.priority.value,
-            item.status.value,
-            json.dumps(item.raw_data),
-            item.created_at,
-            item.updated_at,
-            item.parent_item_id,
-            item.action_source,
-            item.action_category,
-            item.snoozed_until,
-            item.completed_at,
-            json.dumps(item.tags),
-            item.llm_summary,
-            json.dumps(item.enriched_context),
-            json.dumps(item.funnel_log),
-            item.verdict_action,
-            item.verdict_priority,
-            item.verdict_confidence,
-            item.seq,
-            item.path,
-        )
-        item.id = row["id"]
+        # save_item INSERTs a brand-new item (the id is a BIGINT identity column,
+        # omitted on INSERT and assigned by the DB, then written back onto the
+        # passed Item so callers that link to it — e.g. card.item_id = item.id —
+        # see the real value). `path` is NOT NULL (migration 014).
+        #
+        # Self-heal the lineage path so call sites never have to deal with it
+        # (D1 allocation seam): a new rootless item with no path is a standalone
+        # root, so we assign path = str(id) — the same root semantics as
+        # create_root. An item that arrives WITH a path keeps it (no clobber); a
+        # new item that has a parent but no path is a misuse — children must be
+        # created via allocate_child so they get a correct seq/path — and is
+        # rejected rather than silently persisted pathless.
+        if not item.path and item.parent_item_id is not None:
+            raise ValueError(
+                "save_item: cannot persist a child item (parent_item_id set) "
+                "without a path; create children via allocate_child"
+            )
+        self_heal_root = not item.path
+        # Empty placeholder satisfies NOT NULL on INSERT; replaced with str(id)
+        # in the same txn for the self-heal case.
+        insert_path = item.path if item.path else ""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """INSERT INTO items
+                       (source_type, source_id, summary, category, origin,
+                        priority, status, raw_data, created_at, updated_at,
+                        parent_item_id, action_source, action_category,
+                        snoozed_until, completed_at,
+                        tags, llm_summary, enriched_context, funnel_log,
+                        verdict_action, verdict_priority, verdict_confidence,
+                        seq, path)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
+                               $10, $11, $12, $13, $14, $15,
+                               $16::jsonb, $17, $18::jsonb, $19::jsonb,
+                               $20, $21, $22, $23, $24)
+                       RETURNING id""",
+                    item.source_type,
+                    item.source_id,
+                    item.summary,
+                    item.category.value,
+                    item.origin.value,
+                    item.priority.value,
+                    item.status.value,
+                    json.dumps(item.raw_data),
+                    item.created_at,
+                    item.updated_at,
+                    item.parent_item_id,
+                    item.action_source,
+                    item.action_category,
+                    item.snoozed_until,
+                    item.completed_at,
+                    json.dumps(item.tags),
+                    item.llm_summary,
+                    json.dumps(item.enriched_context),
+                    json.dumps(item.funnel_log),
+                    item.verdict_action,
+                    item.verdict_priority,
+                    item.verdict_confidence,
+                    item.seq,
+                    insert_path,
+                )
+                item.id = row["id"]
+                if self_heal_root:
+                    item.path = str(item.id)
+                    await conn.execute(
+                        "UPDATE items SET path = $1 WHERE id = $2",
+                        item.path,
+                        item.id,
+                    )
         return item
 
     async def create_root(self, item: Item) -> Item:

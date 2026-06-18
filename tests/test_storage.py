@@ -496,6 +496,50 @@ async def test_create_root_sets_path_to_id(stores):
 
 
 @pytest.mark.asyncio
+async def test_save_item_self_heals_root_path(stores):
+    # A brand-new rootless item with no path is a standalone root: save_item
+    # must self-heal path = str(id) so the NOT NULL constraint is satisfied.
+    item = Item(
+        source_type="manual",
+        source_id="self-heal-1",
+        summary="standalone",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.ACTIVE,
+    )
+    saved = await stores.items.save_item(item)
+    assert saved.id is not None
+    assert saved.path == str(saved.id)
+    assert saved.parent_item_id is None
+
+    fetched = await stores.items.get_item(saved.id)
+    assert fetched.path == str(saved.id)
+
+
+@pytest.mark.asyncio
+async def test_save_item_preserves_existing_path(stores):
+    # An item that already carries a path (e.g. a child allocated elsewhere)
+    # must not have its path clobbered by save_item.
+    item = Item(
+        source_type="manual",
+        source_id="self-heal-2",
+        summary="prepathed",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.ACTIVE,
+        path="999999.7",
+        seq=7,
+        parent_item_id=999999,
+    )
+    saved = await stores.items.save_item(item)
+    assert saved.path == "999999.7"
+    fetched = await stores.items.get_item(saved.id)
+    assert fetched.path == "999999.7"
+
+
+@pytest.mark.asyncio
 async def test_allocate_child_paths(stores):
     root = await stores.items.create_root(
         Item(
