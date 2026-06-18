@@ -10,6 +10,7 @@
 // arrays/Sets and feeds them back into setState.
 
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import {
   useActions,
@@ -116,6 +117,14 @@ function ActionRow({
       </Badge>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">
+          {action.path && (
+            <Link
+              to={`/items/${action.path}`}
+              className="mr-2 font-mono text-xs text-primary hover:underline"
+            >
+              #{action.path}
+            </Link>
+          )}
           {action.summary}
           {action.parent_item && (
             <span className="ml-2 text-xs text-muted-foreground">

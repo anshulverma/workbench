@@ -73,6 +73,9 @@ function activityToTailEntry(item: ActivityItem, index: number): TailEntry {
     funnelStage: item.status ?? 'unknown',
     outcome: statusToOutcome(item.status),
     summary: item.summary ?? undefined,
+    // Presence-gated lineage link (Task 14): undefined until /api/activity
+    // carries `path`, at which point LiveTail renders the #path link.
+    path: item.path,
   }
 }
 

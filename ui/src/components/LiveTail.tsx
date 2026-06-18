@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import * as Icons from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Mono } from '@/components/Mono'
@@ -31,6 +32,9 @@ export interface TailEntry {
   label?: string
   /** Item summary for screen readers / tooltips. */
   summary?: string
+  /** Lineage path id (e.g. "5.1"). Presence-gated link (Task 14): rendered only
+   *  when present, a no-op today since the activity payload omits it. */
+  path?: string
 }
 
 const TAIL_CAP = 60
@@ -178,7 +182,17 @@ export function LiveTail({
                   {formatTime(entry.timestamp)}
                 </Mono>
                 <Mono className="truncate text-xs text-tertiary">
-                  {entry.itemId}
+                  {entry.path ? (
+                    <Link
+                      to={`/items/${entry.path}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-primary hover:underline"
+                    >
+                      #{entry.path}
+                    </Link>
+                  ) : (
+                    entry.itemId
+                  )}
                 </Mono>
                 <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
                   {SrcIcon && <SrcIcon size={12} />}

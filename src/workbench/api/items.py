@@ -53,7 +53,7 @@ async def search_items(
                priority, status, created_at, updated_at,
                tags, llm_summary, enriched_context, funnel_log,
                verdict_action, verdict_priority, verdict_confidence,
-               action_source
+               action_source, path
           FROM items
          WHERE summary ILIKE '%' || $1 || '%' ESCAPE '\\'
     """
@@ -102,6 +102,7 @@ async def search_items(
                 "priority": r["priority"],
                 "status": r["status"],
                 "kind": "action" if r.get("action_source") else "item",
+                "path": r.get("path"),
                 "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                 "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
                 "tags": tags or [],

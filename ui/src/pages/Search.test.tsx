@@ -19,6 +19,7 @@ const HOUR = 3_600_000
 const DIFF_ITEM = {
   id: 'D12345',
   kind: 'diff',
+  path: '2.1',
   summary: 'Fix auth middleware race condition',
   source: 'phabricator',
   priority: 'P1',
@@ -175,6 +176,15 @@ describe('Search page', () => {
     expect(within(listbox).getByText('Weekly ops report')).toBeInTheDocument()
     expect(within(listbox).getByText('Sprint retro')).toBeInTheDocument()
     expect(within(listbox).getByText('Deploy question in #eng')).toBeInTheDocument()
+  })
+
+  it('links a search result to its item lineage page', async () => {
+    renderSearch()
+    await waitFor(() => {
+      expect(screen.getByTestId('search-page')).toBeInTheDocument()
+    })
+    const link = await screen.findByRole('link', { name: '#2.1' })
+    expect(link).toHaveAttribute('href', '/items/2.1')
   })
 
   it('auto-focuses the search input on mount', async () => {

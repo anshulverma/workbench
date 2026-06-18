@@ -51,6 +51,7 @@ export type ItemContext = DiffContext | EmailContext | MeetingContext | ChatCont
 export interface SearchItem {
   id: number
   kind: ItemKind
+  path?: string
   summary: string
   source: string
   priority: string | null

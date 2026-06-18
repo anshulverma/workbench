@@ -6,6 +6,7 @@ import {
   FileText,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import type { SearchItem } from '@/lib/types/search'
 import { relativeTime } from '@/lib/format'
 import { Mono } from '@/components/Mono'
@@ -47,12 +48,18 @@ export function ResultRow({
   const Icon = KIND_ICON[item.kind] ?? FileText
 
   return (
-    <button
-      type="button"
+    <div
       id={id}
       role="option"
       aria-selected={active}
+      tabIndex={-1}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onClick()
+        }
+      }}
       className={cn(
         'grid w-full cursor-pointer gap-1.5 rounded-md border p-3 text-left text-foreground transition-colors',
         active
@@ -63,6 +70,15 @@ export function ResultRow({
       <div className="flex items-center gap-2">
         <Icon size={14} className="shrink-0 text-[var(--brand)]" />
         <Mono className="text-[11px] text-muted-foreground">{item.id}</Mono>
+        {item.path && (
+          <Link
+            to={`/items/${item.path}`}
+            onClick={(e) => e.stopPropagation()}
+            className="font-mono text-[11px] text-primary hover:underline"
+          >
+            #{item.path}
+          </Link>
+        )}
         {item.priority && (
           <Badge variant={PRIORITY_VARIANT[item.priority] ?? 'p3'}>
             {item.priority}
@@ -79,6 +95,6 @@ export function ResultRow({
         {item.source} &middot; {relativeTime(item.created_at)} &middot;
         relevance {item.relevance}
       </Mono>
-    </button>
+    </div>
   )
 }
