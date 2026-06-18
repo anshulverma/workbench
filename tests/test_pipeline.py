@@ -707,3 +707,60 @@ async def test_process_populates_funnel_log_and_verdict(
     rel = next(e for e in saved.funnel_log if e["stage"] == "relevance")
     assert rel["confidence"] == 88
     assert "relevance 42" in rel["reason"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_births_root_item(stores, mock_llm):
+    engine = PipelineEngine(
+        stores=stores,
+        memory=NoopMemoryLayer(),
+        llm=mock_llm,
+        enricher=StubEnricher(),
+    )
+    await engine.enqueue(
+        raw_text="some diff text",
+        source_type="diff",
+        source_id="D-birth-1",
+        trigger=JobTrigger.MANUAL,
+    )
+    root = await stores.items.get_item_by_source_id("diff", "D-birth-1")
+    assert root is not None
+    assert root.status == ItemStatus.INGESTED
+    assert root.path == str(root.id)
+    assert root.parent_item_id is None
+    assert root.raw_data == {
+        "raw_text": "some diff text",
+        "source_type": "diff",
+        "id": "D-birth-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_enqueue_dedup_does_not_birth_root(stores, mock_llm):
+    # First enqueue births the root and marks (source_type, source_id) processed.
+    engine = PipelineEngine(
+        stores=stores,
+        memory=NoopMemoryLayer(),
+        llm=mock_llm,
+        enricher=StubEnricher(),
+    )
+    await engine.enqueue(
+        raw_text="first text",
+        source_type="diff",
+        source_id="D-dedup-1",
+        trigger=JobTrigger.MANUAL,
+    )
+    root = await stores.items.get_item_by_source_id("diff", "D-dedup-1")
+    assert root is not None
+    original_id = root.id
+
+    # Second enqueue dedups (is_processed) and must NOT create another root.
+    await engine.enqueue(
+        raw_text="second text",
+        source_type="diff",
+        source_id="D-dedup-1",
+        trigger=JobTrigger.MANUAL,
+    )
+    still = await stores.items.get_item_by_source_id("diff", "D-dedup-1")
+    assert still.id == original_id
+    assert still.raw_data["raw_text"] == "first text"

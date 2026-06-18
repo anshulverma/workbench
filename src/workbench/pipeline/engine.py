@@ -10,6 +10,7 @@ from workbench.domain import (
     ExtractedItem,
     IngestionQueueEntry,
     Item,
+    ItemCategory,
     ItemOrigin,
     ItemStatus,
     JobStatus,
@@ -165,6 +166,39 @@ class PipelineEngine:
             input_hash=hashlib.sha256(raw_text.encode()).hexdigest(),
         )
         await self.stores.jobs.save_job(job)
+
+        # Birth the root Item now (D3): the autoincrement assigns #123
+        # immediately, so the id is stable for the whole journey (incl. the
+        # LLM pre-persist window). Status INGESTED -> EXTRACTED once children
+        # exist. source_id may be None for ad-hoc enqueues; only born when set.
+        # No id is stashed on the queue entry — extraction re-resolves the root
+        # by (source_type, source_id) via get_item_by_source_id.
+        root_item = None
+        if source_id:
+            # Root carries the source snapshot so the scheduler change-detector
+            # diffs the root on re-poll. VERIFIED shape invariant: the ONLY
+            # change-detection consumer is scheduler._parse_raw, which reads only
+            # raw_data["raw_text"] and json.loads-es it; every in-scope adapter
+            # (diff/Phabricator, meta_tasks, google_docs, gmail, github) sets
+            # RawItem.raw_text to the JSON-encoded source record, so this single
+            # {"raw_text", "source_type", "id"} shape is correct for ALL source
+            # types. No adapter reads any other raw_data key for change-detection.
+            root_item = await self.stores.items.create_root(
+                Item(
+                    source_type=source_type,
+                    source_id=source_id,
+                    summary=(raw_text[:200] if raw_text else ""),
+                    category=ItemCategory.INFORMATIONAL,
+                    origin=ItemOrigin.AUTO_INCLUDED,
+                    priority=Priority.PENDING,
+                    status=ItemStatus.INGESTED,
+                    raw_data={
+                        "raw_text": raw_text,
+                        "source_type": source_type,
+                        "id": source_id,
+                    },
+                )
+            )
 
         if urgency_score is None:
             urgency_score = 50
