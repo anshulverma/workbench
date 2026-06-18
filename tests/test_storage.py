@@ -493,3 +493,182 @@ async def test_create_root_sets_path_to_id(stores):
     fetched = await stores.items.get_item(saved.id)
     assert fetched.path == str(saved.id)
     assert fetched.status == ItemStatus.INGESTED
+
+
+@pytest.mark.asyncio
+async def test_allocate_child_paths(stores):
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    c1 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="c1",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    c2 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="c2",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    assert c1.seq == 1 and c1.path == f"{root.id}.1"
+    assert c2.seq == 2 and c2.path == f"{root.id}.2"
+    assert c1.parent_item_id == root.id
+
+    gc = await stores.items.allocate_child(
+        c1,
+        Item(
+            source_type="diff",
+            source_id="D-ac-1",
+            summary="gc",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    assert gc.seq == 1 and gc.path == f"{root.id}.1.1"
+
+
+@pytest.mark.asyncio
+async def test_allocate_child_concurrent_no_collision(stores):
+    # Determinism: allocate_child takes pg_advisory_xact_lock(parent.id) as the
+    # first statement in its txn, serializing all 8 siblings on the same parent
+    # so seq allocation cannot collide even though the pool max_size (~5) is
+    # smaller than the fan-out. The result must be exactly paths .1 .. .8 with 8
+    # distinct seqs, every time.
+    import asyncio as _asyncio
+
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-cc-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+
+    def _mk(n):
+        return Item(
+            source_type="diff",
+            source_id="D-cc-1",
+            summary=f"c{n}",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        )
+
+    results = await _asyncio.gather(
+        *(stores.items.allocate_child(root, _mk(n)) for n in range(8))
+    )
+    paths = sorted(r.path for r in results)
+    assert paths == sorted(f"{root.id}.{i}" for i in range(1, 9))
+    assert len({r.seq for r in results}) == 8
+
+
+@pytest.mark.asyncio
+async def test_deletion_leaves_gap_without_renumber(stores):
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    c1 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="c1",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    c2 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="c2",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    await stores.items.pool.execute("DELETE FROM items WHERE id = $1", c1.id)
+    c3 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-gap-1",
+            summary="c3",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    assert c2.path == f"{root.id}.2"
+    assert c3.path == f"{root.id}.3"  # gap left by c1, never reused
+
+
+@pytest.mark.asyncio
+async def test_duplicate_root_for_source_blocked(stores):
+    import asyncpg
+
+    await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-dup-1",
+            summary="r",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    with pytest.raises(asyncpg.exceptions.UniqueViolationError):
+        await stores.items.create_root(
+            Item(
+                source_type="diff",
+                source_id="D-dup-1",
+                summary="r2",
+                category=ItemCategory.ACTION_ITEM,
+                origin=ItemOrigin.MANUAL,
+                priority="P2",
+                status=ItemStatus.INGESTED,
+            )
+        )

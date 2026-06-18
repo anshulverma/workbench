@@ -130,6 +130,74 @@ class PgItemStore(ItemStore):
                 )
         return item
 
+    async def allocate_child(self, parent: Item, child: Item) -> Item:
+        # seq = MAX(seq)+1 over siblings, computed and inserted in one txn. A
+        # txn-scoped advisory lock on parent.id serializes concurrent siblings so
+        # the read-then-insert is race-free regardless of pool size; the
+        # UNIQUE(parent_item_id, seq) constraint + retry are a backstop (D1
+        # allocation seam, D4 append-only gaps).
+        for _ in range(20):
+            try:
+                async with self.pool.acquire() as conn:
+                    async with conn.transaction():
+                        await conn.execute(
+                            "SELECT pg_advisory_xact_lock($1)", parent.id
+                        )
+                        seq_row = await conn.fetchrow(
+                            "SELECT COALESCE(MAX(seq), 0) + 1 AS seq "
+                            "FROM items WHERE parent_item_id = $1",
+                            parent.id,
+                        )
+                        seq = int(seq_row["seq"])
+                        path = f"{parent.path}.{seq}"
+                        row = await conn.fetchrow(
+                            """INSERT INTO items
+                               (source_type, source_id, summary, category, origin,
+                                priority, status, raw_data, created_at, updated_at,
+                                parent_item_id, action_source, action_category,
+                                snoozed_until, completed_at, tags, llm_summary,
+                                enriched_context, funnel_log, verdict_action,
+                                verdict_priority, verdict_confidence, seq, path)
+                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,
+                                       $11,$12,$13,$14,$15,$16::jsonb,$17,
+                                       $18::jsonb,$19::jsonb,$20,$21,$22,$23,$24)
+                               RETURNING id""",
+                            child.source_type,
+                            child.source_id,
+                            child.summary,
+                            child.category.value,
+                            child.origin.value,
+                            child.priority.value,
+                            child.status.value,
+                            json.dumps(child.raw_data),
+                            child.created_at,
+                            child.updated_at,
+                            parent.id,
+                            child.action_source,
+                            child.action_category,
+                            child.snoozed_until,
+                            child.completed_at,
+                            json.dumps(child.tags),
+                            child.llm_summary,
+                            json.dumps(child.enriched_context),
+                            json.dumps(child.funnel_log),
+                            child.verdict_action,
+                            child.verdict_priority,
+                            child.verdict_confidence,
+                            seq,
+                            path,
+                        )
+                child.id = row["id"]
+                child.seq = seq
+                child.path = path
+                child.parent_item_id = parent.id
+                return child
+            except asyncpg.exceptions.UniqueViolationError:
+                continue
+        raise RuntimeError(
+            f"allocate_child: exhausted retries allocating seq under {parent.id}"
+        )
+
     async def update_item(self, item_id: str, updates: ItemUpdate) -> Item:
         sets: list[str] = []
         params: list = []
