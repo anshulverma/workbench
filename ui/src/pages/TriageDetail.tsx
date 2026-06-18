@@ -54,6 +54,7 @@ export function TriageDetail() {
   const summary = (sections.summary as string) ?? c.card_content.summary ?? '(no summary)'
   const whyCare = (sections.why_care as string) ?? ''
   const change = (sections.change as string | undefined) ?? undefined
+  const itemPath = (c.card_content.path ?? c.card_content.item_path) as string | undefined
   const readOnly = c.status === 'responded' || c.status === 'expired'
 
   return (
@@ -84,13 +85,14 @@ export function TriageDetail() {
 
       {/* Item lineage link — presence-gated (Task 14): the card payload does not
           yet carry the lineage path, so this renders nothing today and lights up
-          automatically once the card endpoint resolves the item's path. */}
-      {c.card_content.item_path != null && (
+          automatically once the card endpoint resolves the item's path field (also
+          tolerant of the legacy item_path field name for backend flexibility). */}
+      {itemPath && (
         <Link
-          to={`/items/${String(c.card_content.item_path)}`}
+          to={`/items/${itemPath}`}
           className="font-mono text-xs text-primary hover:underline"
         >
-          #{String(c.card_content.item_path)}
+          #{itemPath}
         </Link>
       )}
 
