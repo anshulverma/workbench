@@ -32,6 +32,11 @@ class ServerConfig(BaseModel):
     port: int = 8421
     debug: bool = False
     api_token: str = "dev-token-change-me"
+    # TLS: when both are set, uvicorn serves HTTPS. Left None for plain HTTP
+    # (base deployment reached via SSH tunnel). Used by the Meta overlay to serve
+    # on the Secure Web Apps TLS port range with the devserver host cert.
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
 
 
 class StorageConfig(BaseModel):

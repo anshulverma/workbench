@@ -18,6 +18,9 @@ def main() -> None:
         host=config.server.host,
         port=config.server.port,
         reload=config.server.debug,
+        # None for both leaves uvicorn on plain HTTP; set together to serve TLS.
+        ssl_certfile=config.server.ssl_certfile,
+        ssl_keyfile=config.server.ssl_keyfile,
     )
 
 

@@ -31,6 +31,35 @@ def test_triage_config_poll_interval_custom():
     assert config.triage_poll_interval_seconds == 1
 
 
+def test_server_config_ssl_defaults_none():
+    from workbench.config import ServerConfig
+
+    # No TLS by default — base deployment serves plain HTTP behind an SSH tunnel.
+    config = ServerConfig()
+    assert config.ssl_certfile is None
+    assert config.ssl_keyfile is None
+
+
+def test_server_config_ssl_parsed():
+    yaml_str = """
+version: "0.3.0"
+server:
+  host: "::"
+  port: 44201
+  ssl_certfile: /etc/pki/tls/certs/host.crt
+  ssl_keyfile: /etc/pki/tls/certs/host.key
+storage:
+  postgres_dsn: postgres://localhost/workbench
+llm:
+  class: workbench.providers.llm.anthropic.AnthropicLLM
+  api_key: test
+"""
+    config = load_config_from_string(yaml_str)
+    assert config.server.port == 44201
+    assert config.server.ssl_certfile == "/etc/pki/tls/certs/host.crt"
+    assert config.server.ssl_keyfile == "/etc/pki/tls/certs/host.key"
+
+
 def test_connections_section_parsed():
     yaml_str = """
 version: "0.3.0"
