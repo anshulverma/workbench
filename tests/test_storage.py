@@ -468,3 +468,28 @@ async def test_ingestion_queue_recover_stuck(stores):
 
     depth = await stores.ingestion_queue.queue_depth()
     assert depth == 1
+
+
+# ── Item lineage (create_root) ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_root_sets_path_to_id(stores):
+    item = Item(
+        source_type="diff",
+        source_id="D-root-1",
+        summary="root",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.INGESTED,
+    )
+    saved = await stores.items.create_root(item)
+    assert saved.id is not None
+    assert saved.seq is None
+    assert saved.path == str(saved.id)
+    assert saved.parent_item_id is None
+
+    fetched = await stores.items.get_item(saved.id)
+    assert fetched.path == str(saved.id)
+    assert fetched.status == ItemStatus.INGESTED

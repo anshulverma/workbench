@@ -51,11 +51,11 @@ class PgItemStore(ItemStore):
                 parent_item_id, action_source, action_category,
                 snoozed_until, completed_at,
                 tags, llm_summary, enriched_context, funnel_log,
-                verdict_action, verdict_priority, verdict_confidence)
+                verdict_action, verdict_priority, verdict_confidence, seq, path)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
                        $10, $11, $12, $13, $14, $15,
                        $16::jsonb, $17, $18::jsonb, $19::jsonb,
-                       $20, $21, $22)
+                       $20, $21, $22, $23, $24)
                RETURNING id""",
             item.source_type,
             item.source_id,
@@ -79,8 +79,55 @@ class PgItemStore(ItemStore):
             item.verdict_action,
             item.verdict_priority,
             item.verdict_confidence,
+            item.seq,
+            item.path,
         )
         item.id = row["id"]
+        return item
+
+    async def create_root(self, item: Item) -> Item:
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """INSERT INTO items
+                       (source_type, source_id, summary, category, origin,
+                        priority, status, raw_data, created_at, updated_at,
+                        parent_item_id, action_source, action_category,
+                        snoozed_until, completed_at, tags, llm_summary,
+                        enriched_context, funnel_log, verdict_action,
+                        verdict_priority, verdict_confidence, seq, path)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,
+                               NULL,$11,$12,$13,$14,$15::jsonb,$16,
+                               $17::jsonb,$18::jsonb,$19,$20,$21,NULL,'')
+                       RETURNING id""",
+                    item.source_type,
+                    item.source_id,
+                    item.summary,
+                    item.category.value,
+                    item.origin.value,
+                    item.priority.value,
+                    item.status.value,
+                    json.dumps(item.raw_data),
+                    item.created_at,
+                    item.updated_at,
+                    item.action_source,
+                    item.action_category,
+                    item.snoozed_until,
+                    item.completed_at,
+                    json.dumps(item.tags),
+                    item.llm_summary,
+                    json.dumps(item.enriched_context),
+                    json.dumps(item.funnel_log),
+                    item.verdict_action,
+                    item.verdict_priority,
+                    item.verdict_confidence,
+                )
+                item.id = row["id"]
+                item.seq = None
+                item.path = str(item.id)
+                await conn.execute(
+                    "UPDATE items SET path = $1 WHERE id = $2", item.path, item.id
+                )
         return item
 
     async def update_item(self, item_id: str, updates: ItemUpdate) -> Item:
@@ -248,6 +295,8 @@ class PgItemStore(ItemStore):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             parent_item_id=row.get("parent_item_id"),
+            seq=row.get("seq"),
+            path=row.get("path"),
             action_source=row.get("action_source"),
             action_category=row.get("action_category"),
             tags=tags if tags else [],
