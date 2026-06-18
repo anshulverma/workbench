@@ -268,6 +268,7 @@ class PgItemStore(ItemStore):
     ) -> Item | None:
         row = await self.pool.fetchrow(
             "SELECT * FROM items WHERE source_type = $1 AND source_id = $2 "
+            "AND parent_item_id IS NULL "
             "AND status NOT IN ('archived', 'done') "
             "ORDER BY created_at DESC LIMIT 1",
             source_type,

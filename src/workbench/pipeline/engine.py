@@ -13,6 +13,7 @@ from workbench.domain import (
     ItemCategory,
     ItemOrigin,
     ItemStatus,
+    ItemUpdate,
     JobStatus,
     JobTrigger,
     PipelineJob,
@@ -276,14 +277,28 @@ class PipelineEngine:
                         ctx_for_scoring, max_batch_size=self.max_batch_size
                     )
 
+            # Resolve the ingestion root once (root-only resolver) so each
+            # extracted item is nested as a depth-1 child under it (D2/D3).
+            root = await self.stores.items.get_item_by_source_id(
+                raw_item.source_type, raw_item.id
+            )
+
             for ext_item, score in zip(items, precomputed):
                 try:
-                    await self._process_extracted_item(ext_item, job, precomputed=score)
+                    await self._process_extracted_item(
+                        ext_item, job, precomputed=score, root=root
+                    )
                 except Exception as e:
                     logger.error(f"Failed to process extracted item: {e}")
                     if job:
                         job.items_failed += 1
                         await self.stores.jobs.update_job(job)
+
+            # Children now exist under the root -> move root to EXTRACTED.
+            if root is not None and items:
+                await self.stores.items.update_item(
+                    root.id, ItemUpdate(status=ItemStatus.EXTRACTED)
+                )
         except Exception as e:
             logger.error("Pipeline processing failed: %s", e, exc_info=True)
             raise
@@ -293,6 +308,7 @@ class PipelineEngine:
         ext_item: ExtractedItem,
         job: PipelineJob | None,
         precomputed: tuple[int, int] | None = None,
+        root: Item | None = None,
     ) -> None:
         # Resolve the routing thresholds for THIS item's source (ADR0044): a
         # per-source override if configured, otherwise the global PipelineConfig
@@ -341,7 +357,10 @@ class PipelineEngine:
                 verdict_priority=Priority.P2.value,
                 verdict_confidence=confidence,
             )
-            await self.stores.items.save_item(item)
+            if root is not None:
+                item = await self.stores.items.allocate_child(root, item)
+            else:
+                await self.stores.items.save_item(item)
             await self.memory.record_pipeline_decision(
                 item, "auto_include", f"relevance={relevance}"
             )
@@ -366,7 +385,10 @@ class PipelineEngine:
                 verdict_priority=Priority.P3.value,
                 verdict_confidence=confidence,
             )
-            await self.stores.items.save_item(item)
+            if root is not None:
+                item = await self.stores.items.allocate_child(root, item)
+            else:
+                await self.stores.items.save_item(item)
             if self.record_drop_decisions:
                 await self.memory.record_pipeline_decision(
                     item, "auto_drop", f"relevance={relevance}"
@@ -390,7 +412,10 @@ class PipelineEngine:
                 verdict_priority=Priority.PENDING.value,
                 verdict_confidence=confidence,
             )
-            await self.stores.items.save_item(item)
+            if root is not None:
+                item = await self.stores.items.allocate_child(root, item)
+            else:
+                await self.stores.items.save_item(item)
 
             # Diffs MUST be enriched at "deep" on first triage so the card has
             # curated hunks — the DiffEnricher only fetches them in deep mode
