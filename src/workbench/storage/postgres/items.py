@@ -198,6 +198,34 @@ class PgItemStore(ItemStore):
             f"allocate_child: exhausted retries allocating seq under {parent.id}"
         )
 
+    async def get_by_path(self, path: str) -> Item | None:
+        row = await self.pool.fetchrow("SELECT * FROM items WHERE path = $1", path)
+        return self._row_to_item(row) if row else None
+
+    async def get_ancestors(self, item: Item) -> list[Item]:
+        # Ancestors are the strict path prefixes: "123.1.2" -> ["123", "123.1"].
+        if not item.path or "." not in item.path:
+            return []
+        segments = item.path.split(".")
+        prefixes = [".".join(segments[: i + 1]) for i in range(len(segments) - 1)]
+        rows = await self.pool.fetch(
+            "SELECT * FROM items WHERE path = ANY($1::text[]) ORDER BY length(path), path",
+            prefixes,
+        )
+        return [self._row_to_item(r) for r in rows]
+
+    async def get_children(self, parent_id: int) -> list[tuple[Item, bool]]:
+        rows = await self.pool.fetch(
+            """SELECT c.*,
+                      EXISTS (SELECT 1 FROM items g WHERE g.parent_item_id = c.id)
+                          AS has_children
+                 FROM items c
+                WHERE c.parent_item_id = $1
+                ORDER BY c.seq""",
+            parent_id,
+        )
+        return [(self._row_to_item(r), bool(r["has_children"])) for r in rows]
+
     async def update_item(self, item_id: str, updates: ItemUpdate) -> Item:
         sets: list[str] = []
         params: list = []

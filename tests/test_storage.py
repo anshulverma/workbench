@@ -672,3 +672,70 @@ async def test_duplicate_root_for_source_blocked(stores):
                 status=ItemStatus.INGESTED,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_get_by_path_and_ancestors_and_children(stores):
+    root = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="root",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.MANUAL,
+            priority="P2",
+            status=ItemStatus.INGESTED,
+        )
+    )
+    c1 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="c1",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    c2 = await stores.items.allocate_child(
+        root,
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="c2",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+    gc = await stores.items.allocate_child(
+        c1,
+        Item(
+            source_type="diff",
+            source_id="D-nav-1",
+            summary="gc",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority="P2",
+            status=ItemStatus.ACTIVE,
+        ),
+    )
+
+    # get_by_path
+    by_path = await stores.items.get_by_path(gc.path)
+    assert by_path is not None and by_path.id == gc.id
+    assert await stores.items.get_by_path("999.9.9") is None
+
+    # ancestors: root-first, excludes self
+    anc = await stores.items.get_ancestors(gc)
+    assert [a.path for a in anc] == [root.path, c1.path]
+
+    # children with has_children flags
+    kids = await stores.items.get_children(root.id)
+    by_id = {item.id: has for item, has in kids}
+    assert by_id[c1.id] is True  # c1 has gc
+    assert by_id[c2.id] is False  # c2 has none
+    assert sorted(item.seq for item, _ in kids) == [1, 2]
