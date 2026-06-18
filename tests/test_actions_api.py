@@ -119,6 +119,10 @@ async def test_get_actions_grouped(client, app_with_state):
     assert "delegation" in data["categories"]
     assert "review" in data["categories"]
     assert data["total"] == 2
+    # Gap 1: verify path is serialized in /api/actions response
+    actions = data["categories"]["delegation"] + data["categories"]["review"]
+    assert all("path" in action for action in actions)
+    assert all(action["path"] == str(action["id"]) for action in actions)
 
 
 @pytest.mark.asyncio
@@ -353,3 +357,49 @@ async def test_auth_token_endpoint(client, app_with_state):
     assert r.status_code == 200
     data = r.json()
     assert data["token"] == "dev-token-change-me"
+
+
+@pytest.mark.asyncio
+async def test_get_actions_serializes_path_for_parent_item(client, app_with_state):
+    """Gap 1: /api/actions must serialize path on the action itself AND on
+    parent_item so the ActionItems UI link works."""
+    stores = app_with_state.state.stores
+    # Create parent via create_root so it has a path
+    parent = await stores.items.create_root(
+        Item(
+            source_type="diff",
+            source_id="D-parent",
+            summary="Parent thread",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority=Priority.P2,
+            status=ItemStatus.ACTIVE,
+        )
+    )
+    # Create child action via allocate_child so it has a real path
+    child = await stores.items.allocate_child(
+        parent,
+        Item(
+            source_type="diff",
+            source_id="D-parent",
+            summary="Fix bug",
+            category=ItemCategory.ACTION_ITEM,
+            origin=ItemOrigin.TRIAGED,
+            priority=Priority.P1,
+            status=ItemStatus.ACTIVE,
+            action_source="triage_response",
+            action_category="review",
+        ),
+    )
+
+    r = await client.get("/api/actions")
+    assert r.status_code == 200
+    data = r.json()
+    actions = data["categories"]["review"]
+    assert len(actions) == 1
+    action = actions[0]
+    # The action itself has a path
+    assert action["path"] == child.path
+    # The parent_item also has path serialized
+    assert action["parent_item"] is not None
+    assert action["parent_item"]["path"] == parent.path

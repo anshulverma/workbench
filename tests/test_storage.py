@@ -783,3 +783,22 @@ async def test_get_by_path_and_ancestors_and_children(stores):
     assert by_id[c1.id] is True  # c1 has gc
     assert by_id[c2.id] is False  # c2 has none
     assert sorted(item.seq for item, _ in kids) == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_save_item_rejects_child_without_path(stores):
+    """Gap 2: save_item must raise ValueError when a NEW item has parent_item_id
+    set but no path — children must go through allocate_child."""
+    orphan = Item(
+        source_type="manual",
+        source_id="orphan-1",
+        summary="orphan child",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.MANUAL,
+        priority="P2",
+        status=ItemStatus.ACTIVE,
+        parent_item_id=999999,  # parent set
+        path=None,  # but no path
+    )
+    with pytest.raises(ValueError, match="cannot persist a child item.*without a path"):
+        await stores.items.save_item(orphan)
