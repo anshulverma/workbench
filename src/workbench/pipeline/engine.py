@@ -464,6 +464,7 @@ class PipelineEngine:
                 ext_item.raw_item.source_type,
                 memory=self.memory,
                 content_generators=self.content_generators,
+                item_path=item.path,
             )
             card.item_id = item.id
             card.relevance_score = relevance
@@ -471,7 +472,15 @@ class PipelineEngine:
             card.expires_at = datetime.now(timezone.utc) + timedelta(
                 days=self.triage_expiry_days
             )
-            await self.stores.triage.save_card(card)
+            saved_card = await self.stores.triage.save_card(card)
+            if (
+                item.path
+                and self.stores.entity_links is not None
+                and saved_card.id is not None
+            ):
+                await self.stores.entity_links.record(
+                    "triage_card", saved_card.id, [item.path]
+                )
             if job:
                 job.items_triaged += 1
                 await self.stores.jobs.update_job(job)

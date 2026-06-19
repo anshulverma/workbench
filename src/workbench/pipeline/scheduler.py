@@ -504,6 +504,7 @@ class WorkbenchScheduler:
             memory=self.memory,
             content_generators=self.content_generators,
             change_context=change_ctx,
+            item_path=item.path,
         )
         new_card.item_id = item.id
 
