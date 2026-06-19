@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -343,14 +344,20 @@ class WorkbenchScheduler:
         batching = self.config.batching
         scorer = getattr(self.pipeline, "queue_scorer", None)
         prescored: dict[int, int] = {}
+        urgency_correlation_id: str | None = None
         if batching.enabled and batching.score_urgency and scorer is not None:
             signalled = [(ri, sid) for (ri, sid) in items if ri.urgency_signals]
             if signalled:
+                # Roots don't exist yet at batch time, so we can't stamp item
+                # paths. Mint a correlation_id now and link the scored roots to
+                # this batched call once enqueue births them (post-persist).
+                urgency_correlation_id = str(uuid.uuid4())
                 try:
                     with llm_call_context(
                         origin="queue_scorer",
                         purpose="score_urgency",
                         stage="scoring",
+                        correlation_id=urgency_correlation_id,
                     ):
                         scores = await scorer.score_urgency_many(
                             [(ri.raw_text, ri.urgency_signals) for ri, _ in signalled],
@@ -361,9 +368,10 @@ class WorkbenchScheduler:
                 except Exception as e:
                     logger.error("Batch urgency scoring failed: %s", e)
         enqueued = 0
+        scored_root_paths: list[str] = []
         for ri, sid in items:
             try:
-                await self.pipeline.enqueue(
+                job, root_path = await self.pipeline.enqueue(
                     ri.raw_text,
                     ri.source_type,
                     source_id=sid,
@@ -374,8 +382,20 @@ class WorkbenchScheduler:
                     source_url=ri.source_url,
                 )
                 enqueued += 1
+                # Only roots that were part of the batched (signalled) scoring set.
+                if root_path is not None and id(ri) in prescored:
+                    scored_root_paths.append(root_path)
             except Exception as e:
                 logger.error("Failed to enqueue item %s: %s", sid, e)
+
+        if (
+            urgency_correlation_id is not None
+            and scored_root_paths
+            and getattr(self.stores, "entity_links", None) is not None
+        ):
+            await self.stores.entity_links.record_by_correlation(
+                "llm_call", urgency_correlation_id, scored_root_paths
+            )
         return enqueued
 
     async def _route_poll_results(
