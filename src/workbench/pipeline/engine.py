@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from workbench.providers.memory.base import MemoryLayer
@@ -269,6 +270,7 @@ class PipelineEngine:
             # depth-1 child under it (D2/D3).
 
             precomputed: list[tuple[int, int] | None] = [None] * len(items)
+            scoring_correlation_id: str | None = None
             if self.batch_relevance and items:
                 contexts = await asyncio.gather(
                     *(
@@ -281,26 +283,45 @@ class PipelineEngine:
                 ctx_for_scoring = [
                     (it, facts, rules) for it, (facts, rules) in zip(items, contexts)
                 ]
+                # The batched scoring call consumes the EXTRACTED items, not the
+                # root. We can't stamp item_paths yet (the children aren't born
+                # until allocate_child below), so we mint a correlation_id here
+                # and link the children post-persist (ADR 0064).
+                scoring_correlation_id = str(uuid.uuid4())
                 with llm_call_context(
                     origin="filter",
                     purpose="score_relevance",
                     stage="filter",
-                    item_paths=((root.path,) if root else ()),
+                    correlation_id=scoring_correlation_id,
                 ):
                     precomputed = await self.llm.score_relevance_many(
                         ctx_for_scoring, max_batch_size=self.max_batch_size
                     )
 
+            child_paths: list[str] = []
             for ext_item, score in zip(items, precomputed):
                 try:
-                    await self._process_extracted_item(
+                    child = await self._process_extracted_item(
                         ext_item, job, precomputed=score, root=root
                     )
+                    if child is not None and child.path:
+                        child_paths.append(child.path)
                 except Exception as e:
                     logger.error(f"Failed to process extracted item: {e}")
                     if job:
                         job.items_failed += 1
                         await self.stores.jobs.update_job(job)
+
+            # Post-persist link: the batched scoring call consumed exactly these
+            # depth-1 children, born above. Link them by correlation_id (ADR 0064).
+            if (
+                scoring_correlation_id is not None
+                and child_paths
+                and self.stores.entity_links is not None
+            ):
+                await self.stores.entity_links.record_by_correlation(
+                    "llm_call", scoring_correlation_id, child_paths
+                )
 
             # Children now exist under the root -> move root to EXTRACTED.
             if root is not None and items:
@@ -317,7 +338,7 @@ class PipelineEngine:
         job: PipelineJob | None,
         precomputed: tuple[int, int] | None = None,
         root: Item | None = None,
-    ) -> None:
+    ) -> Item:
         # Resolve the routing thresholds for THIS item's source (ADR0044): a
         # per-source override if configured, otherwise the global PipelineConfig
         # thresholds. source_type == adapter_type for ingested items.
@@ -451,3 +472,4 @@ class PipelineEngine:
             if job:
                 job.items_triaged += 1
                 await self.stores.jobs.update_job(job)
+        return item
