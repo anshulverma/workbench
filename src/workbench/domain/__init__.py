@@ -27,6 +27,8 @@ from workbench.domain.pipeline import *  # noqa: F401,F403
 from workbench.domain.pipeline import __all__ as _pipeline_all
 from workbench.domain.plans import *  # noqa: F401,F403
 from workbench.domain.plans import __all__ as _plans_all
+from workbench.domain.messages import *  # noqa: F401,F403
+from workbench.domain.messages import __all__ as _messages_all
 from workbench.domain.preferences import *  # noqa: F401,F403
 from workbench.domain.preferences import __all__ as _preferences_all
 from workbench.domain.sources import *  # noqa: F401,F403
@@ -47,4 +49,5 @@ __all__ = [
     *_enrichment_all,
     *_sources_all,
     *_plans_all,
+    *_messages_all,
 ]

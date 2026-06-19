@@ -60,3 +60,4 @@ class LlmCallRecord(BaseModel):
     subcalls: list[LlmSubcall] = Field(default_factory=list)
     tokens_estimated: bool = False
     is_fallback: bool = False
+    correlation_id: str | None = None
