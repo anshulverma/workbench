@@ -13,17 +13,20 @@ class PgLlmCallStore(LlmCallStore):
     def __init__(self, pool: asyncpg.Pool):
         self.pool = pool
 
-    async def save_many(self, records: list[LlmCallRecord]) -> None:
+    async def save_many(self, records, *, entity_links=None) -> None:
         if not records:
             return
-        await self.pool.executemany(
-            """INSERT INTO llm_calls
-               (started_at,origin,purpose,stage,model,temperature,status,error_type,
-                batch,items,tokens_in,tokens_out,cache_read_tokens,cache_write_tokens,
-                latency_ms,system_prompt,subcalls,tokens_estimated,is_fallback)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19)""",
-            [
-                (
+        async with self.pool.acquire() as conn:
+            for r in records:
+                new_id = await conn.fetchval(
+                    """INSERT INTO llm_calls
+                       (started_at,origin,purpose,stage,model,temperature,status,error_type,
+                        batch,items,tokens_in,tokens_out,cache_read_tokens,cache_write_tokens,
+                        latency_ms,system_prompt,subcalls,tokens_estimated,is_fallback,
+                        correlation_id)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,
+                               $17::jsonb,$18,$19,$20)
+                       RETURNING id""",
                     r.started_at,
                     r.origin,
                     r.purpose,
@@ -43,10 +46,13 @@ class PgLlmCallStore(LlmCallStore):
                     json.dumps([s.model_dump() for s in r.subcalls]),
                     r.tokens_estimated,
                     r.is_fallback,
+                    r.correlation_id,
                 )
-                for r in records
-            ],
-        )
+                # Call-time link rows: only records that carry item paths. Records
+                # with a correlation_id (post-persist path) write NO link rows here
+                # -- those arrive via record_by_correlation once the items exist.
+                if entity_links is not None and r.items:
+                    await entity_links.record("llm_call", new_id, list(r.items))
 
     @staticmethod
     def _row(rec) -> LlmCallRecord:
@@ -121,14 +127,27 @@ class PgLlmCallStore(LlmCallStore):
             "batched_pct": float(r["batched"] or 0.0),
         }
 
-    async def delete_older_than(self, days) -> int:
+    async def delete_older_than(self, days, *, entity_links=None) -> int:
+        if entity_links is not None:
+            ids = await self.pool.fetch(
+                "SELECT id FROM llm_calls WHERE created_at < NOW() - INTERVAL '1 day' * $1",
+                days,
+            )
+            for row in ids:
+                await entity_links.unlink_entity("llm_call", row["id"])
         res = await self.pool.execute(
             "DELETE FROM llm_calls WHERE created_at < NOW() - INTERVAL '1 day' * $1",
             days,
         )
         return int(res.split()[-1])
 
-    async def prune_to_max_rows(self, max_rows) -> int:
+    async def prune_to_max_rows(self, max_rows, *, entity_links=None) -> int:
+        victims = await self.pool.fetch(
+            "SELECT id FROM llm_calls ORDER BY started_at DESC OFFSET $1", max_rows
+        )
+        if entity_links is not None:
+            for row in victims:
+                await entity_links.unlink_entity("llm_call", row["id"])
         res = await self.pool.execute(
             "DELETE FROM llm_calls WHERE id IN "
             "(SELECT id FROM llm_calls ORDER BY started_at DESC OFFSET $1)",
