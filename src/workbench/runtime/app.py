@@ -89,10 +89,13 @@ def _to_llm_record(rec) -> LlmCallRecord | None:
         subcalls=subcalls,
         tokens_estimated=rec.tokens_estimated,
         is_fallback=rec.is_fallback,
+        correlation_id=(rec.context.correlation_id if rec.context else None),
     )
 
 
-async def _drain_once(queue: asyncio.Queue, store, max_batch: int = 50) -> None:
+async def _drain_once(
+    queue: asyncio.Queue, store, *, entity_links=None, max_batch: int = 50
+) -> None:
     """Drain one batch from ``queue`` and persist via ``store.save_many``.
 
     Blocks on the first item, then opportunistically drains up to ``max_batch``
@@ -111,7 +114,7 @@ async def _drain_once(queue: asyncio.Queue, store, max_batch: int = 50) -> None:
     records = [r for r in batch if r is not None]
     try:
         if records:
-            await store.save_many(records)
+            await store.save_many(records, entity_links=entity_links)
     except Exception:
         logger.exception("llm_calls writer failed; dropping batch")
     finally:
@@ -269,7 +272,12 @@ async def lifespan(app: FastAPI):
             async def _llm_writer_loop():
                 try:
                     while True:
-                        await _drain_once(_q, app.state.stores.llm_calls, max_batch=50)
+                        await _drain_once(
+                            _q,
+                            app.state.stores.llm_calls,
+                            entity_links=app.state.stores.entity_links,
+                            max_batch=50,
+                        )
                 except asyncio.CancelledError:
                     return
 
