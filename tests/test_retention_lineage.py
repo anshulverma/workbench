@@ -41,3 +41,11 @@ async def test_messages_swept():
     result = await run_retention_cleanup(s, config)
     s.messages.delete_older_than.assert_awaited_once()
     assert result.get("messages") == 3
+
+
+async def test_messages_pruner_receives_entity_links():
+    s = _stores()
+    config = RetentionConfig()
+    await run_retention_cleanup(s, config)
+    _, kwargs = s.messages.delete_older_than.call_args
+    assert kwargs.get("entity_links") is s.entity_links

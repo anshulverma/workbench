@@ -47,3 +47,35 @@ async def test_delete_older_than(pg_pool):
     deleted = await ms.delete_older_than(28)
     assert deleted == 1
     assert await ms.get_by_id(saved.id) is None
+
+
+async def test_delete_older_than_unlinks_message_links(stores, pg_pool):
+    from workbench.domain import Item, ItemCategory, ItemOrigin, Priority, ItemStatus
+    from workbench.storage.postgres.entity_links import PgEntityLinkStore
+
+    root = await stores.items.create_root(
+        Item(
+            source_type="t",
+            source_id="m1",
+            summary="root",
+            category=ItemCategory.INFORMATIONAL,
+            origin=ItemOrigin.AUTO_INCLUDED,
+            priority=Priority.P2,
+            status=ItemStatus.EXTRACTED,
+        )
+    )
+    ms = PgMessageStore(pg_pool)
+    els = PgEntityLinkStore(pg_pool)
+    saved = await ms.save(Message(kind="card", direction="outbound", summary="c"))
+    await els.record("message", saved.id, [root.path])
+    assert len(await els.for_entity("message", saved.id)) == 1
+
+    await pg_pool.execute(
+        "UPDATE messages SET created_at = $1 WHERE id = $2",
+        datetime.now(timezone.utc) - timedelta(days=40),
+        saved.id,
+    )
+    deleted = await ms.delete_older_than(28, entity_links=els)
+    assert deleted == 1
+    assert await ms.get_by_id(saved.id) is None
+    assert await els.for_entity("message", saved.id) == []

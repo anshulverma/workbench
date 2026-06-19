@@ -48,10 +48,13 @@ class PgLlmCallStore(LlmCallStore):
                     r.is_fallback,
                     r.correlation_id,
                 )
-                # Call-time link rows: only records that carry item paths. Records
-                # with a correlation_id (post-persist path) write NO link rows here
-                # -- those arrive via record_by_correlation once the items exist.
-                if entity_links is not None and r.items:
+                # Call-time link rows: only call-time records that carry real
+                # item paths. Records with a correlation_id (batched / post-persist
+                # path) write NO link rows here -- their `items` may hold batch
+                # INDEX strings ("0","1",...) that would falsely resolve to
+                # unrelated root items; those links arrive via
+                # record_by_correlation once the real items exist.
+                if entity_links is not None and r.correlation_id is None and r.items:
                     await entity_links.record("llm_call", new_id, list(r.items))
 
     @staticmethod

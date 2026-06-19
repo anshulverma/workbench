@@ -1205,11 +1205,12 @@ async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, in
                 config.llm_calls_max_rows, entity_links=entity_links
             )
 
-    # Durable messages retention. Item-side links cascade with the item; the
-    # message entity side has no DB FK, but pruning here keeps the table bounded.
+    # Durable messages retention + lineage cascade. The message entity side has
+    # no DB FK, so the pruner must explicitly unlink each pruned message's
+    # entity_item_links rows (per spec §10) to avoid dangling links.
     if getattr(stores, "messages", None) is not None:
         results["messages"] = await stores.messages.delete_older_than(
-            config.llm_calls_days
+            config.llm_calls_days, entity_links=entity_links
         )
 
     total = sum(results.values())

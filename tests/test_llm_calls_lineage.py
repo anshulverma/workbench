@@ -61,6 +61,82 @@ async def test_save_many_no_links_for_correlation_records(stores, pg_pool):
     assert await els.for_entity("llm_call", calls[0].id) == []
 
 
+async def test_save_many_correlation_record_with_index_items_writes_no_links(
+    stores, pg_pool
+):
+    """Regression: a batched/correlation record arrives with `items` holding
+    batch INDEX strings ("0","1",...). Those indices can collide with real root
+    paths (a root's path is str(id), e.g. "1"). save_many MUST skip call-time
+    links for any record carrying a correlation_id so it never forges links to
+    those unrelated roots."""
+    # Create roots so that some have paths "1"/"2"/... that collide with indices.
+    roots = [await _root(stores, f"r{n}") for n in range(3)]
+    els = PgEntityLinkStore(pg_pool)
+    # Indices that exist as real root paths plus a guaranteed-collision set.
+    index_items = ["0", "1", "2"] + [r.path for r in roots]
+    await stores.llm_calls.save_many(
+        [_rec(items=index_items, correlation_id="corr-batch")],
+        entity_links=els,
+    )
+    calls = await stores.llm_calls.list_calls(limit=10)
+    corr_calls = [c for c in calls if c.correlation_id == "corr-batch"]
+    assert len(corr_calls) == 1
+    # No call-time links written for the correlation record, even though some
+    # index strings collide with real root paths.
+    assert await els.for_entity("llm_call", corr_calls[0].id) == []
+    # And none of the real roots gained a spurious llm_call link.
+    for r in roots:
+        links = await els.for_item(r.path)
+        assert [l for l in links if l.entity_type == "llm_call"] == []
+
+
+async def test_to_llm_record_to_save_many_correlation_writes_no_links(stores, pg_pool):
+    """Mirror the real sink path: a batched PlugboardCallRecord (correlation_id
+    set, no context.item_paths, subcalls carrying index `item`s) flows through
+    runtime/app.py `_to_llm_record` -> save_many and forges ZERO links."""
+    from types import SimpleNamespace
+    from workbench.runtime.app import _to_llm_record
+
+    roots = [await _root(stores, f"r{n}") for n in range(2)]
+    els = PgEntityLinkStore(pg_pool)
+    # Transport view of a batched urgency call: context has a correlation_id but
+    # NO item_paths, so _to_llm_record falls back to subcall index `item`s.
+    ctx = SimpleNamespace(
+        origin="queue_scorer",
+        purpose="score_urgency",
+        stage="scoring",
+        item_paths=(),
+        correlation_id="corr-sink",
+    )
+    rec = SimpleNamespace(
+        context=ctx,
+        latency_s=0.01,
+        model="m",
+        temperature=None,
+        error_type=None,
+        item_count=2,
+        subcalls=[{"item": "0"}, {"item": "1"}],
+        input_tokens=1,
+        output_tokens=1,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        system_prompt=None,
+        tokens_estimated=False,
+        is_fallback=False,
+    )
+    record = _to_llm_record(rec)
+    assert record.correlation_id == "corr-sink"
+    assert record.items == ["0", "1"]  # index fallback, not real paths
+    await stores.llm_calls.save_many([record], entity_links=els)
+    calls = await stores.llm_calls.list_calls(limit=10)
+    sink_calls = [c for c in calls if c.correlation_id == "corr-sink"]
+    assert len(sink_calls) == 1
+    assert await els.for_entity("llm_call", sink_calls[0].id) == []
+    for r in roots:
+        links = await els.for_item(r.path)
+        assert [l for l in links if l.entity_type == "llm_call"] == []
+
+
 async def test_save_many_without_entity_links_still_persists(stores):
     root_paths = []
     await stores.llm_calls.save_many([_rec(items=root_paths)])

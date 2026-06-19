@@ -430,8 +430,12 @@ class MessageStore(ABC):
     @abstractmethod
     async def list_recent(self, limit: int) -> list[Message]: ...
     @abstractmethod
-    async def delete_older_than(self, days: int) -> int:
-        """Delete messages older than days. Returns count deleted."""
+    async def delete_older_than(self, days: int, *, entity_links=None) -> int:
+        """Delete messages older than days. Returns count deleted.
+
+        When ``entity_links`` is provided, cascade-unlink each pruned message's
+        entity links so no dangling entity_item_links rows remain.
+        """
         ...
 
 

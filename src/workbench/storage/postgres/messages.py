@@ -45,7 +45,17 @@ class PgMessageStore(MessageStore):
         )
         return [self._row(r) for r in rows]
 
-    async def delete_older_than(self, days: int) -> int:
+    async def delete_older_than(self, days: int, *, entity_links=None) -> int:
+        # Cascade-unlink message entity links before deleting the rows; the
+        # entity side has no DB FK, so dangling entity_item_links rows would
+        # otherwise survive the prune (mirrors the llm_calls pruners).
+        if entity_links is not None:
+            ids = await self.pool.fetch(
+                "SELECT id FROM messages WHERE created_at < NOW() - INTERVAL '1 day' * $1",
+                days,
+            )
+            for row in ids:
+                await entity_links.unlink_entity("message", row["id"])
         res = await self.pool.execute(
             "DELETE FROM messages WHERE created_at < NOW() - INTERVAL '1 day' * $1",
             days,
