@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 
 from workbench.storage.ingestion_runs import IngestionRunStore
 from workbench.domain.llm_calls import LlmCallRecord
+from workbench.domain.messages import Message
 from workbench.domain import (
     EnricherConfig,
     EnrichmentTrace,
@@ -376,9 +378,68 @@ class FunnelOrderStore(ABC):
     async def toggle_stage(self, stage_id: str, enabled: bool) -> None: ...
 
 
+@dataclass(frozen=True)
+class EntityLink:
+    entity_type: str
+    entity_id: int | None
+    item_id: int
+    item_path: str
+    correlation_id: str | None = None
+    created_at: datetime | None = None
+
+
+class EntityLinkStore(ABC):
+    @abstractmethod
+    async def record(
+        self, entity_type: str, entity_id: int, item_paths: list[str]
+    ) -> None:
+        """Idempotent upsert. Resolves each path to its item_id in-DB and writes
+        one row per resolved path (ON CONFLICT DO NOTHING). Empty item_paths is a
+        no-op; an unknown path resolves to no row."""
+        ...
+
+    @abstractmethod
+    async def record_by_correlation(
+        self, entity_type: str, correlation_id: str, item_paths: list[str]
+    ) -> None:
+        """Post-persist path. Same in-DB path->id resolve, but entity_id is left
+        NULL and correlation_id is stamped."""
+        ...
+
+    @abstractmethod
+    async def unlink_entity(self, entity_type: str, entity_id: int) -> int:
+        """Delete all link rows for one entity (retention cascade). Returns count."""
+        ...
+
+    @abstractmethod
+    async def for_item(self, path: str, *, subtree: bool = False) -> list[EntityLink]:
+        """All links touching ``path`` (and descendants when subtree=True)."""
+        ...
+
+    @abstractmethod
+    async def for_entity(self, entity_type: str, entity_id: int) -> list[EntityLink]:
+        """All item links an entity consumed."""
+        ...
+
+
+class MessageStore(ABC):
+    @abstractmethod
+    async def save(self, message: Message) -> Message: ...
+    @abstractmethod
+    async def get_by_id(self, message_id: int) -> Message | None: ...
+    @abstractmethod
+    async def list_recent(self, limit: int) -> list[Message]: ...
+    @abstractmethod
+    async def delete_older_than(self, days: int) -> int:
+        """Delete messages older than days. Returns count deleted."""
+        ...
+
+
 class LlmCallStore(ABC):
     @abstractmethod
-    async def save_many(self, records: list[LlmCallRecord]) -> None: ...
+    async def save_many(
+        self, records: list[LlmCallRecord], *, entity_links=None
+    ) -> None: ...
     @abstractmethod
     async def list_calls(
         self,
@@ -425,6 +486,8 @@ class Stores:
         funnel_traces: FunnelTracesStore | None = None,
         funnel_order: FunnelOrderStore | None = None,
         llm_calls: LlmCallStore | None = None,
+        entity_links: EntityLinkStore | None = None,
+        messages: MessageStore | None = None,
     ):
         self.items = items
         self.triage = triage
@@ -445,6 +508,8 @@ class Stores:
         self.funnel_traces = funnel_traces
         self.funnel_order = funnel_order
         self.llm_calls = llm_calls
+        self.entity_links = entity_links
+        self.messages = messages
 
     async def close(self):
         if self._close_fn:
