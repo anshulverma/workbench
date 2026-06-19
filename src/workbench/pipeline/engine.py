@@ -236,8 +236,16 @@ class PipelineEngine:
         job = await self.stores.jobs.get_job(job_id)
 
         try:
+            # Resolve the ingestion root first so the extraction call can link it
+            # at true depth (call-time path). The root was born in enqueue.
+            root = await self.stores.items.get_item_by_source_id(
+                raw_item.source_type, raw_item.id
+            )
             extracted = await extract_items(
-                self.llm, raw_item.raw_text, raw_item.source_type
+                self.llm,
+                raw_item.raw_text,
+                raw_item.source_type,
+                root_path=(root.path if root else None),
             )
             if job:
                 job.items_extracted = len(extracted)
@@ -257,11 +265,8 @@ class PipelineEngine:
             # Batched relevance scoring (ADR 0048): gather per-item facts/rules
             # concurrently, score all items in one call, then route each item
             # through the single-item helper with its precomputed score.
-            # Resolve the ingestion root once (root-only resolver) so each
-            # extracted item is nested as a depth-1 child under it (D2/D3).
-            root = await self.stores.items.get_item_by_source_id(
-                raw_item.source_type, raw_item.id
-            )
+            # Root already resolved above so each extracted item is nested as a
+            # depth-1 child under it (D2/D3).
 
             precomputed: list[tuple[int, int] | None] = [None] * len(items)
             if self.batch_relevance and items:
