@@ -26,6 +26,10 @@ def _scheduler(messenger, presenter):
     stores.triage.get_pending = AsyncMock(return_value=[_card()])
     stores.triage.get_next_unsent = AsyncMock(return_value=_card())
     stores.triage.update_card = AsyncMock()
+    # The send site now captures a durable Message + entity link; stub those
+    # async stores so the bare-MagicMock container can be awaited.
+    stores.messages = None
+    stores.entity_links = None
     config = MagicMock()
     config.triage.daily_cap = 20
     config.logging.timezone = "UTC"

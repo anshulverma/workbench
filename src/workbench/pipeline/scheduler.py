@@ -14,6 +14,7 @@ from workbench.telemetry.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.providers.memory.base import MemoryLayer
 from workbench.domain import (
+    CardMessage,
     ChangeContext,
     ExtractedItem,
     FilterRule,
@@ -31,6 +32,7 @@ from workbench.domain import (
     TriageResponse,
     UserTodo,
 )
+from workbench.domain.messages import Message
 from workbench.pipeline.debounce import DebounceManager
 from workbench.providers.change_detector.base import ChangeDetector
 from workbench.providers.change_detector.fallback import AlwaysMaterialDetector
@@ -734,6 +736,21 @@ class WorkbenchScheduler:
         card.daily_sequence = sent_today + 1
         await self.stores.triage.update_card(card)
 
+        _card_path = await self._interpret_item_path(card)
+        _body = (
+            Messenger.render_to_text(self.messenger, message)
+            if isinstance(message, CardMessage)
+            else message
+        )
+        await self._capture_message(
+            kind="card",
+            direction="outbound",
+            bot_message_id=msg_id,
+            body=_body,
+            summary=f"card #{card.id}",
+            item_path=_card_path,
+        )
+
     async def _interpret_item_path(self, card) -> str | None:
         """Resolve a card's item_id to its materialized path, or None."""
         item_id = getattr(card, "item_id", None)
@@ -741,6 +758,37 @@ class WorkbenchScheduler:
             return None
         item = await self.stores.items.get_item(item_id)
         return item.path if item else None
+
+    async def _capture_message(
+        self,
+        *,
+        kind: str,
+        direction: str,
+        bot_message_id: str | None,
+        body: str | None,
+        summary: str | None,
+        item_path: str | None,
+    ) -> Message:
+        """Persist a durable Message and link it (call-time) to the item path it
+        concerns. Returns the saved Message (id assigned). A no-store-configured
+        deployment is a safe no-op that still returns an unsaved Message."""
+        message = Message(
+            kind=kind,
+            direction=direction,
+            bot_message_id=bot_message_id,
+            body=body,
+            summary=summary,
+        )
+        if getattr(self.stores, "messages", None) is None:
+            return message
+        message = await self.stores.messages.save(message)
+        if (
+            item_path
+            and message.id is not None
+            and getattr(self.stores, "entity_links", None) is not None
+        ):
+            await self.stores.entity_links.record("message", message.id, [item_path])
+        return message
 
     async def _record_interaction_link(self, entry_id: int, path: str | None) -> None:
         """Link an InteractionEntry to the item path it concerns (call-time)."""
