@@ -79,7 +79,7 @@ async def test_score_and_decide_with_entity_and_relationships(stores, mock_llm):
     )
 
     mock_llm.score_relevance.return_value = (85, 90)
-    action, relevance, confidence = await score_and_decide(
+    action, relevance, confidence, _ = await score_and_decide(
         mock_llm,
         mock_memory,
         stores.filter_rules,
@@ -125,7 +125,7 @@ async def test_score_and_decide_handles_none_entity(stores, mock_llm):
     )
 
     mock_llm.score_relevance.return_value = (50, 50)
-    action, _, _ = await score_and_decide(
+    action, _, _, _ = await score_and_decide(
         mock_llm,
         mock_memory,
         stores.filter_rules,
@@ -626,7 +626,7 @@ async def test_auto_drop_not_recorded_when_flag_false(monkeypatch):
     )
 
     async def fake(*a, **k):
-        return ("auto_drop", 10, 95)
+        return ("auto_drop", 10, 95, "corr-1")
 
     monkeypatch.setattr(eng, "score_and_decide", fake)
     await engine._process_extracted_item(ext, job=None)
@@ -653,7 +653,7 @@ async def test_auto_drop_recorded_when_flag_true(monkeypatch):
     )
 
     async def fake(*a, **k):
-        return ("auto_drop", 10, 95)
+        return ("auto_drop", 10, 95, "corr-1")
 
     monkeypatch.setattr(eng, "score_and_decide", fake)
     await engine._process_extracted_item(ext, job=None)
@@ -693,7 +693,7 @@ async def test_process_populates_funnel_log_and_verdict(
     )
 
     async def fake_decide(*a, **k):
-        return (action, 42, 88)
+        return (action, 42, 88, "corr-1")
 
     async def fake_enrich(*a, **k):
         return {}

@@ -345,6 +345,7 @@ class PipelineEngine:
         include_t, drop_t, confidence_t = self.thresholds_for(
             ext_item.raw_item.source_type
         )
+        simple_correlation_id: str | None = None
         if precomputed is not None:
             # Batched path: score already computed by score_relevance_many; apply
             # the resolved thresholds without a second LLM call. Threshold logic
@@ -358,14 +359,16 @@ class PipelineEngine:
                 confidence_threshold=confidence_t,
             )
         else:
-            action, relevance, confidence = await score_and_decide(
-                self.llm,
-                self.memory,
-                self.stores.filter_rules,
-                ext_item,
-                include_threshold=include_t,
-                drop_threshold=drop_t,
-                confidence_threshold=confidence_t,
+            action, relevance, confidence, simple_correlation_id = (
+                await score_and_decide(
+                    self.llm,
+                    self.memory,
+                    self.stores.filter_rules,
+                    ext_item,
+                    include_threshold=include_t,
+                    drop_threshold=drop_t,
+                    confidence_threshold=confidence_t,
+                )
             )
 
         funnel_log = _funnel_log(action, relevance, confidence)
@@ -472,4 +475,17 @@ class PipelineEngine:
             if job:
                 job.items_triaged += 1
                 await self.stores.jobs.update_job(job)
+
+        # Non-batched scoring post-persist link: score_and_decide minted a
+        # correlation_id before this item's child was allocated. Now that the
+        # child exists, link the scoring llm_call to it by correlation (ADR 0064).
+        if (
+            simple_correlation_id is not None
+            and item is not None
+            and item.path
+            and self.stores.entity_links is not None
+        ):
+            await self.stores.entity_links.record_by_correlation(
+                "llm_call", simple_correlation_id, [item.path]
+            )
         return item
