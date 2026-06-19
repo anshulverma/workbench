@@ -1,0 +1,37 @@
+{
+  "topic": "cross-entity-lineage",
+  "domains": ["backend", "data-ml", "api-design", "frontend"],
+  "iteration": 1,
+  "phase": "artifacts-complete",
+  "mode": "--skip-plan (brainstorm: spec + ADRs, no implementation plan)",
+  "user_model_brief": "Meta engineer on workbench. Shipped item lineage (ADR 0062). Wants other created entities linked back to the item(s) they consumed; one generic extensible mechanism; entity links to exactly what it consumed at true depth. Prefers low-dependency, DB-enforced integrity, TDD.",
+  "decisions": [
+    {"id": "d1", "q": "linkage mechanism", "a": "generic path-keyed entity_item_links join table (uniform, bidirectional, many-to-many)", "source": "user"},
+    {"id": "d2", "q": "schema", "a": "id PK; entity_type TEXT; entity_id BIGINT NULL; item_id BIGINT NOT NULL FK CASCADE; item_path TEXT NOT NULL; correlation_id TEXT NULL; created_at; two partial unique indexes (entity_id-known + correlation-only); indexes (entity_type,entity_id)/item_path text_pattern_ops/item_id/correlation_id; migration 015 down_revision 014", "source": "griller+writer"},
+    {"id": "d3", "q": "entity_type values", "a": "llm_call, interaction, plan, triage_card, message (TEXT, extensible)", "source": "griller"},
+    {"id": "d4", "q": "linkage principle", "a": "link to exactly the item(s) consumed at true depth (extraction->root, scoring->scored children, action-handling->action, urgency->roots)", "source": "user"},
+    {"id": "d5", "q": "recording paths", "a": "call-time (item_paths stamp -> save_many derives items+links) and post-persist via correlation_id (relevance scoring + batched urgency)", "source": "griller"},
+    {"id": "d6", "q": "bug fixes", "a": "extract_items/score_and_decide pass item_paths/correlation_id in existing context wrappers (currently empty); generate_card stamp item_path; batched scoring replace (root.path,) with correlation-id child links", "source": "griller+writer (corrected: wrappers exist)"},
+    {"id": "d7", "q": "scoring linkage", "a": "ADD correlation_id so scoring links to actual scored children", "source": "user/bubble-up"},
+    {"id": "d8", "q": "urgency linkage", "a": "INCLUDE urgency-scoring links; plumb root paths out of enqueue", "source": "user/bubble-up"},
+    {"id": "d9", "q": "messages", "a": "ADD durable message-audit entity (new messages table + model) captured at send sites; entity_type message", "source": "user/bubble-up"},
+    {"id": "d10", "q": "existing FK entities", "a": "keep TriageCard/EnrichmentTrace/FeedbackCorrection item_id columns; do not migrate; reverse lookup UNIONs them", "source": "griller"},
+    {"id": "d11", "q": "shared helper", "a": "EntityLinkStore (record/record_by_correlation/unlink_entity/for_item/for_entity); one-line adoption; stores.entity_links", "source": "griller+user pref"},
+    {"id": "d12", "q": "retention cascade", "a": "pruners call unlink_entity (entity-side code-owned; item-side ON DELETE CASCADE)", "source": "griller"},
+    {"id": "d13", "q": "surfacing API", "a": "GET /api/items/{path}/related?subtree= grouped by entity_type, counts, per-type cap ~50", "source": "griller"},
+    {"id": "d14", "q": "UI", "a": "ItemPage 'What touched this' section + useItemRelated hook; rows link to detail where available", "source": "griller"},
+    {"id": "d15", "q": "backfill", "a": "none; start fresh (llm_calls.items already has paths)", "source": "griller"},
+    {"id": "d16", "q": "LlmCallRecord.items", "a": "keep denormalized; join table is source of truth; save_many writes both", "source": "griller"}
+  ],
+  "branches": [
+    {"id": "b1", "topic": "link mechanism/schema", "confidence": "resolved"},
+    {"id": "b2", "topic": "LLM-call linkage & timing", "confidence": "resolved"},
+    {"id": "b3", "topic": "other entities + helper + surfacing", "confidence": "resolved"}
+  ],
+  "unresolved": [],
+  "artifacts": {
+    "spec": "docs/auto-plan/specs/2026-06-18-cross-entity-lineage-design.md",
+    "adrs": ["docs/adr/0063-entity-item-links-join-table.md", "docs/adr/0064-correlation-id-llm-call-linkage.md"],
+    "plan": null
+  }
+}
