@@ -472,15 +472,7 @@ class PipelineEngine:
             card.expires_at = datetime.now(timezone.utc) + timedelta(
                 days=self.triage_expiry_days
             )
-            saved_card = await self.stores.triage.save_card(card)
-            if (
-                item.path
-                and self.stores.entity_links is not None
-                and saved_card.id is not None
-            ):
-                await self.stores.entity_links.record(
-                    "triage_card", saved_card.id, [item.path]
-                )
+            await self.stores.triage.save_card(card)
             if job:
                 job.items_triaged += 1
                 await self.stores.jobs.update_job(job)
