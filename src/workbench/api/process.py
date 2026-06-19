@@ -13,5 +13,7 @@ class ProcessRequest(BaseModel):
 @router.post("/process")
 async def process(req: ProcessRequest, request: Request):
     pipeline = request.app.state.pipeline
-    job = await pipeline.enqueue(req.text, req.source_type, trigger=JobTrigger.MANUAL)
+    job, _ = await pipeline.enqueue(
+        req.text, req.source_type, trigger=JobTrigger.MANUAL
+    )
     return {"job_id": job.id, "status": job.status.value}

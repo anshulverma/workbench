@@ -148,10 +148,13 @@ class PipelineEngine:
         urgency_score: int | None = None,
         source_ref: str | None = None,
         source_url: str | None = None,
-    ) -> PipelineJob:
+    ) -> tuple[PipelineJob, str | None]:
         """Enqueue a raw item. When ``urgency_score`` is provided (e.g. the
         scheduler pre-scored a batch via ``score_urgency_many``), the per-item
-        scorer call is skipped (ADR 0048)."""
+        scorer call is skipped (ADR 0048).
+
+        Returns ``(job, root_path)`` where ``root_path`` is the minted root's
+        path (None for ad-hoc enqueues without a source_id, or duplicates)."""
         if source_id:
             if await self.stores.processed.is_processed(source_type, source_id):
                 job = PipelineJob(
@@ -160,7 +163,7 @@ class PipelineEngine:
                     input_hash=hashlib.sha256(raw_text.encode()).hexdigest(),
                 )
                 await self.stores.jobs.save_job(job)
-                return job
+                return job, None
 
         job = PipelineJob(
             trigger=trigger,
@@ -175,6 +178,7 @@ class PipelineEngine:
         # exist. source_id may be None for ad-hoc enqueues; only born when set.
         # No id is stashed on the queue entry — extraction re-resolves the root
         # by (source_type, source_id) via get_item_by_source_id.
+        root_path: str | None = None
         if source_id:
             # Root carries the source snapshot so the scheduler change-detector
             # diffs the root on re-poll. VERIFIED shape invariant: the ONLY
@@ -184,7 +188,7 @@ class PipelineEngine:
             # RawItem.raw_text to the JSON-encoded source record, so this single
             # {"raw_text", "source_type", "id"} shape is correct for ALL source
             # types. No adapter reads any other raw_data key for change-detection.
-            await self.stores.items.create_root(
+            root = await self.stores.items.create_root(
                 Item(
                     source_type=source_type,
                     source_id=source_id,
@@ -200,6 +204,7 @@ class PipelineEngine:
                     },
                 )
             )
+            root_path = root.path
 
         if urgency_score is None:
             urgency_score = 50
@@ -209,6 +214,7 @@ class PipelineEngine:
                         origin="queue_scorer",
                         purpose="score_urgency",
                         stage="scoring",
+                        item_paths=((root_path,) if root_path else ()),
                     ):
                         urgency_score = await self.queue_scorer.score_urgency(
                             raw_text, urgency_signals
@@ -231,7 +237,7 @@ class PipelineEngine:
         if source_id:
             await self.stores.processed.mark_processed(source_type, source_id)
 
-        return job
+        return job, root_path
 
     async def process_raw_item(self, raw_item: RawItem, job_id: str) -> None:
         job = await self.stores.jobs.get_job(job_id)
