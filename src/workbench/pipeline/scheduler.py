@@ -656,10 +656,12 @@ class WorkbenchScheduler:
             for resp in responses:
                 text = resp.get("text", "").strip()
                 if text and self.llm:
+                    item_path = await self._interpret_item_path(card)
                     with llm_call_context(
                         origin="aggregate",
                         purpose="interpret_triage_response",
                         stage="aggregate",
+                        item_paths=((item_path,) if item_path else ()),
                     ):
                         interpreted = await self.llm.interpret_triage_response(
                             card, text
@@ -705,10 +707,12 @@ class WorkbenchScheduler:
                 except ValueError:
                     # Free-text response -- interpret via LLM
                     if self.llm:
+                        item_path = await self._interpret_item_path(card)
                         with llm_call_context(
                             origin="aggregate",
                             purpose="interpret_triage_response",
                             stage="aggregate",
+                            item_paths=((item_path,) if item_path else ()),
                         ):
                             interpreted = await self.llm.interpret_triage_response(
                                 card, text
@@ -729,6 +733,23 @@ class WorkbenchScheduler:
         card.bot_message_id = msg_id
         card.daily_sequence = sent_today + 1
         await self.stores.triage.update_card(card)
+
+    async def _interpret_item_path(self, card) -> str | None:
+        """Resolve a card's item_id to its materialized path, or None."""
+        item_id = getattr(card, "item_id", None)
+        if not item_id:
+            return None
+        item = await self.stores.items.get_item(item_id)
+        return item.path if item else None
+
+    async def _record_interaction_link(self, entry_id: int, path: str | None) -> None:
+        """Link an InteractionEntry to the item path it concerns (call-time)."""
+        if (
+            path
+            and entry_id is not None
+            and getattr(self.stores, "entity_links", None) is not None
+        ):
+            await self.stores.entity_links.record("interaction", entry_id, [path])
 
     async def _handle_triage_response(self, card, choice: int):
         option = card.options[choice - 1]
@@ -832,6 +853,8 @@ class WorkbenchScheduler:
                     interpreted=interpreted.model_dump(),
                 )
                 await self.stores.interactions.append(entry)
+                _path = await self._interpret_item_path(card)
+                await self._record_interaction_link(entry.id, _path)
                 # FIX 34: Return early -- do not process further actions
                 return
 
@@ -874,6 +897,8 @@ class WorkbenchScheduler:
                     interpreted=interpreted.model_dump(),
                 )
                 await self.stores.interactions.append(entry)
+                _path = await self._interpret_item_path(card)
+                await self._record_interaction_link(entry.id, _path)
                 # FIX 34: Defer returns early
                 return
 
@@ -918,6 +943,8 @@ class WorkbenchScheduler:
             interpreted=interpreted.model_dump(),
         )
         await self.stores.interactions.append(entry)
+        _path = await self._interpret_item_path(card)
+        await self._record_interaction_link(entry.id, _path)
 
         if self.messenger:
             await self.messenger.send_card(f"Done! {interpreted.explanation}")
