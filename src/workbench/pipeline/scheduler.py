@@ -1194,15 +1194,23 @@ async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, in
         config.ingestion_runs_days
     )
 
-    # LLM usage tracking retention (Task 10)
+    # LLM usage tracking retention (Task 10) + lineage cascade.
+    entity_links = getattr(stores, "entity_links", None)
     if getattr(stores, "llm_calls", None) is not None:
         results["llm_calls"] = await stores.llm_calls.delete_older_than(
-            config.llm_calls_days
+            config.llm_calls_days, entity_links=entity_links
         )
         if config.llm_calls_max_rows is not None:
             results["llm_calls_pruned"] = await stores.llm_calls.prune_to_max_rows(
-                config.llm_calls_max_rows
+                config.llm_calls_max_rows, entity_links=entity_links
             )
+
+    # Durable messages retention. Item-side links cascade with the item; the
+    # message entity side has no DB FK, but pruning here keeps the table bounded.
+    if getattr(stores, "messages", None) is not None:
+        results["messages"] = await stores.messages.delete_older_than(
+            config.llm_calls_days
+        )
 
     total = sum(results.values())
     if total > 0:

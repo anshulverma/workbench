@@ -7,6 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 from workbench.config import RetentionConfig
 
 
+def _add_messages_mock(stores):
+    """Add messages store mock to avoid TypeError in retention cleanup."""
+    stores.entity_links = MagicMock()
+    stores.messages = MagicMock()
+    stores.messages.delete_older_than = AsyncMock(return_value=0)
+    return stores
+
+
 @pytest.mark.asyncio
 async def test_retention_deletes_old_archived_items():
     from workbench.pipeline.scheduler import run_retention_cleanup
@@ -19,6 +27,7 @@ async def test_retention_deletes_old_archived_items():
     stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
     stores.llm_calls.delete_older_than = AsyncMock(return_value=0)
     stores.llm_calls.prune_to_max_rows = AsyncMock(return_value=0)
+    _add_messages_mock(stores)
 
     config = RetentionConfig(archived_items_days=90)
     result = await run_retention_cleanup(stores, config)
@@ -39,6 +48,7 @@ async def test_retention_skips_interaction_log():
     stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
     stores.llm_calls.delete_older_than = AsyncMock(return_value=0)
     stores.llm_calls.prune_to_max_rows = AsyncMock(return_value=0)
+    _add_messages_mock(stores)
 
     config = RetentionConfig()
     await run_retention_cleanup(stores, config)
@@ -54,11 +64,13 @@ async def test_retention_returns_all_counts():
     from workbench.pipeline.scheduler import run_retention_cleanup
 
     stores = MagicMock()
-    stores.items.delete_older_than = AsyncMock(side_effect=[10, 7])
+    stores.items.delete_older_than = AsyncMock(side_effect=[10, 7, 5])
     stores.triage.delete_older_than = AsyncMock(side_effect=[4, 6])
     stores.enrichment.delete_older_than = AsyncMock(return_value=3)
     stores.ingestion_queue.delete_dead_letters_older_than = AsyncMock(return_value=2)
     stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
+    stores.llm_calls = None  # Skip llm_calls in this test
+    _add_messages_mock(stores)
 
     config = RetentionConfig()
     result = await run_retention_cleanup(stores, config)
@@ -108,6 +120,7 @@ async def test_retention_passes_correct_days_to_stores():
     stores.ingestion_runs.delete_older_than = AsyncMock(return_value=0)
     stores.llm_calls.delete_older_than = AsyncMock(return_value=0)
     stores.llm_calls.prune_to_max_rows = AsyncMock(return_value=0)
+    _add_messages_mock(stores)
 
     config = RetentionConfig(
         archived_items_days=120,
