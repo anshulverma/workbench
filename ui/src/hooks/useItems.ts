@@ -88,3 +88,29 @@ export function useItem(path: string) {
     enabled: !!path,
   })
 }
+
+export interface RelatedEntry {
+  entity_type: string
+  id: number | null
+  label: string
+  at: string | null
+  href: string | null
+}
+
+export interface ItemRelatedData {
+  path: string
+  subtree: boolean
+  counts: Record<string, number>
+  groups: Record<string, RelatedEntry[]>
+}
+
+export function useItemRelated(path: string, subtree = false) {
+  return useQuery({
+    queryKey: ['item-related', path, subtree],
+    queryFn: () =>
+      apiGet<ItemRelatedData>(
+        `/api/items/${path}/related${subtree ? '?subtree=true' : ''}`,
+      ),
+    enabled: !!path,
+  })
+}

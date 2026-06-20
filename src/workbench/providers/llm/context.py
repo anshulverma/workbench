@@ -28,6 +28,7 @@ class LLMCallContext:
     purpose: str
     stage: str
     item_paths: tuple[str, ...] = ()
+    correlation_id: str | None = None
 
 
 # Module-level contextvar for ambient context
@@ -48,6 +49,7 @@ def llm_call_context(
     purpose: str,
     stage: str,
     item_paths: tuple[str, ...] | list[str] = (),
+    correlation_id: str | None = None,
 ):
     """Set LLM call context for the duration of this block.
 
@@ -57,6 +59,7 @@ def llm_call_context(
         stage: Pipeline stage (e.g., "extract", "filter", "triage").
         item_paths: Real item path ids this call concerns. A batched call may
             carry several. Defaults to empty (no lineage stamped).
+        correlation_id: Optional correlation identifier for post-persist linking.
 
     Yields:
         None
@@ -67,7 +70,11 @@ def llm_call_context(
             ...
     """
     context = LLMCallContext(
-        origin=origin, purpose=purpose, stage=stage, item_paths=tuple(item_paths)
+        origin=origin,
+        purpose=purpose,
+        stage=stage,
+        item_paths=tuple(item_paths),
+        correlation_id=correlation_id,
     )
     token = _current.set(context)
     try:

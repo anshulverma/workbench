@@ -31,7 +31,8 @@ class _FakeSource:
 async def test_poll_one_source_records_run_and_watermark(stores):
     mock_llm = AsyncMock()
     pipeline = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, None)
-    pipeline.enqueue = AsyncMock()
+    # enqueue returns (job, root_path) per the tuple contract.
+    pipeline.enqueue = AsyncMock(return_value=(None, None))
     src = SourceConfig(adapter_type="github", config={}, enabled=True)
     await stores.sources.upsert_source(src)
     adapter = _FakeSource(

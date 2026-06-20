@@ -106,6 +106,8 @@ def sched(stores):
         llm=AsyncMock(),
     )
     s._debounce = MagicMock()
+    # enqueue returns (job, root_path) per the tuple contract.
+    s.pipeline.enqueue = AsyncMock(return_value=(None, None))
     return s
 
 

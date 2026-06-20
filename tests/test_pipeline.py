@@ -79,7 +79,7 @@ async def test_score_and_decide_with_entity_and_relationships(stores, mock_llm):
     )
 
     mock_llm.score_relevance.return_value = (85, 90)
-    action, relevance, confidence = await score_and_decide(
+    action, relevance, confidence, _ = await score_and_decide(
         mock_llm,
         mock_memory,
         stores.filter_rules,
@@ -125,7 +125,7 @@ async def test_score_and_decide_handles_none_entity(stores, mock_llm):
     )
 
     mock_llm.score_relevance.return_value = (50, 50)
-    action, _, _ = await score_and_decide(
+    action, _, _, _ = await score_and_decide(
         mock_llm,
         mock_memory,
         stores.filter_rules,
@@ -137,7 +137,7 @@ async def test_score_and_decide_handles_none_entity(stores, mock_llm):
 @pytest.mark.asyncio
 async def test_enqueue_creates_job(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
-    job = await engine.enqueue("test content", "manual")
+    job, _ = await engine.enqueue("test content", "manual")
     assert job.status == JobStatus.QUEUED
 
     fetched = await stores.jobs.get_job(job.id)
@@ -150,7 +150,7 @@ async def test_process_raw_item_auto_include(stores, mock_llm):
     mock_llm.score_relevance.return_value = (85, 90)
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
-    job = await engine.enqueue("diff content", "diff", source_id="D123_100")
+    job, _ = await engine.enqueue("diff content", "diff", source_id="D123_100")
     raw = RawItem(
         id="D123_100", source_type="diff", source_label="D123", raw_text="diff content"
     )
@@ -168,7 +168,7 @@ async def test_process_raw_item_auto_drop(stores, mock_llm):
     mock_llm.score_relevance.return_value = (10, 90)
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
-    job = await engine.enqueue("spam content", "email", source_id="E1")
+    job, _ = await engine.enqueue("spam content", "email", source_id="E1")
     raw = RawItem(
         id="E1", source_type="email", source_label="email", raw_text="spam content"
     )
@@ -193,7 +193,7 @@ async def test_process_raw_item_triage(stores, mock_llm):
     mock_llm.score_relevance.return_value = (50, 50)
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
 
-    job = await engine.enqueue("ambiguous content", "email", source_id="E2")
+    job, _ = await engine.enqueue("ambiguous content", "email", source_id="E2")
     raw = RawItem(
         id="E2", source_type="email", source_label="email", raw_text="ambiguous content"
     )
@@ -233,7 +233,7 @@ async def test_auto_include_populates_raw_data(stores, mock_llm):
         raw_text='{"number": 123, "title": "fix auth"}',
         urgency_signals={"type": "pull_request"},
     )
-    job = await engine.enqueue(raw.raw_text, "diff", source_id="D123")
+    job, _ = await engine.enqueue(raw.raw_text, "diff", source_id="D123")
     await engine.process_raw_item(raw, job.id)
 
     items = await stores.items.get_items(ItemFilters(status=ItemStatus.ACTIVE))
@@ -253,7 +253,7 @@ async def test_triage_item_populates_raw_data(stores, mock_llm):
         source_label="D456",
         raw_text='{"number": 456, "title": "add tests"}',
     )
-    job = await engine.enqueue(raw.raw_text, "diff", source_id="D456")
+    job, _ = await engine.enqueue(raw.raw_text, "diff", source_id="D456")
     await engine.process_raw_item(raw, job.id)
 
     items = await stores.items.get_items(ItemFilters(status=ItemStatus.PENDING_TRIAGE))
@@ -482,7 +482,7 @@ async def test_e2e_enqueue_to_triage_card(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     worker = IngestionQueueWorker(stores, engine, concurrency=1)
 
-    job = await engine.enqueue(
+    job, _ = await engine.enqueue(
         "Review the auth migration PR #456", "diff", source_id="D456-e2e"
     )
     assert job.status == JobStatus.QUEUED
@@ -520,7 +520,7 @@ async def test_e2e_auto_include(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     worker = IngestionQueueWorker(stores, engine, concurrency=1)
 
-    job = await engine.enqueue(
+    job, _ = await engine.enqueue(
         "P0 incident: auth service down", "incident", source_id="INC-1"
     )
     worker.start()
@@ -547,7 +547,7 @@ async def test_e2e_auto_drop(stores, mock_llm):
     engine = PipelineEngine(stores, NoopMemoryLayer(), mock_llm, StubEnricher())
     worker = IngestionQueueWorker(stores, engine, concurrency=1)
 
-    job = await engine.enqueue(
+    job, _ = await engine.enqueue(
         "CI bot comment: lint passed", "github", source_id="GH-ci-1"
     )
     worker.start()
@@ -626,7 +626,7 @@ async def test_auto_drop_not_recorded_when_flag_false(monkeypatch):
     )
 
     async def fake(*a, **k):
-        return ("auto_drop", 10, 95)
+        return ("auto_drop", 10, 95, "corr-1")
 
     monkeypatch.setattr(eng, "score_and_decide", fake)
     await engine._process_extracted_item(ext, job=None)
@@ -653,7 +653,7 @@ async def test_auto_drop_recorded_when_flag_true(monkeypatch):
     )
 
     async def fake(*a, **k):
-        return ("auto_drop", 10, 95)
+        return ("auto_drop", 10, 95, "corr-1")
 
     monkeypatch.setattr(eng, "score_and_decide", fake)
     await engine._process_extracted_item(ext, job=None)
@@ -693,7 +693,7 @@ async def test_process_populates_funnel_log_and_verdict(
     )
 
     async def fake_decide(*a, **k):
-        return (action, 42, 88)
+        return (action, 42, 88, "corr-1")
 
     async def fake_enrich(*a, **k):
         return {}
@@ -788,7 +788,7 @@ async def test_extraction_creates_depth1_children_under_root(stores, mock_llm):
         llm=mock_llm,
         enricher=StubEnricher(),
     )
-    job = await engine.enqueue(
+    job, _ = await engine.enqueue(
         raw_text="diff text body",
         source_type="diff",
         source_id="D-ext-1",

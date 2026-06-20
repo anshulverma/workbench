@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from workbench.providers.memory.base import MemoryLayer
@@ -147,10 +148,13 @@ class PipelineEngine:
         urgency_score: int | None = None,
         source_ref: str | None = None,
         source_url: str | None = None,
-    ) -> PipelineJob:
+    ) -> tuple[PipelineJob, str | None]:
         """Enqueue a raw item. When ``urgency_score`` is provided (e.g. the
         scheduler pre-scored a batch via ``score_urgency_many``), the per-item
-        scorer call is skipped (ADR 0048)."""
+        scorer call is skipped (ADR 0048).
+
+        Returns ``(job, root_path)`` where ``root_path`` is the minted root's
+        path (None for ad-hoc enqueues without a source_id, or duplicates)."""
         if source_id:
             if await self.stores.processed.is_processed(source_type, source_id):
                 job = PipelineJob(
@@ -159,7 +163,7 @@ class PipelineEngine:
                     input_hash=hashlib.sha256(raw_text.encode()).hexdigest(),
                 )
                 await self.stores.jobs.save_job(job)
-                return job
+                return job, None
 
         job = PipelineJob(
             trigger=trigger,
@@ -174,6 +178,7 @@ class PipelineEngine:
         # exist. source_id may be None for ad-hoc enqueues; only born when set.
         # No id is stashed on the queue entry — extraction re-resolves the root
         # by (source_type, source_id) via get_item_by_source_id.
+        root_path: str | None = None
         if source_id:
             # Root carries the source snapshot so the scheduler change-detector
             # diffs the root on re-poll. VERIFIED shape invariant: the ONLY
@@ -183,7 +188,7 @@ class PipelineEngine:
             # RawItem.raw_text to the JSON-encoded source record, so this single
             # {"raw_text", "source_type", "id"} shape is correct for ALL source
             # types. No adapter reads any other raw_data key for change-detection.
-            await self.stores.items.create_root(
+            root = await self.stores.items.create_root(
                 Item(
                     source_type=source_type,
                     source_id=source_id,
@@ -199,6 +204,7 @@ class PipelineEngine:
                     },
                 )
             )
+            root_path = root.path
 
         if urgency_score is None:
             urgency_score = 50
@@ -208,6 +214,7 @@ class PipelineEngine:
                         origin="queue_scorer",
                         purpose="score_urgency",
                         stage="scoring",
+                        item_paths=((root_path,) if root_path else ()),
                     ):
                         urgency_score = await self.queue_scorer.score_urgency(
                             raw_text, urgency_signals
@@ -230,14 +237,22 @@ class PipelineEngine:
         if source_id:
             await self.stores.processed.mark_processed(source_type, source_id)
 
-        return job
+        return job, root_path
 
     async def process_raw_item(self, raw_item: RawItem, job_id: str) -> None:
         job = await self.stores.jobs.get_job(job_id)
 
         try:
+            # Resolve the ingestion root first so the extraction call can link it
+            # at true depth (call-time path). The root was born in enqueue.
+            root = await self.stores.items.get_item_by_source_id(
+                raw_item.source_type, raw_item.id
+            )
             extracted = await extract_items(
-                self.llm, raw_item.raw_text, raw_item.source_type
+                self.llm,
+                raw_item.raw_text,
+                raw_item.source_type,
+                root_path=(root.path if root else None),
             )
             if job:
                 job.items_extracted = len(extracted)
@@ -257,13 +272,11 @@ class PipelineEngine:
             # Batched relevance scoring (ADR 0048): gather per-item facts/rules
             # concurrently, score all items in one call, then route each item
             # through the single-item helper with its precomputed score.
-            # Resolve the ingestion root once (root-only resolver) so each
-            # extracted item is nested as a depth-1 child under it (D2/D3).
-            root = await self.stores.items.get_item_by_source_id(
-                raw_item.source_type, raw_item.id
-            )
+            # Root already resolved above so each extracted item is nested as a
+            # depth-1 child under it (D2/D3).
 
             precomputed: list[tuple[int, int] | None] = [None] * len(items)
+            scoring_correlation_id: str | None = None
             if self.batch_relevance and items:
                 contexts = await asyncio.gather(
                     *(
@@ -276,26 +289,45 @@ class PipelineEngine:
                 ctx_for_scoring = [
                     (it, facts, rules) for it, (facts, rules) in zip(items, contexts)
                 ]
+                # The batched scoring call consumes the EXTRACTED items, not the
+                # root. We can't stamp item_paths yet (the children aren't born
+                # until allocate_child below), so we mint a correlation_id here
+                # and link the children post-persist (ADR 0064).
+                scoring_correlation_id = str(uuid.uuid4())
                 with llm_call_context(
                     origin="filter",
                     purpose="score_relevance",
                     stage="filter",
-                    item_paths=((root.path,) if root else ()),
+                    correlation_id=scoring_correlation_id,
                 ):
                     precomputed = await self.llm.score_relevance_many(
                         ctx_for_scoring, max_batch_size=self.max_batch_size
                     )
 
+            child_paths: list[str] = []
             for ext_item, score in zip(items, precomputed):
                 try:
-                    await self._process_extracted_item(
+                    child = await self._process_extracted_item(
                         ext_item, job, precomputed=score, root=root
                     )
+                    if child is not None and child.path:
+                        child_paths.append(child.path)
                 except Exception as e:
                     logger.error(f"Failed to process extracted item: {e}")
                     if job:
                         job.items_failed += 1
                         await self.stores.jobs.update_job(job)
+
+            # Post-persist link: the batched scoring call consumed exactly these
+            # depth-1 children, born above. Link them by correlation_id (ADR 0064).
+            if (
+                scoring_correlation_id is not None
+                and child_paths
+                and self.stores.entity_links is not None
+            ):
+                await self.stores.entity_links.record_by_correlation(
+                    "llm_call", scoring_correlation_id, child_paths
+                )
 
             # Children now exist under the root -> move root to EXTRACTED.
             if root is not None and items:
@@ -312,13 +344,14 @@ class PipelineEngine:
         job: PipelineJob | None,
         precomputed: tuple[int, int] | None = None,
         root: Item | None = None,
-    ) -> None:
+    ) -> Item:
         # Resolve the routing thresholds for THIS item's source (ADR0044): a
         # per-source override if configured, otherwise the global PipelineConfig
         # thresholds. source_type == adapter_type for ingested items.
         include_t, drop_t, confidence_t = self.thresholds_for(
             ext_item.raw_item.source_type
         )
+        simple_correlation_id: str | None = None
         if precomputed is not None:
             # Batched path: score already computed by score_relevance_many; apply
             # the resolved thresholds without a second LLM call. Threshold logic
@@ -332,14 +365,16 @@ class PipelineEngine:
                 confidence_threshold=confidence_t,
             )
         else:
-            action, relevance, confidence = await score_and_decide(
-                self.llm,
-                self.memory,
-                self.stores.filter_rules,
-                ext_item,
-                include_threshold=include_t,
-                drop_threshold=drop_t,
-                confidence_threshold=confidence_t,
+            action, relevance, confidence, simple_correlation_id = (
+                await score_and_decide(
+                    self.llm,
+                    self.memory,
+                    self.stores.filter_rules,
+                    ext_item,
+                    include_threshold=include_t,
+                    drop_threshold=drop_t,
+                    confidence_threshold=confidence_t,
+                )
             )
 
         funnel_log = _funnel_log(action, relevance, confidence)
@@ -435,6 +470,7 @@ class PipelineEngine:
                 ext_item.raw_item.source_type,
                 memory=self.memory,
                 content_generators=self.content_generators,
+                item_path=item.path,
             )
             card.item_id = item.id
             card.relevance_score = relevance
@@ -446,3 +482,17 @@ class PipelineEngine:
             if job:
                 job.items_triaged += 1
                 await self.stores.jobs.update_job(job)
+
+        # Non-batched scoring post-persist link: score_and_decide minted a
+        # correlation_id before this item's child was allocated. Now that the
+        # child exists, link the scoring llm_call to it by correlation (ADR 0064).
+        if (
+            simple_correlation_id is not None
+            and item is not None
+            and item.path
+            and self.stores.entity_links is not None
+        ):
+            await self.stores.entity_links.record_by_correlation(
+                "llm_call", simple_correlation_id, [item.path]
+            )
+        return item

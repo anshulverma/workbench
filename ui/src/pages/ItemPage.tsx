@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ChevronRight, ChevronDown } from 'lucide-react'
-import { useItem, type ItemChild } from '@/hooks/useItems'
+import { useItem, useItemRelated, type ItemChild } from '@/hooks/useItems'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api'
@@ -68,6 +68,54 @@ function ChildRow({ child }: { child: ItemChild }) {
   )
 }
 
+function RelatedSection({ path }: { path: string }) {
+  const [subtree, setSubtree] = useState(false)
+  const q = useItemRelated(path, subtree)
+  const groups = q.data?.groups ?? {}
+  const counts = q.data?.counts ?? {}
+  const types = Object.keys(groups)
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h2 className="font-mono text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          What touched this
+        </h2>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            aria-label="include descendants"
+            checked={subtree}
+            onChange={(e) => setSubtree(e.target.checked)}
+          />
+          include descendants
+        </label>
+      </div>
+      {q.isPending && <Skeleton className="h-6 w-full" />}
+      {types.length === 0 && !q.isPending && (
+        <div className="text-sm text-muted-foreground">Nothing linked yet.</div>
+      )}
+      {types.map((t) => (
+        <div key={t} className="space-y-1">
+          <div className="text-xs font-semibold">
+            {t} ({counts[t] ?? groups[t].length})
+          </div>
+          {groups[t].map((e) => (
+            <div key={`${t}-${e.id}`} className="flex items-center gap-2 text-sm">
+              {e.href ? (
+                <a href={e.href} className="text-primary hover:underline">
+                  {e.label}
+                </a>
+              ) : (
+                <span>{e.label}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </section>
+  )
+}
+
 export function ItemPage() {
   const params = useParams()
   const path = params['*'] ?? ''
@@ -106,6 +154,7 @@ export function ItemPage() {
           {children.map((c) => <ChildRow key={c.path} child={c} />)}
         </div>
       </section>
+      <RelatedSection path={item.path ?? path} />
     </div>
   )
 }

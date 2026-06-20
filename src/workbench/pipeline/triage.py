@@ -34,6 +34,7 @@ async def generate_card(
     memory=None,
     content_generators: dict | None = None,
     change_context: ChangeContext | None = None,
+    item_path: str | None = None,
 ) -> TriageCard:
     """Generate a triage card with LLM, enriched by memory context.
 
@@ -105,7 +106,12 @@ async def generate_card(
     # FIX 30/31: Pass only the context dict, not the full enrichment wrapper.
     context_for_llm = enrichment_context.get("context", enrichment_context)
     generator = (content_generators or {}).get(source_type)
-    with llm_call_context(origin="triage", purpose="generate_card", stage="triage"):
+    with llm_call_context(
+        origin="triage",
+        purpose="generate_card",
+        stage="triage",
+        item_paths=((item_path,) if item_path else ()),
+    ):
         if generator is not None:
             try:
                 envelope = await generator.generate(

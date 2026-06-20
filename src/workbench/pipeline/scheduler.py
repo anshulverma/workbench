@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,7 @@ from workbench.telemetry.alerting import AlertManager
 from workbench.config import AppConfig, RetentionConfig
 from workbench.providers.memory.base import MemoryLayer
 from workbench.domain import (
+    CardMessage,
     ChangeContext,
     ExtractedItem,
     FilterRule,
@@ -30,6 +32,7 @@ from workbench.domain import (
     TriageResponse,
     UserTodo,
 )
+from workbench.domain.messages import Message
 from workbench.pipeline.debounce import DebounceManager
 from workbench.providers.change_detector.base import ChangeDetector
 from workbench.providers.change_detector.fallback import AlwaysMaterialDetector
@@ -343,14 +346,20 @@ class WorkbenchScheduler:
         batching = self.config.batching
         scorer = getattr(self.pipeline, "queue_scorer", None)
         prescored: dict[int, int] = {}
+        urgency_correlation_id: str | None = None
         if batching.enabled and batching.score_urgency and scorer is not None:
             signalled = [(ri, sid) for (ri, sid) in items if ri.urgency_signals]
             if signalled:
+                # Roots don't exist yet at batch time, so we can't stamp item
+                # paths. Mint a correlation_id now and link the scored roots to
+                # this batched call once enqueue births them (post-persist).
+                urgency_correlation_id = str(uuid.uuid4())
                 try:
                     with llm_call_context(
                         origin="queue_scorer",
                         purpose="score_urgency",
                         stage="scoring",
+                        correlation_id=urgency_correlation_id,
                     ):
                         scores = await scorer.score_urgency_many(
                             [(ri.raw_text, ri.urgency_signals) for ri, _ in signalled],
@@ -361,9 +370,10 @@ class WorkbenchScheduler:
                 except Exception as e:
                     logger.error("Batch urgency scoring failed: %s", e)
         enqueued = 0
+        scored_root_paths: list[str] = []
         for ri, sid in items:
             try:
-                await self.pipeline.enqueue(
+                job, root_path = await self.pipeline.enqueue(
                     ri.raw_text,
                     ri.source_type,
                     source_id=sid,
@@ -374,8 +384,20 @@ class WorkbenchScheduler:
                     source_url=ri.source_url,
                 )
                 enqueued += 1
+                # Only roots that were part of the batched (signalled) scoring set.
+                if root_path is not None and id(ri) in prescored:
+                    scored_root_paths.append(root_path)
             except Exception as e:
                 logger.error("Failed to enqueue item %s: %s", sid, e)
+
+        if (
+            urgency_correlation_id is not None
+            and scored_root_paths
+            and getattr(self.stores, "entity_links", None) is not None
+        ):
+            await self.stores.entity_links.record_by_correlation(
+                "llm_call", urgency_correlation_id, scored_root_paths
+            )
         return enqueued
 
     async def _route_poll_results(
@@ -504,6 +526,7 @@ class WorkbenchScheduler:
             memory=self.memory,
             content_generators=self.content_generators,
             change_context=change_ctx,
+            item_path=item.path,
         )
         new_card.item_id = item.id
 
@@ -635,10 +658,12 @@ class WorkbenchScheduler:
             for resp in responses:
                 text = resp.get("text", "").strip()
                 if text and self.llm:
+                    item_path = await self._interpret_item_path(card)
                     with llm_call_context(
                         origin="aggregate",
                         purpose="interpret_triage_response",
                         stage="aggregate",
+                        item_paths=((item_path,) if item_path else ()),
                     ):
                         interpreted = await self.llm.interpret_triage_response(
                             card, text
@@ -684,10 +709,12 @@ class WorkbenchScheduler:
                 except ValueError:
                     # Free-text response -- interpret via LLM
                     if self.llm:
+                        item_path = await self._interpret_item_path(card)
                         with llm_call_context(
                             origin="aggregate",
                             purpose="interpret_triage_response",
                             stage="aggregate",
+                            item_paths=((item_path,) if item_path else ()),
                         ):
                             interpreted = await self.llm.interpret_triage_response(
                                 card, text
@@ -708,6 +735,69 @@ class WorkbenchScheduler:
         card.bot_message_id = msg_id
         card.daily_sequence = sent_today + 1
         await self.stores.triage.update_card(card)
+
+        _card_path = await self._interpret_item_path(card)
+        _body = (
+            Messenger.render_to_text(self.messenger, message)
+            if isinstance(message, CardMessage)
+            else message
+        )
+        await self._capture_message(
+            kind="card",
+            direction="outbound",
+            bot_message_id=msg_id,
+            body=_body,
+            summary=f"card #{card.id}",
+            item_path=_card_path,
+        )
+
+    async def _interpret_item_path(self, card) -> str | None:
+        """Resolve a card's item_id to its materialized path, or None."""
+        item_id = getattr(card, "item_id", None)
+        if not item_id:
+            return None
+        item = await self.stores.items.get_item(item_id)
+        return item.path if item else None
+
+    async def _capture_message(
+        self,
+        *,
+        kind: str,
+        direction: str,
+        bot_message_id: str | None,
+        body: str | None,
+        summary: str | None,
+        item_path: str | None,
+    ) -> Message:
+        """Persist a durable Message and link it (call-time) to the item path it
+        concerns. Returns the saved Message (id assigned). A no-store-configured
+        deployment is a safe no-op that still returns an unsaved Message."""
+        message = Message(
+            kind=kind,
+            direction=direction,
+            bot_message_id=bot_message_id,
+            body=body,
+            summary=summary,
+        )
+        if getattr(self.stores, "messages", None) is None:
+            return message
+        message = await self.stores.messages.save(message)
+        if (
+            item_path
+            and message.id is not None
+            and getattr(self.stores, "entity_links", None) is not None
+        ):
+            await self.stores.entity_links.record("message", message.id, [item_path])
+        return message
+
+    async def _record_interaction_link(self, entry_id: int, path: str | None) -> None:
+        """Link an InteractionEntry to the item path it concerns (call-time)."""
+        if (
+            path
+            and entry_id is not None
+            and getattr(self.stores, "entity_links", None) is not None
+        ):
+            await self.stores.entity_links.record("interaction", entry_id, [path])
 
     async def _handle_triage_response(self, card, choice: int):
         option = card.options[choice - 1]
@@ -811,6 +901,8 @@ class WorkbenchScheduler:
                     interpreted=interpreted.model_dump(),
                 )
                 await self.stores.interactions.append(entry)
+                _path = await self._interpret_item_path(card)
+                await self._record_interaction_link(entry.id, _path)
                 # FIX 34: Return early -- do not process further actions
                 return
 
@@ -853,6 +945,8 @@ class WorkbenchScheduler:
                     interpreted=interpreted.model_dump(),
                 )
                 await self.stores.interactions.append(entry)
+                _path = await self._interpret_item_path(card)
+                await self._record_interaction_link(entry.id, _path)
                 # FIX 34: Defer returns early
                 return
 
@@ -897,6 +991,8 @@ class WorkbenchScheduler:
             interpreted=interpreted.model_dump(),
         )
         await self.stores.interactions.append(entry)
+        _path = await self._interpret_item_path(card)
+        await self._record_interaction_link(entry.id, _path)
 
         if self.messenger:
             await self.messenger.send_card(f"Done! {interpreted.explanation}")
@@ -1098,15 +1194,24 @@ async def run_retention_cleanup(stores, config: RetentionConfig) -> dict[str, in
         config.ingestion_runs_days
     )
 
-    # LLM usage tracking retention (Task 10)
+    # LLM usage tracking retention (Task 10) + lineage cascade.
+    entity_links = getattr(stores, "entity_links", None)
     if getattr(stores, "llm_calls", None) is not None:
         results["llm_calls"] = await stores.llm_calls.delete_older_than(
-            config.llm_calls_days
+            config.llm_calls_days, entity_links=entity_links
         )
         if config.llm_calls_max_rows is not None:
             results["llm_calls_pruned"] = await stores.llm_calls.prune_to_max_rows(
-                config.llm_calls_max_rows
+                config.llm_calls_max_rows, entity_links=entity_links
             )
+
+    # Durable messages retention + lineage cascade. The message entity side has
+    # no DB FK, so the pruner must explicitly unlink each pruned message's
+    # entity_item_links rows (per spec §10) to avoid dangling links.
+    if getattr(stores, "messages", None) is not None:
+        results["messages"] = await stores.messages.delete_older_than(
+            config.llm_calls_days, entity_links=entity_links
+        )
 
     total = sum(results.values())
     if total > 0:

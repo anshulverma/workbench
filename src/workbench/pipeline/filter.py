@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 
 from workbench.providers.llm.base import LLMProvider
 from workbench.providers.llm.context import llm_call_context
@@ -82,11 +83,22 @@ async def score_and_decide(
     include_threshold: int = 70,
     drop_threshold: int = 30,
     confidence_threshold: int = 70,
-) -> tuple[str, int, int]:
-    """Returns (action, relevance, confidence). Action is 'auto_include', 'auto_drop', or 'triage'."""
+) -> tuple[str, int, int, str]:
+    """Returns (action, relevance, confidence, correlation_id).
+
+    The scored child is minted by the caller AFTER this call (allocate_child), so
+    the consumed item path is not known here. Stamp a correlation_id (ADR 0064)
+    and return it so the caller can record_by_correlation once the child exists.
+    """
     all_facts, all_rules = await gather_facts_and_rules(memory, filter_rules, item)
 
-    with llm_call_context(origin="filter", purpose="score_relevance", stage="filter"):
+    correlation_id = str(uuid.uuid4())
+    with llm_call_context(
+        origin="filter",
+        purpose="score_relevance",
+        stage="filter",
+        correlation_id=correlation_id,
+    ):
         relevance, confidence = await llm.score_relevance(item, all_facts, all_rules)
 
     action = decide_from_score(
@@ -96,4 +108,4 @@ async def score_and_decide(
         drop_threshold=drop_threshold,
         confidence_threshold=confidence_threshold,
     )
-    return action, relevance, confidence
+    return action, relevance, confidence, correlation_id

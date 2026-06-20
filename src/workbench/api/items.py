@@ -120,6 +120,137 @@ async def search_items(
     return {"q": q, "results": results, "total": len(results)}
 
 
+_RELATED_CAP = 50
+
+_HREF = {
+    "llm_call": lambda e: f"/llm/{e['id']}" if e["id"] is not None else None,
+    "interaction": lambda e: f"/interactions/{e['id']}",
+    "message": lambda e: f"/messages/{e['id']}",
+    "triage_card": lambda e: None,
+    "enrichment_trace": lambda e: None,
+    "feedback_correction": lambda e: None,
+    "plan": lambda e: None,
+}
+
+
+@router.get("/items/{path}/related")
+async def item_related(path: str, request: Request, subtree: bool = Query(False)):
+    """Entities that touched ``path`` (and descendants when subtree=true),
+    grouped by entity_type: UNION of entity_item_links (joined to llm_calls for
+    correlation-only id resolution) and the three depth-0 FK tables."""
+    stores = request.app.state.stores
+    pool = stores.items.pool
+
+    if subtree:
+        path_pred = "(eil.item_path = $1 OR eil.item_path LIKE $1 || '.%')"
+        fk_pred = "(i.path = $1 OR i.path LIKE $1 || '.%')"
+    else:
+        path_pred = "eil.item_path = $1"
+        fk_pred = "i.path = $1"
+
+    # entity_item_links side. For llm_call rows whose entity_id is NULL
+    # (correlation-only), resolve via llm_calls.correlation_id.
+    link_rows = await pool.fetch(
+        f"""
+        SELECT eil.entity_type,
+               COALESCE(eil.entity_id, lc.id) AS id,
+               eil.item_path,
+               eil.created_at,
+               lc.purpose AS lc_purpose,
+               lc.status  AS lc_status
+          FROM entity_item_links eil
+          LEFT JOIN llm_calls lc
+            ON eil.entity_type = 'llm_call'
+           AND eil.entity_id IS NULL
+           AND lc.correlation_id = eil.correlation_id
+         WHERE {path_pred}
+         ORDER BY eil.created_at DESC, eil.id DESC
+        """,
+        path,
+    )
+
+    groups: dict[str, list] = {}
+
+    def _push(entity_type: str, entry: dict) -> None:
+        bucket = groups.setdefault(entity_type, [])
+        if len(bucket) < _RELATED_CAP:
+            href_fn = _HREF.get(entity_type, lambda e: None)
+            entry["href"] = href_fn(entry)
+            bucket.append(entry)
+
+    for r in link_rows:
+        et = r["entity_type"]
+        eid = r["id"]
+        if et == "llm_call":
+            label = f"{r['lc_purpose'] or 'llm_call'} · {r['lc_status'] or '?'}"
+        else:
+            label = f"{et} #{eid}" if eid is not None else et
+        _push(
+            et,
+            {
+                "entity_type": et,
+                "id": eid,
+                "label": label,
+                "at": r["created_at"].isoformat() if r["created_at"] else None,
+            },
+        )
+
+    # Three FK tables, filtered by item path.
+    tc_rows = await pool.fetch(
+        f"SELECT tc.id, tc.created_at FROM triage_cards tc "
+        f"JOIN items i ON i.id = tc.item_id WHERE {fk_pred} "
+        f"ORDER BY tc.created_at DESC",
+        path,
+    )
+    for r in tc_rows:
+        _push(
+            "triage_card",
+            {
+                "entity_type": "triage_card",
+                "id": r["id"],
+                "label": f"card #{r['id']}",
+                "at": r["created_at"].isoformat() if r["created_at"] else None,
+            },
+        )
+
+    et_rows = await pool.fetch(
+        f"SELECT et.id, et.timestamp AS created_at FROM enrichment_trace et "
+        f"JOIN items i ON i.id = et.item_id WHERE {fk_pred} "
+        f"ORDER BY et.timestamp DESC",
+        path,
+    )
+    for r in et_rows:
+        _push(
+            "enrichment_trace",
+            {
+                "entity_type": "enrichment_trace",
+                "id": r["id"],
+                "label": f"enrichment #{r['id']}",
+                "at": r["created_at"].isoformat() if r["created_at"] else None,
+            },
+        )
+
+    fc_rows = await pool.fetch(
+        f"SELECT fc.id, fc.created_at FROM feedback_corrections fc "
+        f"JOIN items i ON i.id = fc.item_id WHERE {fk_pred} "
+        f"ORDER BY fc.created_at DESC",
+        path,
+    )
+    for r in fc_rows:
+        _push(
+            "feedback_correction",
+            {
+                "entity_type": "feedback_correction",
+                "id": r["id"],
+                "label": f"feedback #{r['id']}",
+                "at": r["created_at"].isoformat() if r["created_at"] else None,
+            },
+        )
+
+    counts = {et: len(entries) for et, entries in groups.items()}
+    return {"path": path, "subtree": subtree, "counts": counts, "groups": groups}
+
+
 @router.get("/items/{path}")
 async def get_item_by_path(path: str, request: Request):
     stores = request.app.state.stores

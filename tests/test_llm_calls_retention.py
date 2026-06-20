@@ -20,6 +20,10 @@ def _stores():
     # New llm_calls retention methods
     s.llm_calls.delete_older_than = AsyncMock(return_value=5)
     s.llm_calls.prune_to_max_rows = AsyncMock(return_value=2)
+    # Lineage stores
+    s.entity_links = MagicMock()
+    s.messages = MagicMock()
+    s.messages.delete_older_than = AsyncMock(return_value=0)
     return s
 
 
@@ -28,7 +32,9 @@ async def test_llm_calls_swept_by_days():
     s = _stores()
     config = RetentionConfig()  # llm_calls_days=28, llm_calls_max_rows=None
     result = await run_retention_cleanup(s, config)
-    s.llm_calls.delete_older_than.assert_awaited_once_with(28)
+    s.llm_calls.delete_older_than.assert_awaited_once_with(
+        28, entity_links=s.entity_links
+    )
     assert result["llm_calls"] == 5
     s.llm_calls.prune_to_max_rows.assert_not_awaited()  # None → no prune
 
@@ -38,7 +44,9 @@ async def test_llm_calls_row_cap_prunes_when_set():
     s = _stores()
     config = RetentionConfig(llm_calls_max_rows=1000)
     result = await run_retention_cleanup(s, config)
-    s.llm_calls.prune_to_max_rows.assert_awaited_once_with(1000)
+    s.llm_calls.prune_to_max_rows.assert_awaited_once_with(
+        1000, entity_links=s.entity_links
+    )
     assert result["llm_calls_pruned"] == 2
 
 

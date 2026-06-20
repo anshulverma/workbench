@@ -150,7 +150,7 @@ async def test_pipeline_filter_stage_enters_context(monkeypatch):
             return []
 
     item, _, _ = _ctx("x", "1")
-    action, rel, conf = await score_and_decide(
+    action, rel, conf, _ = await score_and_decide(
         FakeLLM(), FakeMemory(), FakeRules(), item
     )
     assert seen["stage"] == "filter"
