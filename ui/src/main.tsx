@@ -5,8 +5,11 @@ import { HashRouter } from 'react-router-dom'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from '@/components/ui/sonner'
 import { queryClient } from '@/lib/query-client'
+import { installErrorReporter } from '@/lib/error-reporter'
 import App from './App'
 import './index.css'
+
+installErrorReporter()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

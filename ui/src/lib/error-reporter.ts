@@ -26,11 +26,16 @@ const ENDPOINT = '/api/client-logs'
 const MAX_BUFFER = 20
 const MAX_EVENTS_PER_SESSION = 100
 const DEDUP_STACK_LEN = 200
+const FLUSH_INTERVAL_MS = 5000
 
 let buffer: ClientLogEvent[] = []
 let sessionCount = 0
 let rateLimitedMarkerSent = false
 let inReporter = false
+let installed = false
+let flushTimer: ReturnType<typeof setInterval> | null = null
+let origConsoleError: typeof console.error | null = null
+let origConsoleWarn: typeof console.warn | null = null
 
 function pageUrl(): string {
   try {
@@ -44,8 +49,21 @@ function signature(e: ClientLogEvent): string {
   return `${e.kind}|${e.message}|${(e.stack ?? '').slice(0, DEDUP_STACK_LEN)}`
 }
 
-export function isInReporter(): boolean {
-  return inReporter
+function safeStringify(v: unknown): string {
+  try {
+    return JSON.stringify(v)
+  } catch {
+    return String(v)
+  }
+}
+
+function captureConsole(level: 'error' | 'warn', args: unknown[]): void {
+  if (inReporter) return
+  const message = args
+    .map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : safeStringify(a)))
+    .join(' ')
+  const stack = (args.find((a) => a instanceof Error) as Error | undefined)?.stack
+  reportClientError({ level, kind: 'console', message, stack })
 }
 
 export function reportClientError(
@@ -108,9 +126,67 @@ export function flush(useBeacon = false): void {
   }
 }
 
+export function installErrorReporter(): void {
+  if (installed || typeof window === 'undefined') return
+  installed = true
+
+  window.addEventListener('error', (e: ErrorEvent) => {
+    reportClientError({
+      level: 'error',
+      kind: 'uncaught',
+      message: e.message || 'uncaught error',
+      stack: e.error?.stack,
+      source: e.filename,
+      line: e.lineno,
+      col: e.colno,
+    })
+  })
+
+  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+    const reason = e.reason as { message?: string; stack?: string } | undefined
+    reportClientError({
+      level: 'error',
+      kind: 'unhandledrejection',
+      message: reason?.message ?? safeStringify(e.reason),
+      stack: reason?.stack,
+    })
+  })
+
+  origConsoleError = console.error.bind(console)
+  origConsoleWarn = console.warn.bind(console)
+  console.error = (...args: unknown[]) => {
+    origConsoleError?.(...args)
+    captureConsole('error', args)
+  }
+  console.warn = (...args: unknown[]) => {
+    origConsoleWarn?.(...args)
+    captureConsole('warn', args)
+  }
+
+  window.addEventListener('pagehide', () => flush(true))
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush(true)
+  })
+
+  flushTimer = setInterval(() => flush(false), FLUSH_INTERVAL_MS)
+}
+
 export function _resetReporter(): void {
   buffer = []
   sessionCount = 0
   rateLimitedMarkerSent = false
   inReporter = false
+  installed = false
+  if (flushTimer) {
+    clearInterval(flushTimer)
+    flushTimer = null
+  }
+  if (origConsoleError) {
+    console.error = origConsoleError
+    origConsoleError = null
+  }
+  if (origConsoleWarn) {
+    console.warn = origConsoleWarn
+    origConsoleWarn = null
+  }
 }
