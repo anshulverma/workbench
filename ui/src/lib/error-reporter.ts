@@ -36,6 +36,10 @@ let installed = false
 let flushTimer: ReturnType<typeof setInterval> | null = null
 let origConsoleError: typeof console.error | null = null
 let origConsoleWarn: typeof console.warn | null = null
+let errorHandler: ((e: ErrorEvent) => void) | null = null
+let rejectionHandler: ((e: PromiseRejectionEvent) => void) | null = null
+let pagehideHandler: (() => void) | null = null
+let visibilitychangeHandler: (() => void) | null = null
 
 function pageUrl(): string {
   try {
@@ -130,7 +134,7 @@ export function installErrorReporter(): void {
   if (installed || typeof window === 'undefined') return
   installed = true
 
-  window.addEventListener('error', (e: ErrorEvent) => {
+  errorHandler = (e: ErrorEvent) => {
     reportClientError({
       level: 'error',
       kind: 'uncaught',
@@ -140,9 +144,10 @@ export function installErrorReporter(): void {
       line: e.lineno,
       col: e.colno,
     })
-  })
+  }
+  window.addEventListener('error', errorHandler)
 
-  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+  rejectionHandler = (e: PromiseRejectionEvent) => {
     const reason = e.reason as { message?: string; stack?: string } | undefined
     reportClientError({
       level: 'error',
@@ -150,7 +155,8 @@ export function installErrorReporter(): void {
       message: reason?.message ?? safeStringify(e.reason),
       stack: reason?.stack,
     })
-  })
+  }
+  window.addEventListener('unhandledrejection', rejectionHandler)
 
   origConsoleError = console.error.bind(console)
   origConsoleWarn = console.warn.bind(console)
@@ -163,10 +169,12 @@ export function installErrorReporter(): void {
     captureConsole('warn', args)
   }
 
-  window.addEventListener('pagehide', () => flush(true))
-  document.addEventListener('visibilitychange', () => {
+  pagehideHandler = () => flush(true)
+  window.addEventListener('pagehide', pagehideHandler)
+  visibilitychangeHandler = () => {
     if (document.visibilityState === 'hidden') flush(true)
-  })
+  }
+  document.addEventListener('visibilitychange', visibilitychangeHandler)
 
   flushTimer = setInterval(() => flush(false), FLUSH_INTERVAL_MS)
 }
@@ -188,5 +196,23 @@ export function _resetReporter(): void {
   if (origConsoleWarn) {
     console.warn = origConsoleWarn
     origConsoleWarn = null
+  }
+  if (typeof window !== 'undefined') {
+    if (errorHandler) {
+      window.removeEventListener('error', errorHandler)
+      errorHandler = null
+    }
+    if (rejectionHandler) {
+      window.removeEventListener('unhandledrejection', rejectionHandler)
+      rejectionHandler = null
+    }
+    if (pagehideHandler) {
+      window.removeEventListener('pagehide', pagehideHandler)
+      pagehideHandler = null
+    }
+  }
+  if (typeof document !== 'undefined' && visibilitychangeHandler) {
+    document.removeEventListener('visibilitychange', visibilitychangeHandler)
+    visibilitychangeHandler = null
   }
 }

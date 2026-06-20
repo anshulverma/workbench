@@ -58,6 +58,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* non-json error body */
     }
+    // Report the failed call here; if the thrown ApiError later surfaces as an
+    // unhandled rejection it is captured again under kind:'unhandledrejection'
+    // (distinct kind, so dedup keeps both) — intentional correlation, not a bug.
     reportClientError({
       level: 'warn',
       kind: 'api',
