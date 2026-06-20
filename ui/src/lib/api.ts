@@ -7,6 +7,8 @@
 // /api call. Errors surface as ApiError carrying the response status and the
 // X-Request-ID correlation header.
 
+import { reportClientError } from './error-reporter'
+
 let _token: string | null = null
 
 export function _resetToken() {
@@ -56,6 +58,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* non-json error body */
     }
+    reportClientError({
+      level: 'warn',
+      kind: 'api',
+      message: detail,
+      request_id: requestId ?? undefined,
+      url: path,
+      extra: { status: res.status },
+    })
     throw new ApiError(detail, res.status, requestId)
   }
   if (res.status === 204) return undefined as T

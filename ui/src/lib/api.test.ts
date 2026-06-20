@@ -1,8 +1,9 @@
 // ui/src/lib/api.test.ts
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { apiGet, _resetToken } from './api'
+import * as reporter from './error-reporter'
 
 const server = setupServer(
   http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok-123' })),
@@ -51,5 +52,18 @@ describe('api client', () => {
     await expect(apiGet('/api/stats/overview')).rejects.toMatchObject({
       status: 401,
     })
+  })
+
+  it('reports a client log when a request fails', async () => {
+    const spy = vi.spyOn(reporter, 'reportClientError').mockImplementation(() => {})
+    server.use(
+      http.get('/api/stats/overview', () =>
+        HttpResponse.json({ detail: 'nope' }, { status: 500 }),
+      ),
+    )
+    await expect(apiGet('/api/stats/overview')).rejects.toThrow()
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'api', level: 'warn' }),
+    )
   })
 })
