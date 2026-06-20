@@ -195,8 +195,7 @@ All of the above can be layered on top of the logged events later.
 New:
 - `src/workbench/api/client_logs.py`
 - `ui/src/lib/error-reporter.ts`
-- tests: `tests/test_client_logs_api.py` (server) + `ui/src/lib/error-reporter.test.ts`
-  + `ui/src/components/ErrorBoundary.test.tsx`
+- tests: `tests/` (server) + `ui/src/lib/error-reporter.test.ts`
 
 Modified:
 - `src/workbench/runtime/app.py` (register router)
@@ -205,5 +204,4 @@ Modified:
 - `ui/src/main.tsx` (install)
 - `ui/src/components/ErrorBoundary.tsx` (`componentDidCatch`)
 - `ui/src/lib/api.ts` (report on `ApiError`)
-- `ui/src/lib/api.test.ts` (assert reporting on `ApiError`; add `vi` to the vitest import)
 - `src/workbench/api/README.md` (document the new route module)
