@@ -514,6 +514,7 @@ def create_app() -> FastAPI:
         actions,
         activity,
         auth_token,
+        client_logs,
         config as config_api,
         connections,
         debug,
@@ -564,6 +565,7 @@ def create_app() -> FastAPI:
         loopbacks.router,
         funnel.router,
         llm.router,
+        client_logs.router,
     ]:
         app.include_router(r)
 

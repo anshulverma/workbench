@@ -6,19 +6,28 @@ from typing import Any
 from workbench.config import PrivacyConfig
 
 EXCLUDED_KEYS = frozenset(
-    {"event", "level", "timestamp", "logger", "request_id", "filename", "lineno", "func_name"}
+    {
+        "event",
+        "level",
+        "timestamp",
+        "logger",
+        "request_id",
+        "filename",
+        "lineno",
+        "func_name",
+    }
 )
 
 # Traceback fields are PII-redacted but NEVER length-truncated: a clipped
 # traceback hides the exception, defeating the point of logging it.
-NO_TRUNCATE_KEYS = frozenset({"exception", "stack"})
+NO_TRUNCATE_KEYS = frozenset({"exception", "stack", "component_stack"})
 
 
 class SanitizingProcessor:
     """structlog processor that redacts PII patterns from log events."""
 
-    EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
-    PHONE_PATTERN = re.compile(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b')
+    EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+    PHONE_PATTERN = re.compile(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b")
 
     def __init__(
         self,
@@ -35,7 +44,10 @@ class SanitizingProcessor:
             self._patterns.extend(extra_patterns)
 
     def __call__(
-        self, logger: Any, method_name: str, event_dict: dict[str, Any],
+        self,
+        logger: Any,
+        method_name: str,
+        event_dict: dict[str, Any],
     ) -> dict[str, Any]:
         if not self._config.sanitize_logs:
             return event_dict

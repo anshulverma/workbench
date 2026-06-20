@@ -10,7 +10,10 @@ request/response shaping.
 and API-output rules such as `redaction.py` (the Redaction Rule — `redact_secrets`
 applied to config-derived responses). The auth-token endpoint lives here
 (`auth_token.py`); the ASGI auth/correlation middleware does not — it is app
-assembly and lives in `runtime/`.
+assembly and lives in `runtime/`. The `client_logs.py` module is auth-exempt
+client error ingestion — it validates batches and re-emits them through
+`structlog.get_logger("workbench.client")` for inclusion in the unified log
+stream.
 
 **What does NOT belong here:** domain models (`domain/`), persistence
 (`storage/`), pipeline stages (`pipeline/`), provider implementations
