@@ -7,7 +7,6 @@ import structlog
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
-logger = structlog.get_logger("workbench.client")
 router = APIRouter(prefix="/api/client-logs", tags=["client-logs"])
 
 MAX_EVENTS_PER_BATCH = 50
@@ -38,6 +37,7 @@ _LEVEL_METHOD = {"error": "error", "warn": "warning", "info": "info"}
 
 @router.post("", status_code=204)
 async def ingest_client_logs(batch: ClientLogBatch) -> Response:
+    logger = structlog.get_logger("workbench.client")
     if len(batch.events) > MAX_EVENTS_PER_BATCH:
         raise HTTPException(status_code=413, detail="too many events")
     for e in batch.events:

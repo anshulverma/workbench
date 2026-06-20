@@ -63,9 +63,6 @@ def test_ingest_rejects_oversized_batch_413():
 
 
 def test_ingest_logs_each_event_at_mapped_level():
-    import structlog
-
-    structlog.reset_defaults()
     setup_logging(log_format="json", log_dir=None)
     lines, detach = _attach_capture()
     try:
@@ -85,9 +82,6 @@ def test_ingest_logs_each_event_at_mapped_level():
 
 
 def test_ingest_serializes_extra_as_string_for_redaction():
-    import structlog
-
-    structlog.reset_defaults()
     setup_logging(log_format="json", log_dir=None)
     lines, detach = _attach_capture()
     try:
@@ -109,9 +103,6 @@ def test_ingest_serializes_extra_as_string_for_redaction():
 def test_ingest_redacts_pii_and_keeps_stack_untruncated():
     # In production the sanitizer is wired via setup_logging(extra_processors=[...])
     # (see runtime/app.py). Reproduce that here to assert redaction + no-truncate.
-    import importlib
-    import structlog
-
     from workbench.config import PrivacyConfig
     from workbench.telemetry.privacy import SanitizingProcessor
 
@@ -121,14 +112,9 @@ def test_ingest_redacts_pii_and_keeps_stack_untruncated():
         redact_phones=True,
         max_content_in_logs=80,
     )
-    structlog.reset_defaults()
     setup_logging(
         log_format="json", log_dir=None, extra_processors=[SanitizingProcessor(privacy)]
     )
-    # Reload the module so it gets a fresh logger with the new configuration
-    from workbench.api import client_logs
-
-    importlib.reload(client_logs)
     lines, detach = _attach_capture()
     long_stack = "trace " * 100  # > max_content_in_logs
     try:
