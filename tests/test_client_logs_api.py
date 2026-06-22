@@ -74,7 +74,9 @@ def test_ingest_logs_each_event_at_mapped_level():
         out = lines()
         detach()
     assert resp.status_code == 204
-    recs = [r for r in out if r.get("event") == "client_error"]
+    # The event name tracks the client level, so "client_error" is reserved for
+    # error-level reports; a warn-level event logs as "client_warn" at warning.
+    recs = [r for r in out if r.get("event") == "client_warn"]
     assert len(recs) == 1
     assert recs[0]["level"] == "warning"
     assert recs[0]["client_message"] == "hey"

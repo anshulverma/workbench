@@ -47,7 +47,7 @@ async def ingest_client_logs(batch: ClientLogBatch) -> Response:
         # skipped and bypass redaction.
         extra_json = json.dumps(e.extra, default=str) if e.extra is not None else None
         method(
-            "client_error",
+            f"client_{e.level}",
             kind=e.kind,
             client_message=e.message,
             stack=e.stack,
