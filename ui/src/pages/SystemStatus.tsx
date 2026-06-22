@@ -11,6 +11,8 @@ import {
   ArrowLeftRight,
   Boxes,
   Brain,
+  ChevronDown,
+  ChevronRight,
   Chrome,
   Database,
   Github,
@@ -240,6 +242,8 @@ export interface LLMCallDetailData {
   sysPrompt: string
   subcalls: LLMSubCall[]
   linked_items: { id: number; path: string | null; summary: string }[]
+  rawRequest?: unknown
+  rawResponse?: unknown
 }
 
 const LLM_STATUS: Record<string, { color: string; label: string }> = {
@@ -877,6 +881,55 @@ function SystemLogViewer({
 // selector steps through each item's individual prompt / completion / structured
 // output. Mirrors SystemLogViewer's dialog chrome.
 
+function RawSection({
+  label,
+  value,
+  testId,
+}: {
+  label: string
+  value: unknown
+  testId: string
+}) {
+  const [open, setOpen] = useState(false)
+  if (value == null) return null
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="label-mono"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 10,
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          color: 'var(--foreground)',
+          marginBottom: open ? 6 : 0,
+        }}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        {label}
+      </button>
+      {open && (
+        <div
+          style={{
+            borderRadius: 'var(--radius-card,6px)',
+            border: '1px solid var(--border)',
+            overflow: 'hidden',
+          }}
+          data-testid={testId}
+        >
+          <JsonHighlight json={JSON.stringify(value, null, 2)} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function LLMCallDetail({
   call,
   onClose,
@@ -1132,32 +1185,11 @@ function LLMCallDetail({
                 {sub.prompt}
               </pre>
             </div>
-            <div>
-              <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
-                Completion <span style={{ color: 'var(--muted-foreground)' }}>↑{sub.tokens_out ?? '—'} tok</span>
-              </span>
-              <pre
-                style={{
-                  margin: 0,
-                  padding: 12,
-                  whiteSpace: 'pre-wrap',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 12,
-                  lineHeight: 1.5,
-                  background: 'var(--surface-lowest)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-card,6px)',
-                  color: call.status === 'error' ? 'var(--error-text)' : 'var(--foreground)',
-                }}
-              >
-                {sub.completion}
-              </pre>
-            </div>
-            <div>
-              <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
-                Structured output
-              </span>
-              {sub.structured ? (
+            {sub.structured ? (
+              <div>
+                <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
+                  Structured output
+                </span>
                 <div
                   style={{
                     borderRadius: 'var(--radius-card,6px)',
@@ -1168,12 +1200,32 @@ function LLMCallDetail({
                 >
                   <JsonHighlight json={JSON.stringify(sub.structured, null, 2)} />
                 </div>
-              ) : (
-                <p style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--error-text)' }}>
-                  // no structured output — call failed
-                </p>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div>
+                <span className="label-mono" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>
+                  Completion <span style={{ color: 'var(--muted-foreground)' }}>↑{sub.tokens_out ?? '—'} tok</span>
+                </span>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: 12,
+                    whiteSpace: 'pre-wrap',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    background: 'var(--surface-lowest)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-card,6px)',
+                    color: call.status === 'error' ? 'var(--error-text)' : 'var(--foreground)',
+                  }}
+                >
+                  {sub.completion}
+                </pre>
+              </div>
+            )}
+            <RawSection label="Raw input (sent to LLM)" value={detail.rawRequest} testId="llm-raw-request" />
+            <RawSection label="Raw output (from LLM)" value={detail.rawResponse} testId="llm-raw-response" />
           </div>
           )}
         </div>

@@ -93,6 +93,8 @@ const LLM_DETAIL = {
     },
   ],
   linked_items: [{ id: 7001, path: '7001', summary: 'solo item' }],
+  rawRequest: { model: 'claude-x', messages: [{ role: 'user', content: 'classify D12871' }] },
+  rawResponse: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'classify' }] },
 }
 
 const LLM_DETAIL_BATCHED = {
@@ -468,5 +470,26 @@ describe('SystemStatus — LLM Infra sub-tab', () => {
     // a chip per linked item, showing "#<id> · <summary>", rendered as a button
     expect(within(section).getByRole('button', { name: /6702 · fix the thing/ })).toBeInTheDocument()
     expect(within(section).getByRole('button', { name: /6703 · another item/ })).toBeInTheDocument()
+  })
+
+  it('shows raw input/output sections collapsed by default and expands them', async () => {
+    await openLLMTab()
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/raw input/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/raw output/i)).toBeInTheDocument()
+    expect(within(dialog).queryByTestId('llm-raw-request')).not.toBeInTheDocument()
+    await userEvent.click(within(dialog).getByText(/raw input/i))
+    expect(await within(dialog).findByTestId('llm-raw-request')).toHaveTextContent('claude-x')
+    await userEvent.click(within(dialog).getByText(/raw output/i))
+    expect(await within(dialog).findByTestId('llm-raw-response')).toHaveTextContent('tool_use')
+  })
+
+  it('shows structured output OR completion, never both', async () => {
+    await openLLMTab()
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Structured output')).toBeInTheDocument()
+    expect(within(dialog).queryByText('Completion')).not.toBeInTheDocument()
   })
 })
