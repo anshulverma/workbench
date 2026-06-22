@@ -22,6 +22,27 @@ from workbench.providers.llm.context import (
 logger = logging.getLogger(__name__)
 
 
+def _serialize_response(resp: Any) -> dict | None:
+    """Best-effort JSON-safe dump of an SDK response; never raises.
+
+    Anthropic SDK responses are pydantic models, so ``model_dump(mode="json")``
+    yields content blocks, stop_reason and usage. Anything without a usable
+    ``model_dump`` (e.g. a test stub or a future SDK shape) yields ``None`` so a
+    serialization quirk can never break a successful LLM call.
+    """
+    dump = getattr(resp, "model_dump", None)
+    if not callable(dump):
+        return None
+    try:
+        result = dump(mode="json")
+    except Exception:
+        try:
+            result = dump()
+        except Exception:
+            return None
+    return result if isinstance(result, dict) else None
+
+
 @dataclass
 class PlugboardCallRecord:
     client: str
@@ -42,6 +63,8 @@ class PlugboardCallRecord:
     temperature: float | None = None
     tokens_estimated: bool = False
     is_fallback: bool = False
+    raw_request: dict | None = None
+    raw_response: dict | None = None
 
 
 PlugboardSink = Callable[[PlugboardCallRecord], None]
@@ -60,6 +83,7 @@ async def record_plugboard_call(
     temperature: float | None = None,
     is_fallback: bool = False,
     tokens_estimated: bool = False,
+    raw_request: dict | None = None,
 ) -> Any:
     """Run ``do_call`` (one messages.create), emitting a PlugboardCallRecord.
 
@@ -93,6 +117,7 @@ async def record_plugboard_call(
                         context=current_llm_call_context(),
                         system_prompt=system_prompt,
                         input_prompt=input_prompt,
+                        raw_request=raw_request,
                         temperature=temperature,
                         is_fallback=is_fallback,
                     )
@@ -115,6 +140,7 @@ async def record_plugboard_call(
         # Defense-in-depth: a raising sink must never break a SUCCESSFUL call.
         # Guard the sink so the response is still returned even if it raises.
         try:
+            raw_response = _serialize_response(resp)
             sink(
                 PlugboardCallRecord(
                     client=client,
@@ -129,6 +155,8 @@ async def record_plugboard_call(
                     context=current_llm_call_context(),
                     system_prompt=system_prompt,
                     input_prompt=input_prompt,
+                    raw_request=raw_request,
+                    raw_response=raw_response,
                     completion=completion,
                     structured=structured,
                     subcalls=subcalls,
