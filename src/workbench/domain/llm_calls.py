@@ -61,3 +61,5 @@ class LlmCallRecord(BaseModel):
     tokens_estimated: bool = False
     is_fallback: bool = False
     correlation_id: str | None = None
+    raw_request: dict | None = None
+    raw_response: dict | None = None

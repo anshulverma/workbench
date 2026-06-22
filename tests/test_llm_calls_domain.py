@@ -44,3 +44,34 @@ def test_defaults():
     )
     assert rec.batch == 1 and rec.items == [] and rec.subcalls == []
     assert rec.tokens_estimated is False and rec.is_fallback is False
+
+
+def test_llm_call_record_carries_raw_io():
+    from datetime import datetime, timezone
+    from workbench.domain.llm_calls import LlmCallRecord
+
+    rec = LlmCallRecord(
+        started_at=datetime.now(timezone.utc),
+        origin="o",
+        purpose="p",
+        stage="filter",
+        model="m",
+        status="ok",
+        raw_request={"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+        raw_response={
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "ok"}],
+        },
+    )
+    assert rec.raw_request["messages"][0]["content"] == "hi"
+    assert rec.raw_response["stop_reason"] == "end_turn"
+    # Defaults are None when omitted.
+    rec2 = LlmCallRecord(
+        started_at=datetime.now(timezone.utc),
+        origin="o",
+        purpose="p",
+        stage="filter",
+        model="m",
+        status="ok",
+    )
+    assert rec2.raw_request is None and rec2.raw_response is None
