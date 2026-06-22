@@ -15,21 +15,28 @@ export function FilterTuningCard({
   task,
   onApply,
   onDismiss,
+  highlighted = false,
 }: {
   task: FilterTuningTask
   onApply: (taskId: string) => void
   onDismiss: (taskId: string) => void
+  /** When true, draw attention to this card (e.g. linked-to via ?tuning=<id>). */
+  highlighted?: boolean
 }) {
   return (
     <div
       data-testid="filter-tuning-card"
       data-task-id={task.id}
+      data-highlighted={highlighted ? 'true' : undefined}
       style={{
         padding: 16,
         borderRadius: 'var(--radius-card, 6px)',
         border:
           '1px solid color-mix(in srgb, var(--primary) 35%, var(--border))',
         background: 'color-mix(in srgb, var(--primary) 7%, var(--card))',
+        ...(highlighted
+          ? { outline: '2px solid var(--brand)', outlineOffset: 2 }
+          : {}),
       }}
     >
       {/* header */}

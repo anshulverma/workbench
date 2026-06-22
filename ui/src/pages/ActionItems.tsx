@@ -9,7 +9,8 @@
 // actions array + a single render-time `now` primitive; no effect computes
 // arrays/Sets and feeds them back into setState.
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import {
   useActions,
@@ -336,6 +337,16 @@ export function ActionItems() {
   const feedback = useFeedbackStore()
   const tuningTasks = feedback.openTasks()
 
+  // Deep-link from a feedback receipt (?tuning=<id>): scroll the matching tuning
+  // card into view and highlight it.
+  const [searchParams] = useSearchParams()
+  const tuningParam = searchParams.get('tuning')
+  useEffect(() => {
+    if (!tuningParam) return
+    const el = document.querySelector(`[data-task-id="${tuningParam}"]`)
+    el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  }, [tuningParam, tuningTasks.length])
+
   // STABLE input: the flat list of actions. Derived during render via useMemo
   // keyed on the data reference only -- never recomputed into an effect+setState.
   const rows = useMemo<Action[]>(
@@ -432,6 +443,7 @@ export function ActionItems() {
                 task={task}
                 onApply={(id) => feedback.autoApply(id)}
                 onDismiss={(id) => feedback.dismissTask(id)}
+                highlighted={task.id === tuningParam}
               />
             ))}
           </div>

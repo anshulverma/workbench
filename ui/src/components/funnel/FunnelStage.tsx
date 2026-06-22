@@ -53,6 +53,16 @@ export function FunnelStage({
   const [editing, setEditing] = useState(false)
 
   const ov = editable && item ? fb.overrideFor(String(item.id), stage.filterId) : null
+  // The override and its filter-tuning task are 1:1 (same item+filter); find the
+  // open task so the receipt can link straight to it on the Actions page.
+  const tuningTask =
+    ov && item
+      ? fb
+          .openTasks()
+          .find(
+            (t) => t.itemId === String(item.id) && t.filterId === stage.filterId,
+          ) ?? null
+      : null
   const effOutcome = ov ? ov.toOutcome : stage.outcome
   const effLabel = ov ? ov.toLabel : stage.label
   const m = STAGE_META[effOutcome] ?? STAGE_META.pass
@@ -372,6 +382,20 @@ export function FunnelStage({
               negative example. A filter-tuning task was created to update its
               prompt so it handles cases like this next time.
             </p>
+            {tuningTask && (
+              <a
+                href={`#/actions?tuning=${tuningTask.id}`}
+                style={{
+                  display: 'inline-block',
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: 'var(--brand)',
+                }}
+                className="hover:underline"
+              >
+                View the filter-tuning task →
+              </a>
+            )}
           </div>
         )}
       </div>

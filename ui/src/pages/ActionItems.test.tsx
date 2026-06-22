@@ -362,6 +362,31 @@ describe('Action Items page', () => {
     expect(within(section).getByTestId('filter-tuning-card')).toBeInTheDocument()
   })
 
+  it('highlights the tuning card targeted by ?tuning=<id>', async () => {
+    WBFeedback.addOverride({
+      itemId: 'item-1',
+      itemSummary: 'Test item',
+      filterId: 'filter-spam',
+      filterPrompt: 'Drop spam items',
+      fromOutcome: 'drop',
+      toOutcome: 'include',
+    })
+    const taskId = WBFeedback.openTasks()[0].id
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/actions?tuning=${taskId}`]}>
+          <ActionItems />
+          <Toaster />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const card = await screen.findByTestId('filter-tuning-card')
+    expect(card).toHaveAttribute('data-highlighted', 'true')
+  })
+
   // --- New action button (header, not FAB) ---
 
   it('creates a manual action via the header button (POST /api/actions)', async () => {

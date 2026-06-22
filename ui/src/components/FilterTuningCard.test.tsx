@@ -43,6 +43,28 @@ describe('FilterTuningCard', () => {
     expect(screen.getByText('fr_01')).toBeInTheDocument()
   })
 
+  it('marks the card highlighted only when the highlighted prop is set', () => {
+    const { rerender } = render(
+      <FilterTuningCard task={makeTask()} onApply={() => {}} onDismiss={() => {}} />,
+    )
+    expect(screen.getByTestId('filter-tuning-card')).not.toHaveAttribute(
+      'data-highlighted',
+      'true',
+    )
+    rerender(
+      <FilterTuningCard
+        task={makeTask()}
+        onApply={() => {}}
+        onDismiss={() => {}}
+        highlighted
+      />,
+    )
+    expect(screen.getByTestId('filter-tuning-card')).toHaveAttribute(
+      'data-highlighted',
+      'true',
+    )
+  })
+
   it('shows the item summary', () => {
     render(
       <FilterTuningCard

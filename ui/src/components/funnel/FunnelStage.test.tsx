@@ -185,6 +185,32 @@ describe('FunnelStage', () => {
     expect(screen.getByTestId('undo-button')).toBeInTheDocument()
   })
 
+  it('links the feedback receipt to the created filter-tuning task', () => {
+    const item = makeItem()
+    WBFeedback.addOverride({
+      itemId: String(item.id),
+      itemSummary: item.summary,
+      filterId: 'fr_01',
+      filterPrompt: 'test prompt',
+      fromOutcome: 'drop',
+      toOutcome: 'include',
+    })
+    const taskId = WBFeedback.openTasks()[0].id
+
+    render(
+      <FunnelStage
+        stage={makeStage({ outcome: 'drop' })}
+        index={0}
+        isLast={false}
+        item={item}
+        editable
+      />,
+    )
+
+    const link = screen.getByRole('link', { name: /view the filter-tuning task/i })
+    expect(link).toHaveAttribute('href', `#/actions?tuning=${taskId}`)
+  })
+
   it('removes override on undo click', () => {
     const item = makeItem()
     // Pre-populate override
