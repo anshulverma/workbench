@@ -33,7 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <div className="grid min-h-screen grid-cols-[64px_1fr] grid-rows-[auto_1fr] bg-background text-foreground">
+    <div className="grid h-screen overflow-hidden grid-cols-[64px_1fr] grid-rows-[auto_1fr] bg-background text-foreground">
       <AppSidebar className="row-span-2 z-30" />
       <TopBar onOpenCommandPalette={openPalette} />
       <main className="overflow-y-auto p-6">
