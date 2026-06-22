@@ -65,6 +65,27 @@ def _to_llm_record(rec) -> LlmCallRecord | None:
         )
         for s in (rec.subcalls or [])
     ]
+    # Single (non-batch) calls populate input_prompt/completion/structured on the
+    # record rather than subcalls; synthesize one subcall so the popup renders a
+    # body (without this, single calls show no Input/Completion at all).
+    if not subcalls and (
+        rec.input_prompt is not None
+        or rec.completion is not None
+        or rec.structured is not None
+    ):
+        item_label = (
+            rec.context.item_paths[0] if rec.context and rec.context.item_paths else "—"
+        )
+        subcalls = [
+            LlmSubcall(
+                item=item_label,
+                prompt=rec.input_prompt or "",
+                completion=rec.completion or "",
+                structured=rec.structured,
+                tokens_in=rec.input_tokens or 0,
+                tokens_out=(None if rec.error_type else rec.output_tokens),
+            )
+        ]
     return LlmCallRecord(
         started_at=started_at,
         origin=rec.context.origin,
@@ -90,6 +111,8 @@ def _to_llm_record(rec) -> LlmCallRecord | None:
         tokens_estimated=rec.tokens_estimated,
         is_fallback=rec.is_fallback,
         correlation_id=(rec.context.correlation_id if rec.context else None),
+        raw_request=rec.raw_request,
+        raw_response=rec.raw_response,
     )
 
 

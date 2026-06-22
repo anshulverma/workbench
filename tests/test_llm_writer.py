@@ -250,3 +250,80 @@ def test_to_llm_record_falls_back_when_item_paths_empty():
 
     out = _to_llm_record(rec)
     assert out.items == ["item-x"]
+
+
+def _ctx_with_item():
+    return LLMCallContext(
+        origin="filter",
+        purpose="classify",
+        stage="filter",
+        item_paths=("D1",),
+        correlation_id="corr-1",
+    )
+
+
+def test_to_llm_record_threads_raw_io():
+    from workbench.runtime.app import _to_llm_record
+    from workbench.providers.llm.plugboard import PlugboardCallRecord
+
+    rec = _to_llm_record(
+        PlugboardCallRecord(
+            client="main_llm",
+            model="m",
+            context=_ctx_with_item(),
+            raw_request={"model": "m", "messages": []},
+            raw_response={"stop_reason": "end_turn"},
+        )
+    )
+    assert rec.raw_request == {"model": "m", "messages": []}
+    assert rec.raw_response == {"stop_reason": "end_turn"}
+
+
+def test_to_llm_record_synthesizes_single_subcall():
+    from workbench.runtime.app import _to_llm_record
+    from workbench.providers.llm.plugboard import PlugboardCallRecord
+
+    rec = _to_llm_record(
+        PlugboardCallRecord(
+            client="main_llm",
+            model="m",
+            context=_ctx_with_item(),
+            input_prompt="the full prompt",
+            completion="the answer",
+            structured={"verdict": "ok"},
+            input_tokens=12,
+            output_tokens=3,
+            subcalls=None,  # single (non-batch) call
+        )
+    )
+    assert len(rec.subcalls) == 1
+    s = rec.subcalls[0]
+    assert s.prompt == "the full prompt"
+    assert s.completion == "the answer"
+    assert s.structured == {"verdict": "ok"}
+    assert s.tokens_in == 12 and s.tokens_out == 3
+    assert s.item == "D1"  # first context item path
+
+
+def test_to_llm_record_batch_subcalls_unchanged():
+    from workbench.runtime.app import _to_llm_record
+    from workbench.providers.llm.plugboard import PlugboardCallRecord
+
+    rec = _to_llm_record(
+        PlugboardCallRecord(
+            client="main_llm",
+            model="m",
+            context=_ctx_with_item(),
+            subcalls=[
+                {
+                    "item": "0",
+                    "prompt": "p",
+                    "completion": "c",
+                    "structured": {"x": 1},
+                    "tokens_in": 5,
+                    "tokens_out": 2,
+                }
+            ],
+        )
+    )
+    assert len(rec.subcalls) == 1 and rec.subcalls[0].item == "0"

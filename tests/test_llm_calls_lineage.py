@@ -123,6 +123,8 @@ async def test_to_llm_record_to_save_many_correlation_writes_no_links(stores, pg
         system_prompt=None,
         tokens_estimated=False,
         is_fallback=False,
+        raw_request=None,
+        raw_response=None,
     )
     record = _to_llm_record(rec)
     assert record.correlation_id == "corr-sink"
