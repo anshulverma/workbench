@@ -23,9 +23,9 @@ class PgLlmCallStore(LlmCallStore):
                        (started_at,origin,purpose,stage,model,temperature,status,error_type,
                         batch,items,tokens_in,tokens_out,cache_read_tokens,cache_write_tokens,
                         latency_ms,system_prompt,subcalls,tokens_estimated,is_fallback,
-                        correlation_id)
+                        correlation_id,raw_request,raw_response)
                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,
-                               $17::jsonb,$18,$19,$20)
+                               $17::jsonb,$18,$19,$20,$21::jsonb,$22::jsonb)
                        RETURNING id""",
                     r.started_at,
                     r.origin,
@@ -47,6 +47,8 @@ class PgLlmCallStore(LlmCallStore):
                     r.tokens_estimated,
                     r.is_fallback,
                     r.correlation_id,
+                    json.dumps(r.raw_request) if r.raw_request is not None else None,
+                    json.dumps(r.raw_response) if r.raw_response is not None else None,
                 )
                 # Call-time link rows: only call-time records that carry real
                 # item paths. Records with a correlation_id (batched / post-persist
@@ -66,6 +68,10 @@ class PgLlmCallStore(LlmCallStore):
         d["items"] = json.loads(items) if isinstance(items, str) else items
         subs = json.loads(subs) if isinstance(subs, str) else subs
         d["subcalls"] = [LlmSubcall(**s) for s in subs]
+        for key in ("raw_request", "raw_response"):
+            val = d.get(key)
+            if isinstance(val, str):
+                d[key] = json.loads(val)
         return LlmCallRecord(**d)
 
     async def list_calls(
