@@ -496,19 +496,21 @@ Return ONLY the card body text, no JSON wrapping."""
             return None, None, None
 
         try:
+            request = {
+                "model": self.model,
+                "max_tokens": 1000,
+                "tools": tools,
+                "tool_choice": {"type": "tool", "name": "interpret_response"},
+                "messages": messages,
+            }
             response = await record_plugboard_call(
                 client="main_llm",
                 model=self.model,
                 sink=self._sink,
                 input_prompt=messages[0]["content"],
                 result_extractor=_interpret_result,
-                do_call=lambda: self.client.messages.create(
-                    model=self.model,
-                    max_tokens=1000,
-                    tools=tools,
-                    tool_choice={"type": "tool", "name": "interpret_response"},
-                    messages=messages,
-                ),
+                raw_request=request,
+                do_call=lambda: self.client.messages.create(**request),
             )
 
             # Extract tool use result
@@ -563,6 +565,11 @@ Return ONLY the card body text, no JSON wrapping."""
     ) -> str:
         for attempt in range(max_retries):
             try:
+                request = {
+                    "model": self.model,
+                    "max_tokens": 2000,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
                 response = await record_plugboard_call(
                     client="main_llm",
                     model=self.model,
@@ -574,11 +581,8 @@ Return ONLY the card body text, no JSON wrapping."""
                     temperature=temperature,
                     is_fallback=is_fallback,
                     tokens_estimated=tokens_estimated,
-                    do_call=lambda: self.client.messages.create(
-                        model=self.model,
-                        max_tokens=2000,
-                        messages=[{"role": "user", "content": prompt}],
-                    ),
+                    raw_request=request,
+                    do_call=lambda: self.client.messages.create(**request),
                 )
                 return response.content[0].text
             except Exception:

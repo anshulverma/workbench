@@ -70,6 +70,11 @@ class LLMQueueScorer(QueueScorer):
             return text, structured, None
 
         try:
+            request = {
+                "model": self.model,
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": prompt}],
+            }
             response = await record_plugboard_call(
                 client="queue_scorer",
                 model=self.model,
@@ -77,11 +82,8 @@ class LLMQueueScorer(QueueScorer):
                 input_prompt=prompt,
                 result_extractor=_urgency_result,
                 is_fallback=is_fallback,
-                do_call=lambda: self.client.messages.create(
-                    model=self.model,
-                    max_tokens=100,
-                    messages=[{"role": "user", "content": prompt}],
-                ),
+                raw_request=request,
+                do_call=lambda: self.client.messages.create(**request),
             )
             text = response.content[0].text.strip()
             if "```" in text:
@@ -171,6 +173,11 @@ class LLMQueueScorer(QueueScorer):
 
         parsed: dict[int, int] = {}
         try:
+            request = {
+                "model": self.model,
+                "max_tokens": min(4096, 40 * len(chunk) + 100),
+                "messages": [{"role": "user", "content": prompt}],
+            }
             response = await record_plugboard_call(
                 client="queue_scorer",
                 model=self.model,
@@ -179,11 +186,8 @@ class LLMQueueScorer(QueueScorer):
                 input_prompt=prompt,
                 result_extractor=_batch_urgency_result,
                 tokens_estimated=True,
-                do_call=lambda: self.client.messages.create(
-                    model=self.model,
-                    max_tokens=min(4096, 40 * len(chunk) + 100),
-                    messages=[{"role": "user", "content": prompt}],
-                ),
+                raw_request=request,
+                do_call=lambda: self.client.messages.create(**request),
             )
             text = response.content[0].text.strip()
             if "```" in text:
