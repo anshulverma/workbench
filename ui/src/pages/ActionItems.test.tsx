@@ -202,7 +202,7 @@ describe('Action Items page', () => {
     expect(prioritySelect.value).toBe('P1')
   })
 
-  it('links an action to its item lineage page', async () => {
+  it('opens the item detail dialog for an action', async () => {
     renderActions()
     const btn = await screen.findByRole('button', { name: '#42' })
     expect(btn).toBeInTheDocument()

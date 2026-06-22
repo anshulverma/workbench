@@ -45,9 +45,15 @@ function mapStage(e: ApiLogEntry): FunnelStage {
 }
 
 function mapVerdict(v: ApiSearchItem['verdict']): Verdict {
-  const action = v?.action
-  const decision: Verdict['decision'] =
-    action === 'drop' ? 'dropped' : action === 'triaged' ? 'triaged' : 'queued'
+  const action = (v?.action ?? '').toLowerCase()
+  // Match canonical _DECISION from funnel.py:
+  // include/triage/triaged -> triaged, drop/dropped -> dropped, else -> queued
+  let decision: Verdict['decision'] = 'queued'
+  if (action === 'include' || action === 'triage' || action === 'triaged') {
+    decision = 'triaged'
+  } else if (action === 'drop' || action === 'dropped') {
+    decision = 'dropped'
+  }
   return {
     decision,
     priority: v?.priority ?? undefined,

@@ -34,7 +34,7 @@ export function ItemDetailDialog() {
         <DialogHeader>
           <DialogTitle>Item {itemId}</DialogTitle>
         </DialogHeader>
-        {q.isPending && itemId != null && (
+        {q.isPending && (
           <div className="grid gap-3" data-testid="item-detail-loading">
             <Skeleton className="h-7 w-48" />
             <Skeleton className="h-40 w-full" />

@@ -37,7 +37,7 @@ describe('toSearchItem', () => {
     expect(s.stages).toEqual([
       { filterId: 'filter', outcome: 'pass', reason: 'f', label: 'f', confidence: undefined },
     ])
-    expect(s.verdict.decision).toBe('queued')
+    expect(s.verdict.decision).toBe('triaged')
     expect(s.verdict.rationale).toBe('')
   })
 
@@ -54,5 +54,10 @@ describe('toSearchItem', () => {
   it('maps verdict action "drop" to dropped', () => {
     const s = toSearchItem({ ...API, verdict: { action: 'drop' } } as never)
     expect(s.verdict.decision).toBe('dropped')
+  })
+
+  it('maps verdict action "include" to triaged', () => {
+    const s = toSearchItem({ ...API, verdict: { action: 'include' } } as never)
+    expect(s.verdict.decision).toBe('triaged')
   })
 })
