@@ -92,6 +92,7 @@ const LLM_DETAIL = {
       tokens_out: 88,
     },
   ],
+  linked_items: [{ id: 7001, path: '7001', summary: 'solo item' }],
 }
 
 const LLM_DETAIL_BATCHED = {
@@ -123,6 +124,10 @@ const LLM_DETAIL_BATCHED = {
       tokens_in: 600,
       tokens_out: 80,
     },
+  ],
+  linked_items: [
+    { id: 6702, path: '6702', summary: 'fix the thing' },
+    { id: 6703, path: '6703', summary: 'another item' },
   ],
 }
 
@@ -453,5 +458,15 @@ describe('SystemStatus — LLM Infra sub-tab', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
     )
+  })
+
+  it('shows clickable linked-item chips in the call detail', async () => {
+    await openLLMTab()
+    await userEvent.click(screen.getAllByTestId('llm-log-row')[1])
+    const dialog = await screen.findByRole('dialog')
+    const section = await within(dialog).findByTestId('llm-linked-items')
+    // a chip per linked item, showing "#<id> · <summary>", rendered as a button
+    expect(within(section).getByRole('button', { name: /6702 · fix the thing/ })).toBeInTheDocument()
+    expect(within(section).getByRole('button', { name: /6703 · another item/ })).toBeInTheDocument()
   })
 })

@@ -32,6 +32,7 @@ import { StatCard } from '@/components/StatCard'
 import { Mono } from '@/components/Mono'
 import { Portal } from '@/components/Portal'
 import { JsonHighlight } from '@/components/JsonHighlight'
+import { ItemLink } from '@/components/ItemLink'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -238,6 +239,7 @@ export interface LLMSubCall {
 export interface LLMCallDetailData {
   sysPrompt: string
   subcalls: LLMSubCall[]
+  linked_items: { id: number; path: string | null; summary: string }[]
 }
 
 const LLM_STATUS: Record<string, { color: string; label: string }> = {
@@ -893,7 +895,11 @@ function LLMCallDetail({
   if (!call) return null
 
   const st = LLM_STATUS[call.status] || LLM_STATUS.ok
-  const detail: LLMCallDetailData = detailQuery.data ?? { sysPrompt: '', subcalls: [] }
+  const detail: LLMCallDetailData = detailQuery.data ?? {
+    sysPrompt: '',
+    subcalls: [],
+    linked_items: [],
+  }
   const sub = detail.subcalls[openSub] || detail.subcalls[0]
 
   return (
@@ -998,6 +1004,34 @@ function LLMCallDetail({
               <span>{new Date(call.ts).toLocaleTimeString([], { hour12: false })}</span>
             </div>
           </div>
+
+          {detail.linked_items.length > 0 && (
+            <div
+              data-testid="llm-linked-items"
+              style={{
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                padding: '10px 18px',
+                borderBottom: '1px solid var(--border)',
+                background: 'var(--surface-lowest)',
+              }}
+            >
+              <span className="label-mono" style={{ fontSize: 10, alignSelf: 'center' }}>
+                Linked items:
+              </span>
+              {detail.linked_items.map((it) => (
+                <ItemLink
+                  key={it.id}
+                  id={it.id}
+                  className="rounded-sm border border-border px-1.5 py-px text-[11px]"
+                >
+                  #{it.id} · {it.summary}
+                </ItemLink>
+              ))}
+            </div>
+          )}
 
           {/* system prompt */}
           <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
