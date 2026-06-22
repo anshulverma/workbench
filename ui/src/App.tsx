@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import { AppShell } from '@/components/AppShell'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { ItemDetailDialog } from '@/components/ItemDetailDialog'
 import { Overview } from '@/pages/Overview'
 import { Triage } from '@/pages/Triage'
 import { TriageDetail } from '@/pages/TriageDetail'
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/search" element={<Search />} />
           <Route path="/filters" element={<Filters />} />
         </Routes>
+        <ItemDetailDialog />
       </ErrorBoundary>
     </AppShell>
   )
