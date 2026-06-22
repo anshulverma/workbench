@@ -6,7 +6,6 @@ import {
   FileText,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { Link } from 'react-router-dom'
 import type { SearchItem } from '@/lib/types/search'
 import { relativeTime } from '@/lib/format'
 import { Mono } from '@/components/Mono'
@@ -70,15 +69,6 @@ export function ResultRow({
       <div className="flex items-center gap-2">
         <Icon size={14} className="shrink-0 text-[var(--brand)]" />
         <Mono className="text-[11px] text-muted-foreground">{item.id}</Mono>
-        {item.path && (
-          <Link
-            to={`/items/${item.path}`}
-            onClick={(e) => e.stopPropagation()}
-            className="font-mono text-[11px] text-primary hover:underline"
-          >
-            #{item.path}
-          </Link>
-        )}
         {item.priority && (
           <Badge variant={PRIORITY_VARIANT[item.priority] ?? 'p3'}>
             {item.priority}

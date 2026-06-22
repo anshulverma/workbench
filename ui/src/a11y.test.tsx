@@ -110,7 +110,40 @@ function a11yHandlers() {
     http.get('/api/stats/sources', () => HttpResponse.json([])),
     http.get('/api/sources/adapter-types', () => HttpResponse.json([])),
     http.get('/api/connections', () => HttpResponse.json([])),
-    http.get('/api/funnel/items', () => HttpResponse.json(SEARCH_ITEMS)),
+    http.get('/api/items/search', () =>
+      HttpResponse.json({
+        q: '',
+        results: SEARCH_ITEMS.map((it) => ({
+          id: it.id === 'D999' ? 999 : 888,
+          source_type: it.kind,
+          summary: it.summary,
+          status: it.state,
+          priority: it.priority,
+          tags: it.tags,
+          llm_summary: it.llm_summary ?? '',
+          enriched_context: it.context ?? {},
+          processing_log: it.stages ?? [],
+          verdict: { action: 'triage' },
+          path: it.path ?? null,
+        })),
+        total: SEARCH_ITEMS.length,
+      }),
+    ),
+    http.get('/api/items/by-id/:id', () =>
+      HttpResponse.json({
+        id: 999,
+        source_type: 'diff',
+        summary: 'test',
+        status: 'pending_triage',
+        priority: null,
+        tags: [],
+        llm_summary: '',
+        enriched_context: {},
+        processing_log: [],
+        verdict: { action: 'triage' },
+        path: null,
+      }),
+    ),
   ]
 }
 
@@ -339,31 +372,34 @@ describe('accessibility', () => {
   // ---- Search listbox (role=listbox, role=option, aria-activedescendant) ----
 
   it('Search result list uses role=listbox with role=option items', async () => {
+    const user = userEvent.setup()
     renderWithClient(<Search />, '/search')
     await waitFor(() => {
       expect(screen.getByTestId('search-page')).toBeInTheDocument()
     })
 
-    const listbox = screen.getByRole('listbox', { name: 'Search results' })
+    // Type to search (need 2+ chars)
+    await user.type(screen.getByLabelText('Search items'), 'te')
+
+    const listbox = await screen.findByRole('listbox', { name: 'Search results' })
     expect(listbox).toBeInTheDocument()
 
     const options = within(listbox).getAllByRole('option')
     expect(options.length).toBe(2)
 
-    // First option is selected
-    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    // All options are unselected (no active selection in new design)
+    expect(options[0]).toHaveAttribute('aria-selected', 'false')
     expect(options[1]).toHaveAttribute('aria-selected', 'false')
   })
 
-  it('Search listbox tracks aria-activedescendant', async () => {
+  it('Search shows type-to-search prompt when query is too short', async () => {
     renderWithClient(<Search />, '/search')
     await waitFor(() => {
       expect(screen.getByTestId('search-page')).toBeInTheDocument()
     })
 
-    const listbox = screen.getByRole('listbox', { name: 'Search results' })
-    // aria-activedescendant points to the first result's id
-    expect(listbox).toHaveAttribute('aria-activedescendant', 'search-row-D999')
+    // Should show the type-to-search prompt
+    expect(screen.getByText(/type at least 2 characters to search/i)).toBeInTheDocument()
   })
 
   // ---- LiveTail aria-live region ----
