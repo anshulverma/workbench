@@ -394,14 +394,15 @@ describe('accessibility', () => {
     expect(options[1]).toHaveAttribute('aria-selected', 'false')
   })
 
-  it('Search shows type-to-search prompt when query is too short', async () => {
+  it('Search exposes an accessible labeled search input', async () => {
     renderWithClient(<Search />, '/search')
     await waitFor(() => {
       expect(screen.getByTestId('search-page')).toBeInTheDocument()
     })
 
-    // Should show the type-to-search prompt
-    expect(screen.getByText(/type at least 2 characters to search/i)).toBeInTheDocument()
+    // The search box is reachable by its accessible name (no query needed now —
+    // the page shows recent items by default rather than a type-to-search prompt).
+    expect(screen.getByLabelText('Search items')).toBeInTheDocument()
   })
 
   // ---- LiveTail aria-live region ----

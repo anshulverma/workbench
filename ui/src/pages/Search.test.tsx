@@ -75,9 +75,15 @@ function renderSearch() {
 }
 
 describe('Search page', () => {
-  it('shows a type-to-search prompt before input', () => {
+  it('shows recent items before any query is typed', async () => {
+    server.use(
+      http.get('/api/items/search', () =>
+        HttpResponse.json({ q: '', results: [RESULT], total: 1 }),
+      ),
+    )
     renderSearch()
-    expect(screen.getByText(/type at least 2 characters to search/i)).toBeInTheDocument()
+    // No typing: the no-query default renders the recent item list.
+    expect(await screen.findByText(RESULT.summary)).toBeInTheDocument()
   })
 
   it('lists results and opens the dialog on row click', async () => {

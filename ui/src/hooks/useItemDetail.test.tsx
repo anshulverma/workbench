@@ -49,9 +49,15 @@ describe('useItemDetail', () => {
 })
 
 describe('useItemsSearch', () => {
-  it('is disabled below 2 chars', () => {
-    const { result } = renderHook(() => useItemsSearch('a'), { wrapper })
-    expect(result.current.fetchStatus).toBe('idle')
+  it('fetches recent items for an empty/short query (no enable gate)', async () => {
+    server.use(
+      http.get('/api/items/search', () =>
+        HttpResponse.json({ q: '', results: [RICH], total: 1 }),
+      ),
+    )
+    const { result } = renderHook(() => useItemsSearch(''), { wrapper })
+    await waitFor(() => expect(result.current.data).toBeTruthy())
+    expect(result.current.data!).toHaveLength(1)
   })
 
   it('fetches and adapts results when q>=2', async () => {

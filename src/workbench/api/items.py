@@ -77,14 +77,8 @@ async def search_items(
     limit = min(max(1, limit), _SEARCH_MAX_LIMIT)
     q = (q or "").strip()
 
-    if len(q) < 2:
-        return {"q": q, "results": [], "total": 0}
-
     stores = request.app.state.stores
     pool = stores.items.pool
-
-    # Escape ILIKE wildcards
-    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     query = """
         SELECT id, source_type, source_id, summary, category, origin,
@@ -93,21 +87,31 @@ async def search_items(
                verdict_action, verdict_priority, verdict_confidence,
                action_source, path
           FROM items
-         WHERE summary ILIKE '%' || $1 || '%' ESCAPE '\\'
     """
-    params: list = [escaped]
-    idx = 2
+    conditions: list[str] = []
+    params: list = []
+    idx = 1
+
+    # A query of >=2 chars filters by summary; a shorter/empty query is treated
+    # as "no query" and returns the most recent items (created_at DESC).
+    if len(q) >= 2:
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        conditions.append("summary ILIKE '%' || $" + str(idx) + " || '%' ESCAPE '\\'")
+        params.append(escaped)
+        idx += 1
 
     if kind:
         if kind == "action":
-            query += " AND action_source IS NOT NULL"
+            conditions.append("action_source IS NOT NULL")
         elif kind == "item":
-            query += " AND action_source IS NULL"
+            conditions.append("action_source IS NULL")
         elif kind != "all":
-            query += f" AND category = ${idx}"
+            conditions.append("category = $" + str(idx))
             params.append(kind)
             idx += 1
 
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY created_at DESC LIMIT $" + str(idx)
     params.append(limit)
 

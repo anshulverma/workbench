@@ -180,19 +180,56 @@ async def test_search_limit_cap_at_100(client, stores):
 
 
 @pytest.mark.asyncio
-async def test_search_short_query_returns_empty(client):
-    r = await client.get("/api/items/search?q=a")
+async def test_search_empty_query_returns_recent_items(client, stores):
+    """No query -> the most recent items, ordered created_at DESC."""
+    from datetime import datetime, timezone
+
+    for i, summary in enumerate(["oldest item", "middle item", "newest item"]):
+        await stores.items.save_item(
+            Item(
+                source_type="github",
+                source_id=f"recent-{i}",
+                summary=summary,
+                category=ItemCategory.INFORMATIONAL,
+                origin=ItemOrigin.AUTO_INCLUDED,
+                priority=Priority.P2,
+            )
+        )
+        # Force distinct created_at so ordering is deterministic (newest = i==2).
+        await stores.items.pool.execute(
+            "UPDATE items SET created_at = $1 WHERE source_id = $2",
+            datetime(2026, 1, i + 1, tzinfo=timezone.utc),
+            f"recent-{i}",
+        )
+
+    r = await client.get("/api/items/search?q=")
     assert r.status_code == 200
-    body = r.json()
-    assert body["results"] == []
-    assert body["total"] == 0
+    results = r.json()["results"]
+    summaries = [x["summary"] for x in results]
+    assert {"oldest item", "middle item", "newest item"} <= set(summaries)
+    # most recent first
+    assert summaries.index("newest item") < summaries.index("oldest item")
+    created = [x["created_at"] for x in results]
+    assert created == sorted(created, reverse=True)
 
 
 @pytest.mark.asyncio
-async def test_search_empty_query(client):
-    r = await client.get("/api/items/search?q=")
+async def test_search_single_char_returns_recent_items(client, stores):
+    """A single character is treated as no-query and shows recent items."""
+    await stores.items.save_item(
+        Item(
+            source_type="github",
+            source_id="onechar-1",
+            summary="single char shows recent",
+            category=ItemCategory.INFORMATIONAL,
+            origin=ItemOrigin.AUTO_INCLUDED,
+            priority=Priority.P2,
+        )
+    )
+    r = await client.get("/api/items/search?q=a")
     assert r.status_code == 200
-    assert r.json()["results"] == []
+    summaries = [x["summary"] for x in r.json()["results"]]
+    assert "single char shows recent" in summaries
 
 
 # --------------------------------------------------------------------------- #

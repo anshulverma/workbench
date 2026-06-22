@@ -42,8 +42,6 @@ export function Search() {
     [allItems, kind],
   )
 
-  const tooShort = debouncedQ.length < 2
-
   return (
     <div className="grid gap-4" data-testid="search-page">
       <div className="grid gap-1">
@@ -89,9 +87,7 @@ export function Search() {
         ))}
       </div>
 
-      {tooShort ? (
-        <EmptyState message="// type at least 2 characters to search" />
-      ) : searchQ.isPending ? (
+      {searchQ.isPending ? (
         <div className="grid gap-2" data-testid="search-loading">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />

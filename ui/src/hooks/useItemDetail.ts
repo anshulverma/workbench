@@ -3,8 +3,6 @@ import { apiGet } from '@/lib/api'
 import { toSearchItem, type ApiSearchItem } from '@/lib/search-adapter'
 import type { SearchItem } from '@/lib/types/search'
 
-const SEARCH_MIN_CHARS = 2
-
 /** Rich detail for one item by integer id; disabled when id is null. */
 export function useItemDetail(id: number | null) {
   return useQuery<SearchItem>({
@@ -15,7 +13,8 @@ export function useItemDetail(id: number | null) {
   })
 }
 
-/** Rich full-text item search; disabled below 2 chars. */
+/** Rich item list: full-text search for q>=2 chars, else the most recent items
+ *  (the server returns recent items, created_at DESC, for an empty/short query). */
 export function useItemsSearch(q: string, limit = 50) {
   const query = q.trim()
   return useQuery<SearchItem[]>({
@@ -26,7 +25,6 @@ export function useItemsSearch(q: string, limit = 50) {
       )
       return res.results.map(toSearchItem)
     },
-    enabled: query.length >= SEARCH_MIN_CHARS,
     placeholderData: (prev) => prev,
     staleTime: 30_000,
   })
