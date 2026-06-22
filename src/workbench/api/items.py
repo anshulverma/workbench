@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json as _json
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -9,6 +10,43 @@ router = APIRouter(prefix="/api", tags=["items"])
 
 _SEARCH_MAX_LIMIT = 100
 _SEARCH_DEFAULT_LIMIT = 50
+
+
+def _row_to_search_item(r) -> dict:
+    """Map an `items` row (the rich SELECT projection) to the SearchItem-shaped dict
+    returned by both /api/items/search and /api/items/by-id/{id}."""
+    tags = r.get("tags")
+    if isinstance(tags, str):
+        tags = _json.loads(tags)
+    enriched_context = r.get("enriched_context")
+    if isinstance(enriched_context, str):
+        enriched_context = _json.loads(enriched_context)
+    funnel_log = r.get("funnel_log")
+    if isinstance(funnel_log, str):
+        funnel_log = _json.loads(funnel_log)
+    return {
+        "id": r["id"],
+        "source_type": r["source_type"],
+        "source_id": r["source_id"],
+        "summary": r["summary"],
+        "category": r["category"],
+        "origin": r["origin"],
+        "priority": r["priority"],
+        "status": r["status"],
+        "kind": "action" if r.get("action_source") else "item",
+        "path": r.get("path"),
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+        "tags": tags or [],
+        "llm_summary": r.get("llm_summary"),
+        "enriched_context": enriched_context or {},
+        "processing_log": funnel_log or [],
+        "verdict": {
+            "action": r.get("verdict_action"),
+            "priority": r.get("verdict_priority"),
+            "confidence": r.get("verdict_confidence"),
+        },
+    }
 
 
 @router.get("/items")
@@ -75,48 +113,7 @@ async def search_items(
 
     rows = await pool.fetch(query, *params)
 
-    import json
-
-    results = []
-    for r in rows:
-        tags = r.get("tags")
-        if isinstance(tags, str):
-            tags = json.loads(tags)
-
-        enriched_context = r.get("enriched_context")
-        if isinstance(enriched_context, str):
-            enriched_context = json.loads(enriched_context)
-
-        funnel_log = r.get("funnel_log")
-        if isinstance(funnel_log, str):
-            funnel_log = json.loads(funnel_log)
-
-        results.append(
-            {
-                "id": r["id"],
-                "source_type": r["source_type"],
-                "source_id": r["source_id"],
-                "summary": r["summary"],
-                "category": r["category"],
-                "origin": r["origin"],
-                "priority": r["priority"],
-                "status": r["status"],
-                "kind": "action" if r.get("action_source") else "item",
-                "path": r.get("path"),
-                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
-                "tags": tags or [],
-                "llm_summary": r.get("llm_summary"),
-                "enriched_context": enriched_context or {},
-                "processing_log": funnel_log or [],
-                "verdict": {
-                    "action": r.get("verdict_action"),
-                    "priority": r.get("verdict_priority"),
-                    "confidence": r.get("verdict_confidence"),
-                },
-            }
-        )
-
+    results = [_row_to_search_item(r) for r in rows]
     return {"q": q, "results": results, "total": len(results)}
 
 
@@ -131,6 +128,27 @@ _HREF = {
     "feedback_correction": lambda e: None,
     "plan": lambda e: None,
 }
+
+
+@router.get("/items/by-id/{item_id}")
+async def get_item_by_id(item_id: int, request: Request):
+    """Rich detail for a single item by integer id (powers the item-detail popup)."""
+    pool = request.app.state.stores.items.pool
+    row = await pool.fetchrow(
+        """
+        SELECT id, source_type, source_id, summary, category, origin,
+               priority, status, created_at, updated_at,
+               tags, llm_summary, enriched_context, funnel_log,
+               verdict_action, verdict_priority, verdict_confidence,
+               action_source, path
+          FROM items
+         WHERE id = $1
+        """,
+        item_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return _row_to_search_item(row)
 
 
 @router.get("/items/{path}/related")
