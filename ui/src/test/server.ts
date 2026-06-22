@@ -201,28 +201,22 @@ const ENRICHMENT_SAMPLES: Record<string, EnrichmentSample[]> = {
 
 const SEARCH_RESULTS = [
   {
-    id: 'D12345',
-    kind: 'diff',
+    id: 12345,
+    source_type: 'diff',
+    source_id: 'D12345',
     summary: 'Fix auth middleware race condition',
-    source: 'phabricator',
+    category: 'action_item',
+    origin: 'phabricator',
     priority: 'P1',
-    state: 'triaged',
-    relevance: 92,
-    tags: ['security', 'auth'],
+    status: 'triaged',
+    path: '2.1',
     created_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    tags: ['security', 'auth'],
     llm_summary: 'Critical race condition fix in auth middleware.',
-    context: {
-      type: 'diff',
-      author: 'alice',
-      team: 'infra',
-      status: 'Needs Review',
-      url: 'https://phabricator.example.com/D12345',
-      hunks: [],
-    },
-    stages: [
-      { filterId: 'f_relevance', outcome: 'include', reason: 'High relevance', confidence: 95 },
-    ],
-    verdict: { decision: 'triaged', priority: 'P1', confidence: 92, rationale: 'Critical fix' },
+    enriched_context: { type: 'diff', author: 'alice', team: 'infra', status: 'Needs Review', url: 'https://phabricator.example.com/D12345', hunks: [] },
+    processing_log: [{ stage: 'f_relevance', outcome: 'include', label: 'High relevance' }],
+    verdict: { action: 'triage', priority: 'P1', confidence: 92 },
   },
 ]
 
@@ -369,7 +363,16 @@ export function handlers() {
     }),
 
     // ---------- Search ----------
-    http.get('/api/items/search', () => HttpResponse.json(SEARCH_RESULTS)),
+    http.get('/api/items/search', () =>
+      HttpResponse.json({ q: '', results: SEARCH_RESULTS, total: SEARCH_RESULTS.length }),
+    ),
+
+    http.get('/api/items/by-id/:id', ({ params }) => {
+      const found = SEARCH_RESULTS.find((r) => String(r.id) === params.id)
+      return found
+        ? HttpResponse.json(found)
+        : new HttpResponse(JSON.stringify({ detail: 'Item not found' }), { status: 404 })
+    }),
 
     // ---------- Item actions ----------
     http.post('/api/items/:id/snooze', () =>
