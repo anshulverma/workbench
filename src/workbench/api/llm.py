@@ -107,9 +107,10 @@ async def get_call_detail(call_id: str, request: Request):
     if rec is None:
         raise HTTPException(404, "Call not found")
 
-    links = await request.app.state.stores.entity_links.linked_items_for_correlation(
-        rec.correlation_id
-    )
+    # entity_links is optional on Stores; treat its absence as no links
+    # (symmetry with the llm-calls store guard above).
+    el = request.app.state.stores.entity_links
+    links = await el.linked_items_for_correlation(rec.correlation_id) if el else []
     linked_items = [
         {"id": li.id, "path": li.path, "summary": li.summary} for li in links
     ]
