@@ -235,10 +235,6 @@ export interface LLMSubCall {
   tokens_out: number | null
 }
 
-/** A subcall item is a lineage path id (e.g. "5" or "5.1.2") iff it matches
- *  this shape; otherwise it is a free-text label (e.g. "relevance batch"). */
-const ITEM_PATH_RE = /^\d+(\.\d+)*$/
-
 export interface LLMCallDetailData {
   sysPrompt: string
   subcalls: LLMSubCall[]
@@ -1055,17 +1051,10 @@ function LLMCallDetail({
                     color: openSub === i ? 'var(--foreground)' : 'var(--muted-foreground)',
                   }}
                 >
-                  {ITEM_PATH_RE.test(sc.item) ? (
-                    <Link
-                      to={`/items/${sc.item}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="font-mono text-primary hover:underline"
-                    >
-                      #{sc.item}
-                    </Link>
-                  ) : (
-                    sc.item
-                  )}
+                  {/* subcall.item is the batch position (str(idx)), not a
+                      navigable item id/path — render it as a plain label.
+                      Linking it produced GET /api/items/{idx} -> 404. */}
+                  {sc.item}
                 </button>
               ))}
             </div>

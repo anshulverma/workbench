@@ -96,9 +96,11 @@ const LLM_DETAIL = {
 
 const LLM_DETAIL_BATCHED = {
   sysPrompt: 'You enrich an item with structured metadata.',
+  // subcall.item is the 0-based position within the batched call (str(idx) from
+  // the provider), NOT a navigable item id/path — so it must not be linkified.
   subcalls: [
     {
-      item: '5.1',
+      item: '0',
       prompt: '[item D12863] enrich · summarize diff',
       completion: '{"summary": "one"}',
       structured: { summary: 'one' },
@@ -106,7 +108,7 @@ const LLM_DETAIL_BATCHED = {
       tokens_out: 80,
     },
     {
-      item: 'relevance batch',
+      item: '1',
       prompt: '[item D12864] enrich · summarize diff',
       completion: '{"summary": "two"}',
       structured: { summary: 'two' },
@@ -114,7 +116,7 @@ const LLM_DETAIL_BATCHED = {
       tokens_out: 80,
     },
     {
-      item: 'D12865',
+      item: '2',
       prompt: '[item D12865] enrich · summarize diff',
       completion: '{"summary": "three"}',
       structured: { summary: 'three' },
@@ -426,19 +428,21 @@ describe('SystemStatus — LLM Infra sub-tab', () => {
     expect(within(dialog).getByTestId('llm-subcall-2')).toBeInTheDocument()
   })
 
-  it('links a path-shaped subcall item to its lineage page', async () => {
+  it('renders subcall items as plain selectors, not navigable item links', async () => {
     await openLLMTab()
-    // The 2nd row (index 1, en_github) carries a batch of 3 with subcall items
-    // [5.1, relevance batch, D12865].
+    // The 2nd row (en_github) carries a batch of 3. subcall.item is the batch
+    // index ("0","1","2"), not an item id — so it must NOT be an /items/ link
+    // (linking it 404'd: GET /api/items/0 -> "Item not found").
     await userEvent.click(screen.getAllByTestId('llm-log-row')[1])
     const dialog = await screen.findByRole('dialog')
     await within(dialog).findByTestId('llm-subcall-selector')
-    const link = await within(dialog).findByRole('link', { name: '#5.1' })
-    expect(link).toHaveAttribute('href', '/items/5.1')
-    // free-text item stays a plain label, not a link
-    expect(
-      within(dialog).queryByRole('link', { name: /relevance batch/ }),
-    ).toBeNull()
+    // No subcall renders an item-lineage link.
+    const itemLinks = within(dialog)
+      .queryAllByRole('link')
+      .filter((a) => (a.getAttribute('href') ?? '').startsWith('/items/'))
+    expect(itemLinks).toHaveLength(0)
+    // The batch-index label still shows on the selector button.
+    expect(within(dialog).getByTestId('llm-subcall-0')).toHaveTextContent('0')
   })
 
   it('closes the call detail dialog', async () => {
