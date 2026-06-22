@@ -47,6 +47,8 @@ def _detail_view(rec, linked_items: list[dict]) -> dict:
         "sysPrompt": rec.system_prompt or "",
         "subcalls": [s.model_dump() for s in rec.subcalls],
         "linked_items": linked_items,
+        "rawRequest": rec.raw_request,
+        "rawResponse": rec.raw_response,
     }
 
 

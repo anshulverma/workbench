@@ -338,6 +338,39 @@ async def test_llm_call_detail_bad_id_format(client):
     assert r.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_detail_view_exposes_raw_io(client, app_with_state):
+    stores = app_with_state.state.stores
+    rec = LlmCallRecord(
+        started_at=datetime.now(timezone.utc),
+        origin="o",
+        purpose="p",
+        stage="filter",
+        model="m",
+        status="ok",
+        subcalls=[
+            LlmSubcall(
+                item="i1",
+                prompt="p",
+                completion="c",
+                structured={"a": 1},
+                tokens_in=1,
+                tokens_out=1,
+            )
+        ],
+        raw_request={"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+        raw_response={"stop_reason": "end_turn"},
+    )
+    await stores.llm_calls.save_many([rec])
+    row = (await stores.llm_calls.list_calls(limit=1))[0]
+
+    r = await client.get(f"/api/llm/calls/llm_{row.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rawRequest"]["messages"][0]["content"] == "hi"
+    assert body["rawResponse"]["stop_reason"] == "end_turn"
+
+
 # --------------------------------------------------------------------------- #
 # GET /api/llm/metrics — 24h metrics
 # --------------------------------------------------------------------------- #
