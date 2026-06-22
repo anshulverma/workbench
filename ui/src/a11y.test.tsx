@@ -72,6 +72,7 @@ const SEARCH_ITEMS = [
   {
     id: 'D999',
     kind: 'diff',
+    path: '999',
     summary: 'A11y test diff',
     source: 'phabricator',
     priority: 'P1',
@@ -87,6 +88,7 @@ const SEARCH_ITEMS = [
   {
     id: 'E888',
     kind: 'email',
+    path: '888',
     summary: 'A11y email item',
     source: 'email',
     priority: null,

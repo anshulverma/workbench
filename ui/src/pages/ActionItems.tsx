@@ -10,7 +10,6 @@
 // arrays/Sets and feeds them back into setState.
 
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import {
   useActions,
@@ -24,6 +23,7 @@ import { useFeedbackStore } from '@/hooks/useFeedback'
 import { useMetricsTimeseries } from '@/hooks/useStats'
 import { MultiLineChart } from '@/components/MultiLineChart'
 import { FilterTuningCard } from '@/components/FilterTuningCard'
+import { ItemLink } from '@/components/ItemLink'
 import { Mono } from '@/components/Mono'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/EmptyState'
@@ -117,14 +117,9 @@ function ActionRow({
       </Badge>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">
-          {action.path && (
-            <Link
-              to={`/items/${action.path}`}
-              className="mr-2 font-mono text-xs text-primary hover:underline"
-            >
-              #{action.path}
-            </Link>
-          )}
+          <ItemLink id={action.id} className="mr-2 text-xs">
+            #{action.id}
+          </ItemLink>
           {action.summary}
           {action.parent_item && (
             <span className="ml-2 text-xs text-muted-foreground">

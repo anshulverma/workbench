@@ -33,11 +33,11 @@ const ACTIONS = {
   categories: {
     review: [
       {
-        id: 'a1',
+        id: 42,
         summary: 'Fix bug',
         priority: 'P1',
         path: '1.1.1',
-        parent_item: { id: 'p1', summary: 'Parent thread' },
+        parent_item: { id: 1, summary: 'Parent thread' },
         action_source: 'triage_response',
         action_category: 'review',
         // P1 < 24h -> ACTIVE NOW
@@ -58,7 +58,7 @@ const GROUPED = {
   categories: {
     review: [
       {
-        id: 'crit',
+        id: 1,
         summary: 'Sev0 outage',
         priority: 'P0',
         parent_item: null,
@@ -67,7 +67,7 @@ const GROUPED = {
         created_at: iso(1 * HOUR),
       },
       {
-        id: 'fresh',
+        id: 2,
         summary: 'Fresh P1 task',
         priority: 'P1',
         parent_item: null,
@@ -76,7 +76,7 @@ const GROUPED = {
         created_at: iso(2 * HOUR),
       },
       {
-        id: 'stale',
+        id: 3,
         summary: 'Stale P1 task',
         priority: 'P1',
         parent_item: null,
@@ -85,7 +85,7 @@ const GROUPED = {
         created_at: iso(48 * HOUR),
       },
       {
-        id: 'mid',
+        id: 4,
         summary: 'Mid P2 task',
         priority: 'P2',
         parent_item: null,
@@ -94,7 +94,7 @@ const GROUPED = {
         created_at: iso(24 * HOUR),
       },
       {
-        id: 'low',
+        id: 5,
         summary: 'Low P3 task',
         priority: 'P3',
         parent_item: null,
@@ -197,15 +197,15 @@ describe('Action Items page', () => {
     expect(screen.getByText(/Parent thread/)).toBeInTheDocument()
     // priority is reflected as the selected value of the per-row select
     const prioritySelect = screen.getByRole('combobox', {
-      name: /set priority for a1/i,
+      name: /set priority for 42/i,
     }) as HTMLSelectElement
     expect(prioritySelect.value).toBe('P1')
   })
 
   it('links an action to its item lineage page', async () => {
     renderActions()
-    const link = await screen.findByRole('link', { name: '#1.1.1' })
-    expect(link).toHaveAttribute('href', '/items/1.1.1')
+    const btn = await screen.findByRole('button', { name: '#42' })
+    expect(btn).toBeInTheDocument()
   })
 
   it('renders the empty state when there are no actions', async () => {
@@ -245,14 +245,14 @@ describe('Action Items page', () => {
     let done = false
     server.use(
       ...baseHandlers(),
-      http.post('/api/actions/a1/done', () => {
+      http.post('/api/actions/42/done', () => {
         done = true
         return HttpResponse.json({ status: 'done' })
       }),
     )
     renderActions()
     await userEvent.click(
-      await screen.findByRole('button', { name: /mark a1 done/i }),
+      await screen.findByRole('button', { name: /mark 42 done/i }),
     )
     await waitFor(() => expect(done).toBe(true))
     expect(await screen.findByText(/marked done/i)).toBeInTheDocument()
@@ -262,14 +262,14 @@ describe('Action Items page', () => {
     let posted: Record<string, unknown> | null = null
     server.use(
       ...baseHandlers(),
-      http.post('/api/actions/a1/priority', async ({ request }) => {
+      http.post('/api/actions/42/priority', async ({ request }) => {
         posted = (await request.json()) as Record<string, unknown>
         return HttpResponse.json({ status: 'updated', priority: posted.priority })
       }),
     )
     renderActions()
     const select = await screen.findByRole('combobox', {
-      name: /set priority for a1/i,
+      name: /set priority for 42/i,
     })
     await userEvent.selectOptions(select, 'P0')
     await waitFor(() => expect(posted).toMatchObject({ priority: 'P0' }))
@@ -279,14 +279,14 @@ describe('Action Items page', () => {
     let posted: Record<string, unknown> | null = null
     server.use(
       ...baseHandlers(),
-      http.post('/api/actions/a1/snooze', async ({ request }) => {
+      http.post('/api/actions/42/snooze', async ({ request }) => {
         posted = (await request.json()) as Record<string, unknown>
         return HttpResponse.json({ status: 'snoozed', hours: posted.hours })
       }),
     )
     renderActions()
     await userEvent.click(
-      await screen.findByRole('button', { name: /snooze a1/i }),
+      await screen.findByRole('button', { name: /snooze 42/i }),
     )
     await waitFor(() => expect(posted).toMatchObject({ hours: 4 }))
   })

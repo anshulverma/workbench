@@ -7,6 +7,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useTriageCard } from '@/hooks/useTriageCard'
 import { useRespond } from '@/hooks/useTriage'
 import { DiffHunks, type Hunk } from '@/components/DiffHunks'
+import { ItemLink } from '@/components/ItemLink'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -87,13 +88,19 @@ export function TriageDetail() {
           yet carry the lineage path, so this renders nothing today and lights up
           automatically once the card endpoint resolves the item's path field (also
           tolerant of the legacy item_path field name for backend flexibility). */}
-      {itemPath && (
-        <Link
-          to={`/items/${itemPath}`}
-          className="font-mono text-xs text-primary hover:underline"
-        >
-          #{itemPath}
-        </Link>
+      {c.item_id ? (
+        <ItemLink id={c.item_id} className="text-xs">
+          #{c.item_id}
+        </ItemLink>
+      ) : (
+        itemPath && (
+          <Link
+            to={`/items/${itemPath}`}
+            className="font-mono text-xs text-primary hover:underline"
+          >
+            #{itemPath}
+          </Link>
+        )
       )}
 
       {diffUrl ? (
