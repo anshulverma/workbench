@@ -117,8 +117,10 @@ LLMCallDetail popup: two collapsed call-level sections (JsonHighlight)
 
 ### 2. Providers — `providers/llm/anthropic.py`, `providers/queue_scorer/llm.py`
 
-For each `messages.create` call site (`_call_with_retry`,
-`interpret_triage_response`, the batch scorer, queue_scorer):
+For each of the four real `messages.create` call sites — `_call_with_retry`
+(single + batch relevance), `interpret_triage_response` (tools),
+`queue_scorer.score_urgency` (single-item), and
+`queue_scorer._score_urgency_chunk` (batch):
 
 - Build a local `request = {"model": …, "max_tokens": …, "messages": …, …}`
   (include `tools` / `tool_choice` / `temperature` / `system` where present).
