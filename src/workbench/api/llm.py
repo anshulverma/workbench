@@ -41,11 +41,12 @@ def _llm_call_view(rec) -> dict:
     }
 
 
-def _detail_view(rec) -> dict:
+def _detail_view(rec, linked_items: list[dict]) -> dict:
     """Map LlmCallRecord to the detail-view JSON shape (prompt + subcalls)."""
     return {
         "sysPrompt": rec.system_prompt or "",
         "subcalls": [s.model_dump() for s in rec.subcalls],
+        "linked_items": linked_items,
     }
 
 
@@ -106,7 +107,13 @@ async def get_call_detail(call_id: str, request: Request):
     if rec is None:
         raise HTTPException(404, "Call not found")
 
-    return _detail_view(rec)
+    links = await request.app.state.stores.entity_links.linked_items_for_correlation(
+        rec.correlation_id
+    )
+    linked_items = [
+        {"id": li.id, "path": li.path, "summary": li.summary} for li in links
+    ]
+    return _detail_view(rec, linked_items)
 
 
 @router.get("/metrics")
