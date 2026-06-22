@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncpg
 
-from workbench.storage.base import EntityLink, EntityLinkStore
+from workbench.storage.base import EntityLink, EntityLinkStore, LinkedItem
 
 
 class PgEntityLinkStore(EntityLinkStore):
@@ -91,3 +91,20 @@ class PgEntityLinkStore(EntityLinkStore):
             entity_id,
         )
         return [self._row(r) for r in rows]
+
+    async def linked_items_for_correlation(
+        self, correlation_id: str | None
+    ) -> list[LinkedItem]:
+        if correlation_id is None:
+            return []
+        rows = await self.pool.fetch(
+            """SELECT e.item_id AS id, e.item_path AS path, i.summary
+                 FROM entity_item_links e
+                 JOIN items i ON i.id = e.item_id
+                WHERE e.entity_type = 'llm_call' AND e.correlation_id = $1
+                ORDER BY e.item_id""",
+            correlation_id,
+        )
+        return [
+            LinkedItem(id=r["id"], path=r["path"], summary=r["summary"]) for r in rows
+        ]

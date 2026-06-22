@@ -388,6 +388,13 @@ class EntityLink:
     created_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class LinkedItem:
+    id: int
+    path: str
+    summary: str
+
+
 class EntityLinkStore(ABC):
     @abstractmethod
     async def record(
@@ -419,6 +426,14 @@ class EntityLinkStore(ABC):
     @abstractmethod
     async def for_entity(self, entity_type: str, entity_id: int) -> list[EntityLink]:
         """All item links an entity consumed."""
+        ...
+
+    @abstractmethod
+    async def linked_items_for_correlation(
+        self, correlation_id: str | None
+    ) -> list[LinkedItem]:
+        """Items linked to an entity by correlation_id, joined to items for the
+        summary. Empty list when correlation_id is None or resolves to nothing."""
         ...
 
 
