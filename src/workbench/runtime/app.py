@@ -189,14 +189,18 @@ async def lifespan(app: FastAPI):
     else:
         app.state.messenger = None
 
-    if config.enrichment.providers:
-        app.state.enricher = create_composite_enricher(
-            config.enrichment, connections=connections
-        )
-    else:
-        from workbench.providers.enrichment.stub import StubEnricher
-
-        app.state.enricher = StubEnricher()
+    # Always build the composite enricher. It honors both explicit per-source
+    # `providers` and the `default` enricher. The config normalizer rewrites the
+    # simple `enrichment: {class: X}` form into `{providers: [], default: {class:
+    # X}}` (config/models.py::_normalize_enrichment); gating only on `providers`
+    # (the previous behavior) silently dropped a configured default — e.g. the
+    # Meta composite enricher — and fell back to the no-op StubEnricher, so diffs
+    # were never deep-fetched and no triage card ever got curated hunks. With no
+    # enrichment configured, `default` resolves to StubEnricher, so the composite
+    # degrades to the same no-op behavior as before.
+    app.state.enricher = create_composite_enricher(
+        config.enrichment, connections=connections
+    )
 
     if config.memory:
         app.state.memory = create_provider(config.memory)
