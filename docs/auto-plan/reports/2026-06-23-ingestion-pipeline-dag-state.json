@@ -1,0 +1,63 @@
+{
+  "topic": "ingestion-pipeline-dag",
+  "domains": ["backend", "frontend", "api-design", "data-ml"],
+  "iteration": 1,
+  "phase": "harden-complete",
+  "user_model_brief": "Single-user Workbench feed; user Anshul (Meta eng). Prefers maximum-fidelity options; DB-authoritative config + hot-apply; shadcn/Tailwind-v4/React19 UI + hand-rolled SVG (no graph lib); per-package README enforced by tests/test_folder_docs.py; uses Claude Design tool for UI mockups. Plan deferred until after Claude Design mockups.",
+  "decisions": [
+    {"id": "d01", "question": "Execution model", "answer": "Real ordered stage executor; authored graph is execution order", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d02", "question": "Pipeline shape", "answer": "Routing DAG, single-path per-item execution", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d03", "question": "Concurrency", "answer": "Sequential now; node/edge model designed for later parallel fan-out", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d04", "question": "Re-divergence after convergence", "answer": "Supported via multiple outgoing edges", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d05", "question": "Rule expressiveness", "answer": "Nested boolean tree (AND/OR/NOT)", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d06", "question": "Field schema source", "answer": "Backend-declared per adapter, served to UI", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d07", "question": "Enricher config", "answer": "Full CRUD + depth + budget; DB-authoritative; hot-apply", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d08", "question": "Pre-extraction filtering point", "answer": "Inside enqueue, before urgency LLM scoring", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d09", "question": "Decision resolution", "answer": "First-terminal-wins + ordered 3-case threshold fallback", "confidence": "high", "source": "user+hardening", "status": "resolved"},
+    {"id": "d10", "question": "Storage authority", "answer": "DB-authoritative pipeline_nodes + pipeline_edges; behavior-preserving migration", "confidence": "high", "source": "user", "status": "resolved"},
+    {"id": "d11", "question": "Advisory vs deterministic rules", "answer": "Keep advisory FilterRules feeding llm_filter; add deterministic gates", "confidence": "high", "source": "codebase", "status": "resolved"},
+    {"id": "d12", "question": "Diagram technology", "answer": "Hand-rolled SVG, no graph library", "confidence": "high", "source": "codebase", "status": "resolved"},
+    {"id": "d13", "question": "Enrichment beyond triage branch", "answer": "Allowed on any post-extraction path; default migrated graph keeps triage-only", "confidence": "high", "source": "ADR0070", "status": "resolved"},
+    {"id": "d14", "question": "MAX_NODES_PER_ITEM", "answer": "256; overflow → PipelineLoopError → fail-safe triage", "confidence": "medium", "source": "hardening", "status": "resolved"},
+    {"id": "d15", "question": "Snapshot/reload concurrency", "answer": "Immutable PipelineGraph snapshot per walk; swap under reload_lock for new walks", "confidence": "medium", "source": "hardening", "status": "resolved"},
+    {"id": "d16", "question": "funnel_stages.item_id type", "answer": "BIGINT = Item.id:int (migration 011); no type change", "confidence": "high", "source": "codebase", "status": "resolved"},
+    {"id": "d17", "question": "Loopback in v1", "answer": "Defined-but-rejected node type; rejected by validation; not seeded/offered/walked", "confidence": "high", "source": "hardening", "status": "resolved"},
+    {"id": "d18", "question": "Migration number + reserved IDs", "answer": "018_pipeline_dag.py down_revision 017; reserved IDs IDENTITY-assigned, resolved by (type,role)", "confidence": "high", "source": "codebase", "status": "resolved"},
+    {"id": "d19", "question": "FieldSpec.segment=both enforcement", "answer": "Offered in either segment; validation accepts if declared segment includes node segment", "confidence": "high", "source": "hardening", "status": "resolved"},
+    {"id": "d20", "question": "Reserved node enabled", "answer": "Always enabled=true; validation rejects enabled=false on reserved nodes", "confidence": "high", "source": "hardening", "status": "resolved"},
+    {"id": "d21", "question": "Empty source_scope", "answer": "[] rejected; use enabled=false to disable", "confidence": "medium", "source": "hardening", "status": "resolved"},
+    {"id": "d22", "question": "Edge-predicate segment", "answer": "from_node's segment; post-only field on pre-edge rejected", "confidence": "high", "source": "hardening", "status": "resolved"},
+    {"id": "d23", "question": "Invalid query params", "answer": "Unknown source_type / malformed segment / malformed window → 422", "confidence": "medium", "source": "hardening", "status": "resolved"}
+  ],
+  "unresolved": [],
+  "preference_updates": ["preference-claude-design-tool (user authors UI via Claude Design tool)"],
+  "artifacts": {
+    "context_md": "embedded as Glossary section in spec",
+    "spec": "docs/auto-plan/specs/2026-06-23-ingestion-pipeline-dag-design.md",
+    "adrs": [
+      "docs/adr/0065-routing-dag-single-path-execution.md",
+      "docs/adr/0066-pipeline-graph-db-authoritative.md",
+      "docs/adr/0067-deterministic-rule-filters-vs-advisory.md",
+      "docs/adr/0068-pre-extraction-filtering-before-urgency-scoring.md",
+      "docs/adr/0069-first-terminal-verdict-wins-threshold-fallback.md",
+      "docs/adr/0070-enrichment-generalized-beyond-triage-branch.md"
+    ],
+    "claude_design_prompt": "docs/auto-plan/specs/2026-06-23-ingestion-pipeline-dag-claude-design-prompt.md",
+    "plan": "deferred until after Claude Design mockups (--skip-plan)"
+  },
+  "harden": {
+    "enabled": true,
+    "max_passes": 10,
+    "current_pass": 6,
+    "convergence_status": "converged",
+    "snapshots_dir": "docs/auto-plan/reports/snapshots",
+    "passes": [
+      {"pass": 1, "status": "complete", "judge_verdict": "BASELINE", "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}},
+      {"pass": 2, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "17 material changes + ADR 0070; 5 open gaps.", "gaps_filled": ["default-graph parity", "batch-relevance placement", "enricher write authority", "reserved-node source_scope", "atomic replace vs stable IDs", "reload snapshot", "empty-DB bootstrap", "MAX_NODES value", "regex cap"], "metrics": {"material_changes": 17, "minor_changes": 1, "open_gaps": 5, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 22}},
+      {"pass": 3, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Closed pass-2's 5 open gaps + ADR 0069 alignment.", "gaps_filled": ["loopback v1 defined-but-rejected", "migration 018/reserved IDs", "3-case threshold resolution", "enrichment-provenance warning", "segment=both enforcement"], "metrics": {"material_changes": 6, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 6}},
+      {"pass": 4, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "4 edge-case validation tightenings.", "gaps_filled": ["reserved enabled=true", "empty source_scope rejected", "edge-predicate segment", "422 on invalid query params"], "metrics": {"material_changes": 4, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 4}},
+      {"pass": 5, "status": "complete", "judge_verdict": "NOT CONVERGED", "judge_rationale": "Single loopback glossary consistency fix.", "gaps_filled": ["post-extraction segment glossary loopback wording"], "metrics": {"material_changes": 1, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 1}},
+      {"pass": 6, "status": "complete", "judge_verdict": "CONVERGED", "judge_rationale": "Zero edits; full final-review pass clean; spec byte-identical to pass-5 snapshot.", "gaps_filled": [], "metrics": {"material_changes": 0, "minor_changes": 0, "open_gaps": 0, "pending_questions": 0, "unresolved_markers": 0, "instability_score": 0}}
+    ]
+  }
+}
