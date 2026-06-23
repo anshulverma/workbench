@@ -443,23 +443,33 @@ export function ActionItems() {
             Filter Tuning ({tuningTasks.length})
           </h2>
           <div className="space-y-2">
-            {tuningTasks.map((t) => (
-              <FilterTuningCard
-                key={t.id}
-                task={t}
-                onApply={() =>
-                  applyTask.mutate({
-                    taskId: t.id,
-                    ruleId: t.rule_id ?? 0,
-                    prompt: t.proposed_prompt,
-                  })
-                }
-                onDismiss={() =>
-                  updateTask.mutate({ taskId: t.id, status: 'dismissed' })
-                }
-                highlighted={t.id === Number(tuningParam)}
-              />
-            ))}
+            {tuningTasks.map((t) => {
+              const ruleId = t.filter_id ? Number(t.filter_id) : null
+              const canApply = ruleId !== null && !Number.isNaN(ruleId)
+              return (
+                <FilterTuningCard
+                  key={t.id}
+                  task={t}
+                  onApply={() => {
+                    if (!canApply) {
+                      console.warn(
+                        `Cannot apply tuning task ${t.id}: invalid filter_id "${t.filter_id}"`,
+                      )
+                      return
+                    }
+                    applyTask.mutate({
+                      taskId: t.id,
+                      ruleId: ruleId,
+                      prompt: t.proposed_prompt,
+                    })
+                  }}
+                  onDismiss={() =>
+                    updateTask.mutate({ taskId: t.id, status: 'dismissed' })
+                  }
+                  highlighted={t.id === Number(tuningParam)}
+                />
+              )
+            })}
           </div>
         </section>
       )}

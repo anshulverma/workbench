@@ -443,8 +443,8 @@ describe('Action Items page', () => {
           return HttpResponse.json([
             {
               id: 55,
-              rule_id: 10,
-              filter_id: 'fr_10',
+              rule_id: null,
+              filter_id: '10',
               item_id: 202,
               item_summary: 'Apply test item',
               from_outcome: 'drop',
