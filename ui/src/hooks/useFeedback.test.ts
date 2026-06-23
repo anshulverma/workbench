@@ -17,11 +17,15 @@ import { _resetToken } from '@/lib/api'
 
 const CORRECTIONS = [
   {
-    id: 'c-1',
-    item_id: 'item-1',
-    rule_id: 'r-1',
+    id: 1,
+    item_id: 1,
+    rule_id: 1,
+    filter_id: 'r-1',
+    item_summary: 'test item',
     original_action: 'drop',
     corrected_action: 'include',
+    from_label: 'Drop',
+    to_label: 'Include',
     reason: 'important diff',
     created_at: '2026-06-10T00:00:00Z',
   },
@@ -29,10 +33,19 @@ const CORRECTIONS = [
 
 const TASKS = [
   {
-    id: 't-1',
-    rule_id: 'r-1',
+    id: 1,
+    rule_id: 1,
+    filter_id: 'r-1',
+    item_id: 1,
+    item_summary: 'test item',
+    from_outcome: 'drop',
+    to_outcome: 'include',
+    from_label: 'Drop',
+    to_label: 'Include',
+    filter_prompt: 'old prompt',
     proposed_prompt: 'updated prompt',
-    correction_ids: ['c-1'],
+    kind: 'reclassify',
+    correction_ids: [1],
     status: 'open',
     created_at: '2026-06-10T00:00:00Z',
     resolved_at: null,
@@ -64,8 +77,8 @@ describe('useCorrections', () => {
     )
     const { result } = renderHook(() => useCorrections(), { wrapper })
     await waitFor(() => expect(result.current.data).toHaveLength(1))
-    expect(result.current.data![0].id).toBe('c-1')
-    expect(result.current.data![0].item_id).toBe('item-1')
+    expect(result.current.data![0].id).toBe(1)
+    expect(result.current.data![0].item_id).toBe(1)
   })
 
   it('passes item_id as query param when provided', async () => {
@@ -120,8 +133,12 @@ describe('useAddCorrection', () => {
     result.current.mutate({
       item_id: 5,
       rule_id: 1,
+      filter_id: null,
+      item_summary: null,
       original_action: 'drop',
       corrected_action: 'include',
+      from_label: null,
+      to_label: null,
       reason: 'test',
     })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))

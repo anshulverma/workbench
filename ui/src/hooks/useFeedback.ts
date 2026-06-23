@@ -75,16 +75,29 @@ export interface ServerCorrection {
   id: number
   item_id: number
   rule_id: number | null
+  filter_id: string | null
+  item_summary: string | null
   original_action: string
   corrected_action: string
+  from_label: string | null
+  to_label: string | null
   reason: string | null
   created_at: string
 }
 
 export interface ServerTuningTask {
   id: number
-  rule_id: number
+  rule_id: number | null
+  filter_id: string | null
+  item_id: number | null
+  item_summary: string | null
+  from_outcome: string | null
+  to_outcome: string | null
+  from_label: string | null
+  to_label: string | null
+  filter_prompt: string | null
   proposed_prompt: string
+  kind: string | null
   correction_ids: number[]
   status: string
   created_at: string
@@ -169,6 +182,21 @@ export function useDeleteTuningTask() {
       apiDelete<{ status: string }>(`/api/feedback/tasks/${taskId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })
+    },
+  })
+}
+
+/** Apply a tuning task: write the proposed prompt to the filter rule, then mark applied. */
+export function useApplyTuningTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ taskId, ruleId, prompt }: { taskId: number; ruleId: number; prompt: string }) => {
+      await apiPatch(`/api/filter-rules/${ruleId}/prompt`, { prompt })
+      return apiPatch<ServerTuningTask>(`/api/feedback/tasks/${taskId}?status=applied`)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })
+      qc.invalidateQueries({ queryKey: ['filter-rules'] })
     },
   })
 }
