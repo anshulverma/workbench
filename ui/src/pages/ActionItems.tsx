@@ -170,8 +170,8 @@ function ActionRow({
 
 /** Full-width throughput chart: incoming actions vs completion rate (12h). */
 function ThroughputChartCard() {
-  const incoming = useMetricsTimeseries('incoming_actions', 12, 'hour')
-  const completion = useMetricsTimeseries('completion_rate', 12, 'hour')
+  const incoming = useMetricsTimeseries('ingestion_count', 12, 'hour')
+  const completion = useMetricsTimeseries('throughput', 12, 'hour')
 
   const isPending = incoming.isPending || completion.isPending
   const isError = incoming.isError && completion.isError

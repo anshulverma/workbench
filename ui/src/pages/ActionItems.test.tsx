@@ -149,10 +149,10 @@ function baseHandlers() {
     http.get('/api/stats/timeseries', ({ request }) => {
       const url = new URL(request.url)
       const metric = url.searchParams.get('metric')
-      if (metric === 'incoming_actions') {
+      if (metric === 'ingestion_count') {
         return HttpResponse.json(timeseriesBody([2, 3, 5, 4, 6, 7, 5, 8, 6, 7, 9, 6]))
       }
-      if (metric === 'completion_rate') {
+      if (metric === 'throughput') {
         return HttpResponse.json(timeseriesBody([1, 2, 3, 4, 5, 5, 6, 6, 7, 6, 7, 8]))
       }
       return HttpResponse.json(timeseriesBody([1, 2]))
@@ -533,5 +533,16 @@ describe('Action Items page', () => {
     expect(
       await screen.findByText(/summary must not be empty/i),
     ).toBeInTheDocument()
+  })
+
+  it('requests valid throughput metric names', async () => {
+    const metrics: string[] = []
+    server.use(http.get('/api/stats/timeseries', ({ request }) => {
+      metrics.push(new URL(request.url).searchParams.get('metric') ?? '')
+      return HttpResponse.json([])
+    }))
+    renderActions()
+    await waitFor(() => expect(metrics).toEqual(expect.arrayContaining(['ingestion_count', 'throughput'])))
+    expect(metrics).not.toContain('incoming_actions')
   })
 })
