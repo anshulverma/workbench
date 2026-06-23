@@ -14,6 +14,7 @@ import {
   useAddCorrection,
   useCreateTuningTask,
   useDeleteCorrection,
+  useDeleteTuningTask,
   useFeedbackStore,
 } from '@/hooks/useFeedback'
 
@@ -66,6 +67,7 @@ export function FunnelStage({
   const addCorrection = useAddCorrection()
   const createTask = useCreateTuningTask()
   const deleteCorrection = useDeleteCorrection()
+  const deleteTask = useDeleteTuningTask()
 
   const ov = editable && item ? (corrections.data ?? []).find(c => c.item_id === item.id && c.filter_id === stage.filterId) ?? null : null
   // The override and its filter-tuning task are 1:1 (same item+filter); find the
@@ -145,6 +147,10 @@ export function FunnelStage({
     setPending(true)
     try {
       await deleteCorrection.mutateAsync(ov.id)
+      // Also delete the associated tuning task
+      if (tuningTask) {
+        await deleteTask.mutateAsync(tuningTask.id)
+      }
     } catch (err) {
       console.error('Failed to delete correction:', err)
     } finally {

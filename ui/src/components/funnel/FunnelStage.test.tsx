@@ -350,6 +350,99 @@ describe('FunnelStage', () => {
     expect(screen.getByTestId('correct-button')).toBeInTheDocument()
   })
 
+  it('removes both correction and tuning task on undo click', async () => {
+    let correctionDeleted = false
+    let taskDeleted = false
+    server.use(
+      http.get('/api/auth/token', () => HttpResponse.json({ token: 't' })),
+      http.get('/api/feedback/corrections', ({ request }) => {
+        const url = new URL(request.url)
+        if (url.searchParams.get('item_id') === '1') {
+          return HttpResponse.json(
+            correctionDeleted
+              ? []
+              : [
+                  {
+                    id: 7,
+                    item_id: 1,
+                    filter_id: 'fr_01',
+                    original_action: 'drop',
+                    corrected_action: 'include',
+                    item_summary: 'Test PR #42',
+                    from_label: null,
+                    to_label: null,
+                    reason: null,
+                    created_at: '2026-06-22T12:00:00Z',
+                  },
+                ]
+          )
+        }
+        return HttpResponse.json([])
+      }),
+      http.get('/api/feedback/tasks', ({ request }) => {
+        const url = new URL(request.url)
+        if (url.searchParams.get('status') === 'open') {
+          return HttpResponse.json(
+            taskDeleted
+              ? []
+              : [
+                  {
+                    id: 42,
+                    filter_id: 'fr_01',
+                    item_id: 1,
+                    status: 'open',
+                    proposed_prompt: 'p',
+                    correction_ids: [7],
+                    from_outcome: 'drop',
+                    to_outcome: 'include',
+                    from_label: null,
+                    to_label: null,
+                    filter_prompt: 'test prompt',
+                    kind: 'filter-tuning',
+                    created_at: '2026-06-22T12:00:00Z',
+                    resolved_at: null,
+                  },
+                ]
+          )
+        }
+        return HttpResponse.json([])
+      }),
+      http.delete('/api/feedback/corrections/7', () => {
+        correctionDeleted = true
+        return HttpResponse.json({ status: 'deleted' })
+      }),
+      http.delete('/api/feedback/tasks/42', () => {
+        taskDeleted = true
+        return HttpResponse.json({ status: 'deleted' })
+      })
+    )
+
+    const user = userEvent.setup()
+    renderStage({
+      stage: makeStage({ outcome: 'drop' }),
+      index: 0,
+      isLast: false,
+      item: makeItem(),
+      editable: true,
+      filterRules: [{ id: 1, prompt: 'test prompt' }],
+    })
+
+    // Wait for initial corrections & tasks to load
+    await waitFor(() => expect(screen.getByTestId('undo-button')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('undo-button'))
+
+    // Wait for both deletions to complete
+    await waitFor(() => {
+      expect(correctionDeleted).toBe(true)
+      expect(taskDeleted).toBe(true)
+    })
+
+    // Verify both DELETE requests were made
+    expect(correctionDeleted).toBe(true)
+    expect(taskDeleted).toBe(true)
+  })
+
   it('shows context badge when stage has context', () => {
     renderStage({
       stage: makeStage({ context: 'author: alice · files: 3' }),
