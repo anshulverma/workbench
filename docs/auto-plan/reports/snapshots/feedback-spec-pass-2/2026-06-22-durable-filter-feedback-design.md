@@ -167,23 +167,12 @@ Filters / FilterDetailDialog → rule.prompt is the live (Apply-updated) prompt;
    + applied tasks), and a **per-item** `overrideFor(String(it.id),
    String(rule.id))` used to show each listed item's corrected outcome (→ look
    up that item's correction in the same `useCorrections()` set by
-   `item_id` + `filter_id`). **Field-read rename (corrections are snake_case
-   and reuse `original_action`/`corrected_action` for from/to outcomes, not
-   `from_outcome`/`to_outcome`):** `c.itemSummary`→`c.item_summary`,
-   `c.fromOutcome`→`c.original_action`, `c.toOutcome`→`c.corrected_action`,
-   `c.fromLabel`→`c.from_label`, `c.toLabel`→`c.to_label`; the per-item
-   `corrected.toOutcome`/`corrected.toLabel`→`corrected.corrected_action`/
-   `corrected.to_label`.
+   `item_id` + `filter_id`).
 5. **`FilterTuningCard`**: retype `task` to the server task shape and
-   `onApply/onDismiss` to `(taskId: number) => void`. **The server emits
-   snake_case, so every camelCase field read must be renamed** to the new typed
-   columns: `task.filterId`→`task.filter_id`, `task.itemSummary`→
-   `task.item_summary`, `task.fromOutcome`→`task.from_outcome`,
-   `task.fromLabel`→`task.from_label`, `task.toOutcome`→`task.to_outcome`,
-   `task.toLabel`→`task.to_label`, `task.proposedPrompt`→`task.proposed_prompt`
-   (and `task.id` is already snake-neutral). `data-task-id` becomes the numeric
-   server id (the `?tuning=<id>` deep-link compares against it as a string — keep
-   the comparison string-coerced).
+   `onApply/onDismiss` to `(taskId: number) => void`; field reads come from the
+   new typed columns. `data-task-id` becomes the numeric server id (the
+   `?tuning=<id>` deep-link compares against it as a string — keep the
+   comparison string-coerced).
 6. **Remove** `ui/src/lib/feedback-store.ts` + `useFeedbackStore`; update all
    consumers + their tests (incl. the `WBFeedback.state`-seeding tests in
    `ItemFunnelDialog.test.tsx`, `ItemDetailBody.test.tsx`, `Filters.test.tsx`,
