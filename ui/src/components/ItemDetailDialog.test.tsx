@@ -25,7 +25,8 @@ function renderAt(initial: string, ui: ReactNode) {
 }
 
 const RICH = {
-  id: 5, source_type: 'diff', summary: 'the summary', status: 'pending_triage',
+  id: 5, source_type: 'diff', summary: 'Diff D5 fixing things is awaiting review',
+  status: 'pending_triage',
   priority: 'P2', tags: ['t'], llm_summary: 'why it matters', enriched_context: {},
   processing_log: [], verdict: { action: 'triage' }, path: null,
 }
@@ -40,7 +41,13 @@ describe('ItemDetailDialog', () => {
     server.use(http.get('/api/items/by-id/5', () => HttpResponse.json(RICH)))
     renderAt('/search?item=5', <ItemDetailDialog />)
     await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByText('the summary')).toBeInTheDocument())
+    // Title is split into emphasis segments; the diff ref and status clause are
+    // bold and " by you" is appended for diffs.
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+        'Diff D5 fixing things is awaiting review by you',
+      ),
+    )
     expect(screen.getByText('why it matters')).toBeInTheDocument()
   })
 

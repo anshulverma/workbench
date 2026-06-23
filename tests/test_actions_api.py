@@ -210,6 +210,62 @@ async def test_mark_action_done_logs_lifecycle(client, app_with_state):
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_actions_recorded_in_funnel_log(client, app_with_state):
+    """Priority/done/archive/snooze each append a stage entry to the item's
+    funnel_log so they show up in the detail popup's processing log."""
+    stores = app_with_state.state.stores
+    item = Item(
+        source_type="diff",
+        source_id="d-log",
+        summary="Review RFC",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
+        status=ItemStatus.ACTIVE,
+        action_source="triage_response",
+        action_category="review",
+        funnel_log=[{"stage": "extract", "label": "Extracted", "outcome": "pass"}],
+    )
+    await stores.items.save_item(item)
+
+    await client.post(f"/api/actions/{item.id}/priority", json={"priority": "P1"})
+    await client.post(f"/api/actions/{item.id}/done")
+
+    updated = await stores.items.get_item(item.id)
+    action_entries = [e for e in updated.funnel_log if e.get("stage") == "action"]
+    labels = [e["label"] for e in action_entries]
+    assert "Priority changed → P1" in labels
+    assert "Marked done" in labels
+    # The original pipeline stages are preserved.
+    assert updated.funnel_log[0]["stage"] == "extract"
+
+
+@pytest.mark.asyncio
+async def test_archive_action(client, app_with_state):
+    stores = app_with_state.state.stores
+    item = Item(
+        source_type="diff",
+        source_id="d-arch",
+        summary="Review RFC",
+        category=ItemCategory.ACTION_ITEM,
+        origin=ItemOrigin.TRIAGED,
+        priority=Priority.P2,
+        status=ItemStatus.ACTIVE,
+        action_source="triage_response",
+        action_category="review",
+    )
+    await stores.items.save_item(item)
+
+    r = await client.post(f"/api/actions/{item.id}/archive")
+    assert r.status_code == 200
+    assert r.json()["status"] == "archived"
+
+    updated = await stores.items.get_item(item.id)
+    assert updated.status == ItemStatus.ARCHIVED
+    assert any(e.get("stage") == "action" for e in updated.funnel_log)
+
+
+@pytest.mark.asyncio
 async def test_change_priority(client, app_with_state):
     stores = app_with_state.state.stores
     item = Item(

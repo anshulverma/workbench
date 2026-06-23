@@ -134,6 +134,37 @@ _HREF = {
 }
 
 
+def _card_to_detail(card_content) -> tuple[dict, str | None]:
+    """Map a triage card's ``card_content`` to the popup's
+    ``(enriched_context, llm_summary)`` pair.
+
+    The enriched diff payload (curated hunks, metadata, why-care) lives on the
+    item's triage card, not on the item row, so the detail popup sources it from
+    there. The returned context matches the UI's contextual payload shapes
+    (DiffContext et al., keyed by ``type``); ``llm_summary`` is the card's
+    ``why_care`` (falling back to its summary)."""
+    if isinstance(card_content, str):
+        card_content = _json.loads(card_content)
+    if not isinstance(card_content, dict):
+        return {}, None
+
+    sections = card_content.get("sections") or {}
+    why_care = sections.get("why_care") or card_content.get("summary")
+
+    context: dict = {}
+    if card_content.get("source_type") == "diff":
+        metadata = sections.get("metadata") or {}
+        context = {
+            "type": "diff",
+            "author": metadata.get("author") or "",
+            "team": metadata.get("team") or "",
+            "status": metadata.get("status") or "",
+            "url": sections.get("diff_url") or card_content.get("source_url") or "",
+            "hunks": sections.get("hunks") or [],
+        }
+    return context, why_care
+
+
 @router.get("/items/by-id/{item_id}")
 async def get_item_by_id(item_id: int, request: Request):
     """Rich detail for a single item by integer id (powers the item-detail popup)."""
@@ -152,7 +183,28 @@ async def get_item_by_id(item_id: int, request: Request):
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    return _row_to_search_item(row)
+    item = _row_to_search_item(row)
+
+    # The enriched diff payload (hunks, why-care, metadata) is produced during
+    # triage and stored on the item's triage card, not on the item row. Surface
+    # the latest card so the popup can render the diff context + "why this
+    # matters". Only fills fields the item row left empty.
+    card_row = await pool.fetchrow(
+        """
+        SELECT card_content FROM triage_cards
+         WHERE item_id = $1
+         ORDER BY created_at DESC
+         LIMIT 1
+        """,
+        item_id,
+    )
+    if card_row is not None:
+        ctx, why_care = _card_to_detail(card_row["card_content"])
+        if ctx and not item.get("enriched_context"):
+            item["enriched_context"] = ctx
+        if why_care and not item.get("llm_summary"):
+            item["llm_summary"] = why_care
+    return item
 
 
 @router.get("/items/{path}/related")

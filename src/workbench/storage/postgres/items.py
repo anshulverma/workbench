@@ -284,6 +284,20 @@ class PgItemStore(ItemStore):
             item_id,
         )
 
+    async def append_funnel_log(self, item_id: str, entry: dict) -> None:
+        """Append one stage entry to the item's funnel_log (the per-item
+        processing trace the detail popup renders). Used to record manual
+        lifecycle actions (priority/done/archive/snooze) so they show up in the
+        log alongside the pipeline stages."""
+        await self.pool.execute(
+            "UPDATE items "
+            "SET funnel_log = COALESCE(funnel_log, '[]'::jsonb) || $1::jsonb, "
+            "    updated_at = NOW() "
+            "WHERE id = $2",
+            json.dumps([entry]),
+            item_id,
+        )
+
     async def get_items_by_source(self, source_type: str) -> list[Item]:
         rows = await self.pool.fetch(
             "SELECT * FROM items WHERE source_type = $1 ORDER BY created_at DESC",

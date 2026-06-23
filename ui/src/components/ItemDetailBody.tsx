@@ -23,6 +23,7 @@ import {
 import { StateDot } from '@/components/StateDot'
 import { VerdictPill } from '@/components/VerdictPill'
 import { FunnelStage } from '@/components/funnel/FunnelStage'
+import { ItemTitle } from './ItemTitle'
 import { ItemContext } from './search/contextual/ItemContext'
 
 const KIND_ICON: Record<string, LucideIcon> = {
@@ -92,7 +93,12 @@ export function ItemDetailBody({
             &middot; {item.source} &middot; {relativeTime(item.created_at)}
           </span>
         </div>
-        <h2 className="text-xl font-semibold">{item.summary}</h2>
+        {/* Visible title. The semantic heading is the dialog's DialogTitle
+            (ItemDetailDialog); this is presentation only, so it is a div to
+            avoid a duplicate h2. */}
+        <div className="text-xl font-semibold leading-snug">
+          <ItemTitle summary={item.summary} kind={item.kind} />
+        </div>
         {item.tags.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {item.tags.map((t) => (
@@ -213,7 +219,9 @@ export function ItemDetailBody({
                 stages: item.stages,
                 verdict: item.verdict,
               }}
-              editable={!String(s.filterId).startsWith('en_')}
+              editable={
+                !String(s.filterId).startsWith('en_') && s.filterId !== 'action'
+              }
               timing={timings[i]}
               baseTime={baseTime}
             />

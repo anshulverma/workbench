@@ -128,6 +128,24 @@ class SnoozeRequest(BaseModel):
     hours: int = 4
 
 
+_ACTION_LOG_LABEL = {
+    "done": "Marked done",
+    "archive": "Archived",
+    "snooze": "Snoozed",
+    "priority": "Priority changed",
+}
+
+
+def _action_log_entry(action: str) -> dict:
+    """Build a funnel_log stage entry for a manual lifecycle action. ``action``
+    is the option string (e.g. "done", "priority:P1", "snooze:4h")."""
+    kind, _, detail = action.partition(":")
+    label = _ACTION_LOG_LABEL.get(kind, kind)
+    if detail:
+        label = f"{label} → {detail}" if kind == "priority" else f"{label} {detail}"
+    return {"stage": "action", "label": label, "outcome": "action"}
+
+
 async def _log_action_lifecycle(
     stores,
     item_id: int,
@@ -135,7 +153,8 @@ async def _log_action_lifecycle(
     summary: str,
     source_type: str,
 ) -> None:
-    """Log an action lifecycle event as an InteractionEntry (FIX 8)."""
+    """Record an action lifecycle event: an InteractionEntry (FIX 8) plus a
+    funnel_log stage entry so the action shows in the item's processing log."""
     entry = InteractionEntry(
         type="action_lifecycle",
         source_type=source_type,
@@ -144,6 +163,7 @@ async def _log_action_lifecycle(
         option_chosen=action,
     )
     await stores.interactions.append(entry)
+    await stores.items.append_funnel_log(item_id, _action_log_entry(action))
 
 
 @router.post("/{item_id}/done")
@@ -200,3 +220,20 @@ async def snooze_action(request: Request, item_id: int, body: SnoozeRequest):
         item.source_type,
     )
     return {"status": "snoozed", "hours": body.hours}
+
+
+@router.post("/{item_id}/archive")
+async def archive_action(request: Request, item_id: int):
+    stores = request.app.state.stores
+    item = await stores.items.get_item(item_id)
+    if not item:
+        raise HTTPException(404, "Action item not found")
+    await stores.items.update_item(item_id, ItemUpdate(status=ItemStatus.ARCHIVED))
+    await _log_action_lifecycle(
+        stores,
+        item_id,
+        "archive",
+        item.summary,
+        item.source_type,
+    )
+    return {"status": "archived"}
