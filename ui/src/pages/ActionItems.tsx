@@ -168,7 +168,7 @@ function ActionRow({
   )
 }
 
-/** Full-width throughput chart: incoming actions vs completion rate (12h). */
+/** Full-width throughput chart: items ingested vs items processed (12h). */
 function ThroughputChartCard() {
   const incoming = useMetricsTimeseries('ingestion_count', 12, 'hour')
   const completion = useMetricsTimeseries('throughput', 12, 'hour')
@@ -232,8 +232,8 @@ function ThroughputChartCard() {
             height={132}
             xLabels={xLabels}
             series={[
-              { name: 'Incoming actions', color: '#f5a623', data: inData },
-              { name: 'Completion rate', color: '#9ad08a', data: compData },
+              { name: 'Ingested', color: '#f5a623', data: inData },
+              { name: 'Processed', color: '#9ad08a', data: compData },
             ]}
           />
         )}
