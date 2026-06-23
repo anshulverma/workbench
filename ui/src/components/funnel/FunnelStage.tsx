@@ -144,11 +144,11 @@ export function FunnelStage({
     if (!ov) return
     setPending(true)
     try {
-      await deleteCorrection.mutateAsync(ov.id)
-      // Also delete the associated tuning task
+      // Delete the tuning task first to avoid orphaning it if correction delete succeeds but task delete fails
       if (tuningTask) {
         await deleteTask.mutateAsync(tuningTask.id)
       }
+      await deleteCorrection.mutateAsync(ov.id)
     } catch (err) {
       console.error('Failed to delete correction:', err)
     } finally {

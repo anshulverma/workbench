@@ -318,6 +318,9 @@ describe('FunnelStage', () => {
           },
         ])
       ),
+      http.delete('/api/feedback/tasks/42', () => {
+        return HttpResponse.json({ status: 'deleted' })
+      }),
       http.delete('/api/feedback/corrections/7', () => {
         deleted = true
         return HttpResponse.json({ status: 'deleted' })

@@ -5,6 +5,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
+import { FUNNEL_KEYS } from '@/hooks/useFunnel'
 
 // ---------------------------------------------------------------------------
 // Server API types (matching the Python domain models)
@@ -135,7 +136,7 @@ export function useApplyTuningTask() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['feedback', 'tasks'] })
-      qc.invalidateQueries({ queryKey: ['filter-rules'] })
+      qc.invalidateQueries({ queryKey: FUNNEL_KEYS.filterRules })
     },
   })
 }
