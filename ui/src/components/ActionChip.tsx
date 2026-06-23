@@ -27,7 +27,7 @@ export function ActionChip({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 font-mono font-bold uppercase tracking-[.04em]',
+        'inline-flex items-center gap-1.5 whitespace-nowrap font-mono font-bold uppercase tracking-[.04em]',
         small ? 'px-1.5 py-px text-[10px]' : 'px-2 py-0.5 text-[11px]',
         action === 'skip' ? 'border border-dashed border-border' : '',
         className,

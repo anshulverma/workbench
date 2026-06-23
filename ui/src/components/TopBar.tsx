@@ -1,6 +1,6 @@
 import { Component } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Command } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { useHealth } from '@/hooks/useStats'
 import { Mono } from '@/components/Mono'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -9,9 +9,10 @@ import { cn } from '@/lib/utils'
 /**
  * TopBar — sticky top app bar for the mission-control shell (spec §3, ADR0036).
  *
- * Layout (left → right): brand "W"/Workbench mark, a mono route→context label,
- * a ⌘K command-palette trigger (placeholder — wired by S1), a sync-status
- * indicator derived from `/health`, a three-state ThemeToggle, and a user chip.
+ * Layout (left → right): a mono route→context label (the bar's leading anchor;
+ * the wordmark lives only in the rail to avoid duplication), a ⌘K
+ * command-palette trigger, a sync-status indicator derived from `/health`, a
+ * three-state ThemeToggle, and a user chip.
  * The design's "Deploy" button is intentionally dropped (spec §3 / Out of Scope).
  */
 
@@ -118,7 +119,6 @@ export function TopBar({
   onOpenCommandPalette?: () => void
 }) {
   const { pathname } = useLocation()
-  const navigate = useNavigate()
   const label = contextLabel(pathname)
 
   return (
@@ -129,26 +129,8 @@ export function TopBar({
         className,
       )}
     >
-      {/* Brand wordmark — two-tone "WorkBench" (icon lives in the rail). */}
-      <button
-        type="button"
-        onClick={() => navigate('/')}
-        aria-label="WorkBench home"
-        className="flex items-center"
-        style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
-      >
-        <span
-          className="font-display"
-          style={{ fontSize: 15, letterSpacing: '-.01em', color: 'var(--foreground)' }}
-        >
-          <span style={{ fontWeight: 700 }}>Work</span>
-          <span style={{ fontWeight: 700, color: 'var(--primary)' }}>B</span>
-          <span style={{ fontWeight: 500 }}>ench</span>
-        </span>
-      </button>
-
-      {/* Mono route → context label */}
-      <Mono className="truncate text-xs uppercase text-muted-foreground">
+      {/* Mono route → context label — now the bar's leading anchor. */}
+      <Mono className="truncate text-xs font-medium uppercase tracking-[.08em] text-foreground">
         {label}
       </Mono>
 
@@ -165,9 +147,9 @@ export function TopBar({
           'motion-reduce:transition-none',
         )}
       >
-        <Command className="size-3.5" aria-hidden="true" />
-        <Mono className="hidden sm:inline">K</Mono>
+        <Search className="size-3.5" aria-hidden="true" />
         <span className="hidden md:inline">Search</span>
+        <Mono className="hidden sm:inline">⌘K</Mono>
       </button>
 
       <SyncStatus />

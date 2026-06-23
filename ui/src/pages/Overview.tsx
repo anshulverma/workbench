@@ -224,7 +224,7 @@ export function Overview() {
         <button
           className="wb-tile-primary"
           onClick={() => navigate('/triage')}
-          style={{ gridColumn: 'span 2', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}
+          style={{ gridColumn: 'span 2', padding: '12px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 4, minHeight: 78 }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', opacity: 0.85 }}>
             Initiate Triage <ArrowRight size={13} />
@@ -241,9 +241,9 @@ export function Overview() {
             key={c.label}
             className={`wb-tile ${c.danger ? 'wb-tile--danger' : ''}`}
             onClick={() => navigate(c.to)}
-            style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}
+            style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 6, minHeight: 78 }}
           >
-            <span className="wb-section-h" style={{ fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="wb-section-h" style={{ fontSize: 10, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', minHeight: 26, lineHeight: 1.25 }}>
               {c.label}
               <ArrowUpRight size={12} className="wb-tile-arrow" />
             </span>

@@ -132,7 +132,7 @@ export function LiveTail({
       {/* Column headers */}
       <div
         className="grid items-center gap-2 border-b border-border bg-surface-high px-3.5 py-2"
-        style={{ gridTemplateColumns: '62px 80px 78px minmax(0,1fr) 118px' }}
+        style={{ gridTemplateColumns: '58px 72px 70px minmax(0,1fr) 150px' }}
         role="row"
       >
         {COLUMNS.map((h, i) => (
@@ -174,7 +174,7 @@ export function LiveTail({
                   'grid w-full items-center gap-2 border-b border-border/55 bg-transparent px-3.5 py-[7px] text-left transition-colors hover:bg-accent',
                   isNewest ? 'wb-tail-new' : '',
                 )}
-                style={{ gridTemplateColumns: '62px 80px 78px minmax(0,1fr) 118px' }}
+                style={{ gridTemplateColumns: '58px 72px 70px minmax(0,1fr) 150px' }}
                 onClick={() => handleRowClick(entry.itemId)}
                 title={`Open ${entry.itemId}`}
               >
