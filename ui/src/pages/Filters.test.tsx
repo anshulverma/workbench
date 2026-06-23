@@ -11,7 +11,6 @@ import {
   beforeAll,
   afterAll,
   afterEach,
-  beforeEach,
 } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -22,7 +21,6 @@ import { MemoryRouter } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { Filters } from './Filters'
 import { _resetToken } from '@/lib/api'
-import { WBFeedback } from '@/lib/feedback-store'
 
 // ---- Test data ----
 
@@ -147,6 +145,14 @@ function baseHandlers() {
     http.get('/api/funnel/enrichment-samples', () =>
       HttpResponse.json(ENRICHMENT_SAMPLES),
     ),
+    http.get('/api/feedback/tasks', ({ request }) => {
+      const url = new URL(request.url)
+      const status = url.searchParams.get('status')
+      if (status === 'applied') {
+        return HttpResponse.json([])
+      }
+      return HttpResponse.json([])
+    }),
   ]
 }
 
@@ -157,12 +163,6 @@ afterEach(() => {
   _resetToken()
 })
 afterAll(() => server.close())
-
-beforeEach(() => {
-  WBFeedback.state.overrides = []
-  WBFeedback.state.tasks = []
-  WBFeedback.state.promptPatches = {}
-})
 
 function renderFilters() {
   const client = new QueryClient({
@@ -362,6 +362,50 @@ describe('Filters page — toggle switch', () => {
     })
     await userEvent.click(toggle)
     await waitFor(() => expect(toggled).toBe(true))
+  })
+})
+
+describe('Filters page — tuned filters', () => {
+  it('shows tuned indicator when a filter has an applied task', async () => {
+    server.use(
+      http.get('/api/feedback/tasks', ({ request }) => {
+        const url = new URL(request.url)
+        const status = url.searchParams.get('status')
+        if (status === 'applied') {
+          return HttpResponse.json([
+            {
+              id: 101,
+              filter_id: 'fr_01',
+              item_id: 42,
+              item_summary: 'PR #99',
+              from_outcome: 'pass',
+              to_outcome: 'drop',
+              from_label: null,
+              to_label: null,
+              filter_prompt: 'Drop CI notifications about passing builds',
+              proposed_prompt: 'Drop CI notifications about passing builds, especially for dependabot',
+              kind: 'filter-tuning',
+              correction_ids: [1],
+              status: 'applied',
+              created_at: '2026-06-20T12:00:00Z',
+              resolved_at: '2026-06-20T13:00:00Z',
+              rule_id: null,
+            },
+          ])
+        }
+        return HttpResponse.json([])
+      }),
+    )
+    renderFilters()
+    const card = await screen.findByTestId('filter-rule-card-fr_01')
+    // Should show tuned badge/indicator (wait for it to appear after query loads)
+    expect(
+      await within(card).findByTestId('tuned-badge'),
+    ).toBeInTheDocument()
+    // Prompt should be from the rule itself, not a patched prompt
+    expect(
+      within(card).getByText('Drop CI notifications about passing builds'),
+    ).toBeInTheDocument()
   })
 })
 

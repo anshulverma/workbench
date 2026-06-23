@@ -26,7 +26,7 @@ import { EnricherDetailDialog } from '@/components/funnel/EnricherDetailDialog'
 import { LoopBackCard } from '@/components/funnel/LoopBackCard'
 import { AddRuleDialog } from '@/components/funnel/AddRuleDialog'
 import { ItemFunnelDialog } from '@/components/funnel/ItemFunnelDialog'
-import { useFeedbackStore } from '@/hooks/useFeedback'
+import { useTuningTasks } from '@/hooks/useFeedback'
 import {
   useFilterRules,
   useEnrichers,
@@ -54,8 +54,6 @@ export interface FiltersProps {
 }
 
 export function Filters({ embedded: _embedded }: FiltersProps) {
-  const fb = useFeedbackStore()
-
   // ---- Data queries ----
   const filterRulesQ = useFilterRules()
   const enrichersQ = useEnrichers()
@@ -63,6 +61,7 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
   const funnelItemsQ = useFunnelItems()
   const funnelOrderQ = useFunnelOrder()
   const enrichmentSamplesQ = useEnrichmentSamples()
+  const appliedTasksQ = useTuningTasks('applied')
 
   // ---- Mutations ----
   const updateOrder = useUpdateFunnelOrder()
@@ -82,16 +81,16 @@ export function Filters({ embedded: _embedded }: FiltersProps) {
   const loopbacks = loopbacksQ.data ?? []
   const funnelItems = funnelItemsQ.data ?? []
   const enrichmentSamples = enrichmentSamplesQ.data ?? {}
+  const appliedTasks = appliedTasksQ.data ?? []
 
-  // Apply feedback-store tuned prompts to rules
+  // Mark rules as tuned if they have an applied task
   const rules: FilterRuleExtended[] = useMemo(
     () =>
       rawRules.map((r) => ({
         ...r,
-        prompt: fb.promptFor(String(r.id), r.prompt),
-        tuned: !!fb.promptFor(String(r.id), null as unknown as string),
+        tuned: appliedTasks.some((t) => t.filter_id === String(r.id)),
       })),
-    [rawRules, fb],
+    [rawRules, appliedTasks],
   )
 
   // Funnel order — server data or local seed fallback

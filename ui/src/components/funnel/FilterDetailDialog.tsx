@@ -6,13 +6,13 @@
 
 import * as Icons from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { FilterRuleExtended, FunnelItem } from '@/lib/types/funnel'
+import type { FilterRuleExtended, FunnelItem, StageOutcome } from '@/lib/types/funnel'
 import { SRC_ICON } from '@/lib/funnel-constants'
 import { ActionChip } from '@/components/ActionChip'
 import { VerdictPill } from '@/components/VerdictPill'
 import { Mono } from '@/components/Mono'
 import { Portal } from '@/components/Portal'
-import { useFeedbackStore } from '@/hooks/useFeedback'
+import { useCorrections } from '@/hooks/useFeedback'
 
 function getIcon(name: string): LucideIcon | undefined {
   return (Icons as unknown as Record<string, LucideIcon>)[name]
@@ -31,9 +31,8 @@ export function FilterDetailDialog({
   onOpenItem,
   onClose,
 }: FilterDetailDialogProps) {
-  const fb = useFeedbackStore()
+  const correctionsQ = useCorrections()
   const XIcon = getIcon('X')
-  const CheckIcon = getIcon('Check')
   const WarnIcon = getIcon('MessageSquareWarning')
   const ArrowRight = getIcon('ArrowRight')
   const ChevronRight = getIcon('ChevronRight')
@@ -43,7 +42,8 @@ export function FilterDetailDialog({
   const matchingItems = items.filter((it) =>
     it.stages.some((s) => s.filterId === String(rule.id)),
   )
-  const corrections = fb.feedbackForFilter(String(rule.id))
+  const allCorrections = correctionsQ.data ?? []
+  const corrections = allCorrections.filter((c) => c.filter_id === String(rule.id))
 
   return (
     <Portal>
@@ -95,26 +95,8 @@ export function FilterDetailDialog({
               </button>
             </div>
             <p style={{ margin: 0, fontSize: 15, lineHeight: 1.45 }}>
-              "{fb.promptFor(String(rule.id), rule.prompt)}"
+              "{rule.prompt}"
             </p>
-            {fb.promptFor(String(rule.id), null as unknown as string) && (
-              <p
-                style={{
-                  margin: '6px 0 0',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 11,
-                  color: 'var(--success)',
-                }}
-              >
-                {CheckIcon && (
-                  <CheckIcon
-                    size={11}
-                    style={{ verticalAlign: 'middle', marginRight: 4 }}
-                  />
-                )}
-                prompt auto-tuned from your feedback
-              </p>
-            )}
             <p
               style={{
                 margin: '8px 0 0',
@@ -183,7 +165,7 @@ export function FilterDetailDialog({
                           maxWidth: 260,
                         }}
                       >
-                        {c.itemSummary}
+                        {c.item_summary}
                       </span>
                       <span
                         style={{
@@ -194,8 +176,8 @@ export function FilterDetailDialog({
                         }}
                       >
                         <ActionChip
-                          action={c.fromOutcome}
-                          label={c.fromLabel}
+                          action={c.original_action as StageOutcome}
+                          label={c.from_label ?? undefined}
                           small
                         />
                         {ArrowRight && (
@@ -205,8 +187,8 @@ export function FilterDetailDialog({
                           />
                         )}
                         <ActionChip
-                          action={c.toOutcome}
-                          label={c.toLabel}
+                          action={c.corrected_action as StageOutcome}
+                          label={c.to_label ?? undefined}
                           small
                         />
                       </span>
@@ -276,7 +258,9 @@ export function FilterDetailDialog({
                     const stage = it.stages.find(
                       (s) => s.filterId === String(rule.id),
                     )
-                    const corrected = fb.overrideFor(String(it.id), String(rule.id))
+                    const corrected = allCorrections.find(
+                      (c) => c.item_id === it.id && c.filter_id === String(rule.id),
+                    )
                     const srcIconName = SRC_ICON[it.source] ?? 'Database'
                     const SrcIcon = getIcon(srcIconName)
 
@@ -336,8 +320,8 @@ export function FilterDetailDialog({
                               }}
                             >
                               <ActionChip
-                                action={corrected.toOutcome}
-                                label={corrected.toLabel}
+                                action={corrected.corrected_action as StageOutcome}
+                                label={corrected.to_label ?? undefined}
                                 small
                               />
                               <span

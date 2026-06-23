@@ -1,71 +1,10 @@
 // useFeedback.ts — React hooks for feedback corrections and filter tuning.
 //
-// Two layers:
-// 1. useFeedbackStore() — subscribes to the client-side WBFeedback singleton
-//    via useSyncExternalStore so React re-renders on any state change.
-// 2. TanStack Query hooks for server API endpoints (/api/feedback/*), used for
-//    durable persistence and cross-device sync.
+// TanStack Query hooks for server API endpoints (/api/feedback/*), used for
+// durable persistence and cross-device sync.
 
-import { useSyncExternalStore, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
-import { WBFeedback, type AddOverrideInput, type FeedbackState } from '@/lib/feedback-store'
-
-// ---------------------------------------------------------------------------
-// useFeedbackStore — client-side singleton subscription
-// ---------------------------------------------------------------------------
-
-const subscribe = (fn: () => void) => WBFeedback.subscribe(fn)
-const getSnapshot = () => WBFeedback.getSnapshot()
-
-/** Subscribe to WBFeedback singleton; re-renders on any state change. */
-export function useFeedbackStore() {
-  const state: FeedbackState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-
-  const addOverride = useCallback((input: AddOverrideInput) => {
-    return WBFeedback.addOverride(input)
-  }, [])
-
-  const removeOverride = useCallback((itemId: string, filterId: string) => {
-    WBFeedback.removeOverride(itemId, filterId)
-  }, [])
-
-  const autoApply = useCallback((taskId: string) => {
-    WBFeedback.autoApply(taskId)
-  }, [])
-
-  const dismissTask = useCallback((taskId: string) => {
-    WBFeedback.dismissTask(taskId)
-  }, [])
-
-  const overrideFor = useCallback((itemId: string, filterId: string) => {
-    return WBFeedback.overrideFor(itemId, filterId)
-  }, [])
-
-  const feedbackForFilter = useCallback((filterId: string) => {
-    return WBFeedback.feedbackForFilter(filterId)
-  }, [])
-
-  const openTasks = useCallback(() => {
-    return WBFeedback.openTasks()
-  }, [])
-
-  const promptFor = useCallback((filterId: string, fallback: string) => {
-    return WBFeedback.promptFor(filterId, fallback)
-  }, [])
-
-  return {
-    state,
-    addOverride,
-    removeOverride,
-    autoApply,
-    dismissTask,
-    overrideFor,
-    feedbackForFilter,
-    openTasks,
-    promptFor,
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Server API types (matching the Python domain models)

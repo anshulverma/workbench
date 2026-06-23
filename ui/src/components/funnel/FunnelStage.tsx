@@ -15,7 +15,6 @@ import {
   useCreateTuningTask,
   useDeleteCorrection,
   useDeleteTuningTask,
-  useFeedbackStore,
 } from '@/hooks/useFeedback'
 
 function getIcon(name: string): LucideIcon | undefined {
@@ -57,7 +56,6 @@ export function FunnelStage({
   filterRules?: Array<{ id: number; prompt: string }>
   enrichers?: Array<{ id: number; label: string }>
 }) {
-  const fb = useFeedbackStore()
   const [editing, setEditing] = useState(false)
   const [pending, setPending] = useState(false)
 
@@ -318,7 +316,7 @@ export function FunnelStage({
             fontFamily: 'var(--font-mono)',
           }}
         >
-          "{fb.promptFor(stage.filterId, rule.prompt)}"
+          "{rule.prompt}"
         </p>
 
         {/* reason */}

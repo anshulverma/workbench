@@ -1,8 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import { setupServer } from 'msw/node'
+import { http, HttpResponse } from 'msw'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ItemFunnelDialog } from './ItemFunnelDialog'
 import type { FunnelItem } from '@/lib/types/funnel'
-import { WBFeedback } from '@/lib/feedback-store'
+import { _resetToken } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,84 +38,76 @@ const FILTER_RULES = [
   { id: 3, prompt: 'Include security patches' },
 ]
 
-beforeEach(() => {
-  WBFeedback.state.overrides = []
-  WBFeedback.state.tasks = []
-  WBFeedback.state.promptPatches = {}
+// ---- MSW ----
+
+function baseHandlers() {
+  return [
+    http.get('/api/auth/token', () => HttpResponse.json({ token: 'tok' })),
+    http.get('/api/feedback/corrections', () => HttpResponse.json([])),
+    http.get('/api/feedback/tasks', () => HttpResponse.json([])),
+  ]
+}
+
+const server = setupServer(...baseHandlers())
+beforeAll(() => server.listen())
+afterEach(() => {
+  server.resetHandlers(...baseHandlers())
+  _resetToken()
 })
+afterAll(() => server.close())
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('ItemFunnelDialog', () => {
-  it('renders nothing when open is false', () => {
-    const { container } = render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={false}
-        onClose={() => {}}
-      />,
-    )
-    expect(container.innerHTML).toBe('')
+function renderDialog(props: Partial<React.ComponentProps<typeof ItemFunnelDialog>> = {}) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchInterval: false } },
   })
-
-  it('renders nothing when item is null', () => {
-    const { container } = render(
-      <ItemFunnelDialog
-        item={null}
-        open={true}
-        onClose={() => {}}
-      />,
-    )
-    expect(container.innerHTML).toBe('')
-  })
-
-  it('renders dialog with item summary and ID', () => {
-    render(
+  return render(
+    <QueryClientProvider client={client}>
       <ItemFunnelDialog
         item={makeItem()}
         open={true}
         onClose={() => {}}
         filterRules={FILTER_RULES}
-      />,
-    )
+        {...props}
+      />
+    </QueryClientProvider>,
+  )
+}
+
+describe('ItemFunnelDialog', () => {
+  it('renders nothing when open is false', () => {
+    const { container } = renderDialog({ open: false })
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('renders nothing when item is null', () => {
+    const { container } = renderDialog({ item: null })
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('renders dialog with item summary and ID', () => {
+    renderDialog()
     expect(screen.getByTestId('funnel-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('dialog-title')).toHaveTextContent('Fix auth token refresh')
     expect(screen.getByTestId('dialog-title')).toHaveTextContent('42')
   })
 
   it('shows the source icon and type', () => {
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={() => {}}
-      />,
-    )
+    renderDialog()
     expect(screen.getByText('github')).toBeInTheDocument()
   })
 
   it('renders VerdictPill with correct decision', () => {
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={() => {}}
-      />,
-    )
+    renderDialog()
     // Portal renders into document.body; query globally
     expect(document.querySelector('[data-verdict="triaged"]')).toBeInTheDocument()
   })
 
   it('renders treatment log header with enricher and filter counts', () => {
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={() => {}}
-      />,
-    )
+    renderDialog()
     const header = screen.getByTestId('treatment-log-header')
     expect(header).toHaveTextContent('0 enrichers')
     expect(header).toHaveTextContent('3 filters')
@@ -120,27 +115,13 @@ describe('ItemFunnelDialog', () => {
   })
 
   it('renders all FunnelStage components', () => {
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={() => {}}
-        filterRules={FILTER_RULES}
-      />,
-    )
+    renderDialog()
     const stages = screen.getAllByTestId('funnel-stage')
     expect(stages).toHaveLength(3)
   })
 
   it('renders aggregated verdict section', () => {
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={() => {}}
-        filterRules={FILTER_RULES}
-      />,
-    )
+    renderDialog()
     const verdict = screen.getByTestId('aggregated-verdict')
     expect(verdict).toHaveTextContent('Aggregated verdict')
     expect(verdict).toHaveTextContent('LLM joined')
@@ -148,14 +129,7 @@ describe('ItemFunnelDialog', () => {
   })
 
   it('shows contributing signals in aggregated verdict', () => {
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={() => {}}
-        filterRules={FILTER_RULES}
-      />,
-    )
+    renderDialog()
     // Should show signals for drop (85%) and include (93%)
     const verdictSection = screen.getByTestId('aggregated-verdict')
     expect(verdictSection.querySelector('[data-action="drop"]')).toBeInTheDocument()
@@ -164,39 +138,21 @@ describe('ItemFunnelDialog', () => {
 
   it('calls onClose when overlay is clicked', () => {
     const onClose = vi.fn()
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={onClose}
-      />,
-    )
+    renderDialog({ onClose })
     fireEvent.mouseDown(screen.getByTestId('funnel-dialog-overlay'))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('calls onClose when close button is clicked', () => {
     const onClose = vi.fn()
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={onClose}
-      />,
-    )
+    renderDialog({ onClose })
     fireEvent.click(screen.getByLabelText('Close'))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('does not call onClose when dialog body is clicked', () => {
     const onClose = vi.fn()
-    render(
-      <ItemFunnelDialog
-        item={makeItem()}
-        open={true}
-        onClose={onClose}
-      />,
-    )
+    renderDialog({ onClose })
     fireEvent.mouseDown(screen.getByTestId('funnel-dialog'))
     expect(onClose).not.toHaveBeenCalled()
   })
@@ -208,13 +164,7 @@ describe('ItemFunnelDialog', () => {
         { filterId: 'fr_02', outcome: 'include', confidence: 93, context: 'ci: passing' },
       ],
     })
-    render(
-      <ItemFunnelDialog
-        item={item}
-        open={true}
-        onClose={() => {}}
-      />,
-    )
+    renderDialog({ item })
     expect(screen.getByText(/carried forward/)).toBeInTheDocument()
   })
 })
