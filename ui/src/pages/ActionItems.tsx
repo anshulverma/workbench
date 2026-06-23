@@ -20,7 +20,11 @@ import {
   useSnooze,
   type Action,
 } from '@/hooks/useActions'
-import { useFeedbackStore } from '@/hooks/useFeedback'
+import {
+  useTuningTasks,
+  useApplyTuningTask,
+  useUpdateTuningTask,
+} from '@/hooks/useFeedback'
 import { useMetricsTimeseries } from '@/hooks/useStats'
 import { MultiLineChart } from '@/components/MultiLineChart'
 import { FilterTuningCard } from '@/components/FilterTuningCard'
@@ -334,8 +338,10 @@ export function ActionItems() {
   const markDone = useMarkDone()
   const changePriority = useChangePriority()
   const snooze = useSnooze()
-  const feedback = useFeedbackStore()
-  const tuningTasks = feedback.openTasks()
+  const tuningTasksQuery = useTuningTasks('open')
+  const tuningTasks = tuningTasksQuery.data ?? []
+  const applyTask = useApplyTuningTask()
+  const updateTask = useUpdateTuningTask()
 
   // Deep-link from a feedback receipt (?tuning=<id>): scroll the matching tuning
   // card into view and highlight it.
@@ -437,13 +443,21 @@ export function ActionItems() {
             Filter Tuning ({tuningTasks.length})
           </h2>
           <div className="space-y-2">
-            {tuningTasks.map((task) => (
+            {tuningTasks.map((t) => (
               <FilterTuningCard
-                key={task.id}
-                task={task}
-                onApply={(id) => feedback.autoApply(id)}
-                onDismiss={(id) => feedback.dismissTask(id)}
-                highlighted={task.id === tuningParam}
+                key={t.id}
+                task={t}
+                onApply={() =>
+                  applyTask.mutate({
+                    taskId: t.id,
+                    ruleId: t.rule_id ?? 0,
+                    prompt: t.proposed_prompt,
+                  })
+                }
+                onDismiss={() =>
+                  updateTask.mutate({ taskId: t.id, status: 'dismissed' })
+                }
+                highlighted={t.id === Number(tuningParam)}
               />
             ))}
           </div>

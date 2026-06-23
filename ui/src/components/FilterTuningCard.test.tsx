@@ -1,26 +1,31 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { FilterTuningCard } from './FilterTuningCard'
-import type { FilterTuningTask } from '@/lib/types/feedback'
+import type { ServerTuningTask } from '@/hooks/useFeedback'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeTask(overrides: Partial<FilterTuningTask> = {}): FilterTuningTask {
+function makeTask(overrides: Partial<ServerTuningTask> = {}): ServerTuningTask {
   return {
-    id: 'act_ft_abc12',
-    kind: 'filter-tuning',
-    status: 'open',
-    itemId: 'item_42',
-    itemSummary: 'Fix auth token refresh',
-    filterId: 'fr_01',
-    filterPrompt: 'Drop bot-generated noise',
-    fromOutcome: 'drop',
-    toOutcome: 'include',
-    proposedPrompt:
+    id: 42,
+    rule_id: 1,
+    filter_id: 'fr_01',
+    item_id: 101,
+    item_summary: 'Fix auth token refresh',
+    from_outcome: 'drop',
+    to_outcome: 'include',
+    from_label: null,
+    to_label: null,
+    filter_prompt: 'Drop bot-generated noise',
+    proposed_prompt:
       'Drop bot-generated noise — but kept and surfaced cases like "Fix auth token refresh" (you corrected this).',
-    at: Date.now(),
+    kind: 'filter-tuning',
+    correction_ids: [],
+    status: 'open',
+    created_at: new Date().toISOString(),
+    resolved_at: null,
     ...overrides,
   }
 }
@@ -79,7 +84,7 @@ describe('FilterTuningCard', () => {
   it('shows from and to action chips', () => {
     const { container } = render(
       <FilterTuningCard
-        task={makeTask({ fromOutcome: 'drop', toOutcome: 'include' })}
+        task={makeTask({ from_outcome: 'drop', to_outcome: 'include' })}
         onApply={() => {}}
         onDismiss={() => {}}
       />,
@@ -105,13 +110,13 @@ describe('FilterTuningCard', () => {
     const onApply = vi.fn()
     render(
       <FilterTuningCard
-        task={makeTask({ id: 'act_ft_test1' })}
+        task={makeTask({ id: 99 })}
         onApply={onApply}
         onDismiss={() => {}}
       />,
     )
     fireEvent.click(screen.getByTestId('apply-button'))
-    expect(onApply).toHaveBeenCalledWith('act_ft_test1')
+    expect(onApply).toHaveBeenCalledWith(99)
     expect(onApply).toHaveBeenCalledTimes(1)
   })
 
@@ -119,34 +124,34 @@ describe('FilterTuningCard', () => {
     const onDismiss = vi.fn()
     render(
       <FilterTuningCard
-        task={makeTask({ id: 'act_ft_test2' })}
+        task={makeTask({ id: 88 })}
         onApply={() => {}}
         onDismiss={onDismiss}
       />,
     )
     fireEvent.click(screen.getByTestId('dismiss-button'))
-    expect(onDismiss).toHaveBeenCalledWith('act_ft_test2')
+    expect(onDismiss).toHaveBeenCalledWith(88)
     expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 
   it('sets data-task-id attribute', () => {
     render(
       <FilterTuningCard
-        task={makeTask({ id: 'act_ft_xyz99' })}
+        task={makeTask({ id: 77 })}
         onApply={() => {}}
         onDismiss={() => {}}
       />,
     )
     expect(screen.getByTestId('filter-tuning-card')).toHaveAttribute(
       'data-task-id',
-      'act_ft_xyz99',
+      '77',
     )
   })
 
-  it('shows label action correctly with toLabel', () => {
+  it('shows label action correctly with to_label', () => {
     const { container } = render(
       <FilterTuningCard
-        task={makeTask({ toOutcome: 'label', toLabel: 'spam' })}
+        task={makeTask({ to_outcome: 'label', to_label: 'spam' })}
         onApply={() => {}}
         onDismiss={() => {}}
       />,

@@ -23,7 +23,6 @@ import { MemoryRouter } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { ActionItems } from './ActionItems'
 import { _resetToken } from '@/lib/api'
-import { WBFeedback } from '@/lib/feedback-store'
 
 const HOUR = 3600_000
 const now = Date.now()
@@ -157,6 +156,14 @@ function baseHandlers() {
         return HttpResponse.json(timeseriesBody([1, 2, 3, 4, 5, 5, 6, 6, 7, 6, 7, 8]))
       }
       return HttpResponse.json(timeseriesBody([1, 2]))
+    }),
+    http.get('/api/feedback/tasks', ({ request }) => {
+      const url = new URL(request.url)
+      const status = url.searchParams.get('status')
+      if (status === 'open') {
+        return HttpResponse.json([])
+      }
+      return HttpResponse.json([])
     }),
   ]
 }
@@ -344,18 +351,36 @@ describe('Action Items page', () => {
     expect(screen.queryByTestId('filter-tuning-section')).not.toBeInTheDocument()
   })
 
-  it('renders filter tuning section when feedback store has open tasks', async () => {
-    // Seed the feedback store with an open tuning task
-    WBFeedback.addOverride({
-      itemId: 'item-1',
-      itemSummary: 'Test item',
-      filterId: 'filter-spam',
-      filterPrompt: 'Drop spam items',
-      fromOutcome: 'drop',
-      fromLabel: 'drop',
-      toOutcome: 'include',
-      toLabel: 'include',
-    })
+  it('renders filter tuning section when server has open tasks', async () => {
+    server.use(
+      http.get('/api/feedback/tasks', ({ request }) => {
+        const url = new URL(request.url)
+        const status = url.searchParams.get('status')
+        if (status === 'open') {
+          return HttpResponse.json([
+            {
+              id: 1,
+              rule_id: 42,
+              filter_id: 'filter-spam',
+              item_id: 101,
+              item_summary: 'Test item',
+              from_outcome: 'drop',
+              to_outcome: 'include',
+              from_label: null,
+              to_label: null,
+              filter_prompt: 'Drop spam items',
+              proposed_prompt: 'Drop spam items — but keep genuine items like "Test item"',
+              kind: 'filter-tuning',
+              correction_ids: [],
+              status: 'open',
+              created_at: iso(1 * HOUR),
+              resolved_at: null,
+            },
+          ])
+        }
+        return HttpResponse.json([])
+      }),
+    )
     renderActions()
     const section = await screen.findByTestId('filter-tuning-section')
     expect(section).toBeInTheDocument()
@@ -363,21 +388,41 @@ describe('Action Items page', () => {
   })
 
   it('highlights the tuning card targeted by ?tuning=<id>', async () => {
-    WBFeedback.addOverride({
-      itemId: 'item-1',
-      itemSummary: 'Test item',
-      filterId: 'filter-spam',
-      filterPrompt: 'Drop spam items',
-      fromOutcome: 'drop',
-      toOutcome: 'include',
-    })
-    const taskId = WBFeedback.openTasks()[0].id
+    server.use(
+      http.get('/api/feedback/tasks', ({ request }) => {
+        const url = new URL(request.url)
+        const status = url.searchParams.get('status')
+        if (status === 'open') {
+          return HttpResponse.json([
+            {
+              id: 99,
+              rule_id: 42,
+              filter_id: 'filter-spam',
+              item_id: 101,
+              item_summary: 'Test item',
+              from_outcome: 'drop',
+              to_outcome: 'include',
+              from_label: null,
+              to_label: null,
+              filter_prompt: 'Drop spam items',
+              proposed_prompt: 'Drop spam items — but keep genuine items',
+              kind: 'filter-tuning',
+              correction_ids: [],
+              status: 'open',
+              created_at: iso(1 * HOUR),
+              resolved_at: null,
+            },
+          ])
+        }
+        return HttpResponse.json([])
+      }),
+    )
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, refetchInterval: false } },
     })
     render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[`/actions?tuning=${taskId}`]}>
+        <MemoryRouter initialEntries={['/actions?tuning=99']}>
           <ActionItems />
           <Toaster />
         </MemoryRouter>
@@ -385,6 +430,58 @@ describe('Action Items page', () => {
     )
     const card = await screen.findByTestId('filter-tuning-card')
     expect(card).toHaveAttribute('data-highlighted', 'true')
+  })
+
+  it('applies a tuning task: PATCH prompt then PATCH status', async () => {
+    let patchedPrompt: unknown = null
+    let patchedStatus: string | null = null
+    server.use(
+      http.get('/api/feedback/tasks', ({ request }) => {
+        const url = new URL(request.url)
+        const status = url.searchParams.get('status')
+        if (status === 'open') {
+          return HttpResponse.json([
+            {
+              id: 55,
+              rule_id: 10,
+              filter_id: 'fr_10',
+              item_id: 202,
+              item_summary: 'Apply test item',
+              from_outcome: 'drop',
+              to_outcome: 'include',
+              from_label: null,
+              to_label: null,
+              filter_prompt: 'Old prompt',
+              proposed_prompt: 'New improved prompt',
+              kind: 'filter-tuning',
+              correction_ids: [],
+              status: 'open',
+              created_at: iso(1 * HOUR),
+              resolved_at: null,
+            },
+          ])
+        }
+        return HttpResponse.json([])
+      }),
+      http.patch('/api/filter-rules/10/prompt', async ({ request }) => {
+        patchedPrompt = await request.json()
+        return HttpResponse.json({ status: 'updated' })
+      }),
+      http.patch('/api/feedback/tasks/55', ({ request }) => {
+        const url = new URL(request.url)
+        patchedStatus = url.searchParams.get('status')
+        return HttpResponse.json({
+          id: 55,
+          status: patchedStatus,
+          resolved_at: iso(0),
+        })
+      }),
+    )
+    renderActions()
+    const section = await screen.findByTestId('filter-tuning-section')
+    await userEvent.click(within(section).getByTestId('apply-button'))
+    await waitFor(() => expect(patchedPrompt).toMatchObject({ prompt: 'New improved prompt' }))
+    expect(patchedStatus).toBe('applied')
   })
 
   // --- New action button (header, not FAB) ---

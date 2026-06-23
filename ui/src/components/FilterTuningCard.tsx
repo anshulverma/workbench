@@ -1,11 +1,12 @@
-import type { FilterTuningTask } from '@/lib/types/feedback'
+import type { ServerTuningTask } from '@/hooks/useFeedback'
+import type { StageOutcome } from '@/lib/types/funnel'
 import { ActionChip } from '@/components/ActionChip'
 import { Mono } from '@/components/Mono'
 import { Button } from '@/components/ui/button'
 import { Sparkles, ArrowRight } from 'lucide-react'
 
 /**
- * FilterTuningCard -- shows an open filter tuning task from the feedback store.
+ * FilterTuningCard -- shows an open filter tuning task from the server.
  *
  * Displays the correction context (item, filter, from->to outcome), the
  * proposed prompt, and Apply/Dismiss buttons. Used on the Filters page and
@@ -17,16 +18,16 @@ export function FilterTuningCard({
   onDismiss,
   highlighted = false,
 }: {
-  task: FilterTuningTask
-  onApply: (taskId: string) => void
-  onDismiss: (taskId: string) => void
+  task: ServerTuningTask
+  onApply: (taskId: number) => void
+  onDismiss: (taskId: number) => void
   /** When true, draw attention to this card (e.g. linked-to via ?tuning=<id>). */
   highlighted?: boolean
 }) {
   return (
     <div
       data-testid="filter-tuning-card"
-      data-task-id={task.id}
+      data-task-id={String(task.id)}
       data-highlighted={highlighted ? 'true' : undefined}
       style={{
         padding: 16,
@@ -53,7 +54,7 @@ export function FilterTuningCard({
           Filter tuning suggestion
         </span>
         <Mono className="text-[11px] text-[var(--muted-foreground)]" style={{ marginLeft: 'auto' }}>
-          {task.filterId}
+          {task.filter_id}
         </Mono>
       </div>
 
@@ -77,11 +78,11 @@ export function FilterTuningCard({
             maxWidth: 200,
           }}
         >
-          {task.itemSummary}
+          {task.item_summary}
         </span>
-        <ActionChip action={task.fromOutcome} label={task.fromLabel} small />
+        <ActionChip action={(task.from_outcome ?? 'drop') as StageOutcome} label={task.from_label ?? undefined} small />
         <ArrowRight size={12} style={{ color: 'var(--muted-foreground)' }} />
-        <ActionChip action={task.toOutcome} label={task.toLabel} small />
+        <ActionChip action={(task.to_outcome ?? 'include') as StageOutcome} label={task.to_label ?? undefined} small />
       </div>
 
       {/* proposed prompt */}
@@ -117,7 +118,7 @@ export function FilterTuningCard({
             fontFamily: 'var(--font-mono)',
           }}
         >
-          "{task.proposedPrompt}"
+          "{task.proposed_prompt}"
         </p>
       </div>
 
