@@ -13,7 +13,7 @@ class PgFeedbackStore(FeedbackStore):
         self.pool = pool
 
     async def get_corrections(
-        self, item_id: str | None = None
+        self, item_id: int | None = None
     ) -> list[FeedbackCorrection]:
         if item_id:
             rows = await self.pool.fetch(
@@ -34,21 +34,24 @@ class PgFeedbackStore(FeedbackStore):
         # one, then write it back onto the passed correction.
         row = await self.pool.fetchrow(
             """INSERT INTO feedback_corrections
-               (item_id, rule_id, original_action, corrected_action,
-                reason, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6)
-               RETURNING id""",
+               (item_id, rule_id, filter_id, item_summary, original_action,
+                corrected_action, from_label, to_label, reason, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id""",
             correction.item_id,
             correction.rule_id,
+            correction.filter_id,
+            correction.item_summary,
             correction.original_action,
             correction.corrected_action,
+            correction.from_label,
+            correction.to_label,
             correction.reason,
             correction.created_at,
         )
         correction.id = row["id"]
         return correction
 
-    async def delete_correction(self, correction_id: str) -> None:
+    async def delete_correction(self, correction_id: int) -> None:
         await self.pool.execute(
             "DELETE FROM feedback_corrections WHERE id = $1", correction_id
         )
@@ -71,12 +74,22 @@ class PgFeedbackStore(FeedbackStore):
         # one, then write it back onto the passed task.
         row = await self.pool.fetchrow(
             """INSERT INTO filter_tuning_tasks
-               (rule_id, proposed_prompt, correction_ids, status,
-                created_at, resolved_at)
-               VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+               (rule_id, filter_id, item_id, item_summary, from_outcome,
+                to_outcome, from_label, to_label, filter_prompt, proposed_prompt,
+                kind, correction_ids, status, created_at, resolved_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15)
                RETURNING id""",
             task.rule_id,
+            task.filter_id,
+            task.item_id,
+            task.item_summary,
+            task.from_outcome,
+            task.to_outcome,
+            task.from_label,
+            task.to_label,
+            task.filter_prompt,
             task.proposed_prompt,
+            task.kind,
             json.dumps(task.correction_ids),
             task.status,
             task.created_at,
@@ -85,7 +98,7 @@ class PgFeedbackStore(FeedbackStore):
         task.id = row["id"]
         return task
 
-    async def update_task(self, task_id: str, status: str) -> FilterTuningTask:
+    async def update_task(self, task_id: int, status: str) -> FilterTuningTask:
         await self.pool.execute(
             "UPDATE filter_tuning_tasks SET status = $1, "
             "resolved_at = CASE WHEN $1 IN ('applied', 'dismissed') "
@@ -99,7 +112,7 @@ class PgFeedbackStore(FeedbackStore):
         )
         return self._row_to_task(row)
 
-    async def delete_task(self, task_id: str) -> None:
+    async def delete_task(self, task_id: int) -> None:
         await self.pool.execute(
             "DELETE FROM filter_tuning_tasks WHERE id = $1", task_id
         )
@@ -110,8 +123,12 @@ class PgFeedbackStore(FeedbackStore):
             id=row["id"],
             item_id=row["item_id"],
             rule_id=row["rule_id"],
+            filter_id=row["filter_id"],
+            item_summary=row["item_summary"],
             original_action=row["original_action"],
             corrected_action=row["corrected_action"],
+            from_label=row["from_label"],
+            to_label=row["to_label"],
             reason=row["reason"],
             created_at=row["created_at"],
         )
@@ -124,7 +141,16 @@ class PgFeedbackStore(FeedbackStore):
         return FilterTuningTask(
             id=row["id"],
             rule_id=row["rule_id"],
+            filter_id=row["filter_id"],
+            item_id=row["item_id"],
+            item_summary=row["item_summary"],
+            from_outcome=row["from_outcome"],
+            to_outcome=row["to_outcome"],
+            from_label=row["from_label"],
+            to_label=row["to_label"],
+            filter_prompt=row["filter_prompt"],
             proposed_prompt=row["proposed_prompt"],
+            kind=row["kind"],
             correction_ids=cids,
             status=row["status"],
             created_at=row["created_at"],
