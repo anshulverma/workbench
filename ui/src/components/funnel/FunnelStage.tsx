@@ -3,12 +3,19 @@ import * as Icons from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { FunnelStage as FunnelStageType, FunnelItem } from '@/lib/types/funnel'
 import type { TimingInfo } from '@/lib/funnel-helpers'
-import { ruleById } from '@/lib/funnel-helpers'
+import { ruleById, refinedPrompt } from '@/lib/funnel-helpers'
 import { STAGE_META } from '@/lib/funnel-constants'
 import { ActionChip } from '@/components/ActionChip'
 import { Mono } from '@/components/Mono'
 import { Button } from '@/components/ui/button'
-import { useFeedbackStore } from '@/hooks/useFeedback'
+import {
+  useCorrections,
+  useTuningTasks,
+  useAddCorrection,
+  useCreateTuningTask,
+  useDeleteCorrection,
+  useFeedbackStore,
+} from '@/hooks/useFeedback'
 
 function getIcon(name: string): LucideIcon | undefined {
   return (Icons as unknown as Record<string, LucideIcon>)[name]
@@ -51,20 +58,26 @@ export function FunnelStage({
 }) {
   const fb = useFeedbackStore()
   const [editing, setEditing] = useState(false)
+  const [pending, setPending] = useState(false)
 
-  const ov = editable && item ? fb.overrideFor(String(item.id), stage.filterId) : null
+  // Server-backed corrections + tasks
+  const corrections = useCorrections(item?.id)
+  const tasks = useTuningTasks('open')
+  const addCorrection = useAddCorrection()
+  const createTask = useCreateTuningTask()
+  const deleteCorrection = useDeleteCorrection()
+
+  const ov = editable && item ? (corrections.data ?? []).find(c => c.item_id === item.id && c.filter_id === stage.filterId) ?? null : null
   // The override and its filter-tuning task are 1:1 (same item+filter); find the
   // open task so the receipt can link straight to it on the Actions page.
   const tuningTask =
     ov && item
-      ? fb
-          .openTasks()
-          .find(
-            (t) => t.itemId === String(item.id) && t.filterId === stage.filterId,
-          ) ?? null
+      ? (tasks.data ?? []).find(
+          (t) => t.item_id === item.id && t.filter_id === stage.filterId,
+        ) ?? null
       : null
-  const effOutcome = ov ? ov.toOutcome : stage.outcome
-  const effLabel = ov ? ov.toLabel : stage.label
+  const effOutcome = (ov ? ov.corrected_action : stage.outcome) as FunnelStageType['outcome']
+  const effLabel = ov ? ov.to_label ?? undefined : stage.label
   const m = STAGE_META[effOutcome] ?? STAGE_META.pass
   const rule = ruleById(stage.filterId, filterRules, enrichers)
   const muted = effOutcome === 'pass' || effOutcome === 'skip'
@@ -79,19 +92,64 @@ export function FunnelStage({
   const UndoIcon = getIcon('Undo2')
   const WarnIcon = getIcon('MessageSquareWarning')
 
-  const apply = (to: string) => {
+  const apply = async (to: string) => {
     if (!item) return
-    fb.addOverride({
-      itemId: String(item.id),
-      itemSummary: item.summary,
-      filterId: stage.filterId,
-      filterPrompt: rule.prompt,
-      fromOutcome: stage.outcome,
-      fromLabel: stage.label,
-      toOutcome: to as FunnelStageType['outcome'],
-      toLabel: to === 'label' ? 'spam' : undefined,
-    })
-    setEditing(false)
+    setPending(true)
+    try {
+      // 1. Post correction
+      const correction = await addCorrection.mutateAsync({
+        item_id: item.id,
+        filter_id: stage.filterId,
+        item_summary: item.summary,
+        original_action: stage.outcome,
+        corrected_action: to as FunnelStageType['outcome'],
+        from_label: stage.label ?? null,
+        to_label: to === 'label' ? 'spam' : null,
+        reason: null,
+        rule_id: null,
+      })
+
+      // 2. Post tuning task with correction ID
+      const toOutcome = to as FunnelStageType['outcome']
+      await createTask.mutateAsync({
+        filter_id: stage.filterId,
+        item_id: item.id,
+        item_summary: item.summary,
+        from_outcome: stage.outcome,
+        to_outcome: toOutcome,
+        from_label: stage.label ?? null,
+        to_label: to === 'label' ? 'spam' : null,
+        filter_prompt: rule.prompt,
+        proposed_prompt: refinedPrompt(
+          rule.prompt,
+          item.summary,
+          toOutcome,
+          to === 'label' ? 'spam' : undefined,
+        ),
+        kind: 'filter-tuning',
+        correction_ids: [correction.id],
+        status: 'open',
+        rule_id: null,
+      })
+
+      setEditing(false)
+    } catch (err) {
+      console.error('Failed to save correction:', err)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const undo = async () => {
+    if (!ov) return
+    setPending(true)
+    try {
+      await deleteCorrection.mutateAsync(ov.id)
+    } catch (err) {
+      console.error('Failed to delete correction:', err)
+    } finally {
+      setPending(false)
+    }
   }
 
   return (
@@ -220,14 +278,10 @@ export function FunnelStage({
           )}
 
           {/* correct / undo button */}
-          {editable && item && !isEnricher && !editing && (
+          {editable && item && !isEnricher && !editing && !pending && (
             <button
               data-testid={ov ? 'undo-button' : 'correct-button'}
-              onClick={() =>
-                ov
-                  ? fb.removeOverride(String(item.id), stage.filterId)
-                  : setEditing(true)
-              }
+              onClick={() => (ov ? undo() : setEditing(true))}
               style={{
                 marginLeft: 'auto',
                 display: 'inline-flex',
@@ -301,7 +355,7 @@ export function FunnelStage({
         )}
 
         {/* correction picker */}
-        {editing && (
+        {editing && !pending && (
           <div
             data-testid="correction-picker"
             style={{

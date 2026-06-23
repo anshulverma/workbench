@@ -1,8 +1,36 @@
-import type { Enricher, FunnelItem, FunnelStage } from './types/funnel'
+import type { Enricher, FunnelItem, FunnelStage, StageOutcome } from './types/funnel'
 
 export interface TimingInfo {
   at: number
   dur: number
+}
+
+// ---------------------------------------------------------------------------
+// Prompt refinement helpers (moved from feedback-store.ts for Task 4)
+// ---------------------------------------------------------------------------
+
+function verb(outcome: StageOutcome, label?: string): string {
+  const map: Record<string, string> = {
+    drop: 'dropped',
+    include: 'kept and surfaced',
+    pass: 'left untouched',
+    label: `labeled ${label || 'spam'}`,
+  }
+  return map[outcome] || outcome
+}
+
+/**
+ * Compute a proposed prompt by appending a negative-example clause.
+ * Used when creating filter-tuning tasks from corrections.
+ */
+export function refinedPrompt(
+  original: string,
+  itemSummary: string,
+  toOutcome: StageOutcome,
+  toLabel?: string,
+): string {
+  const base = original.replace(/\s*$/, '').replace(/\.$/, '')
+  return `${base} — but ${verb(toOutcome, toLabel)} cases like "${itemSummary}" (you corrected this).`
 }
 
 export interface FlowMatrixSource {

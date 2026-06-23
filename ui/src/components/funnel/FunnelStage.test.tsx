@@ -1,8 +1,36 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
 import { FunnelStage } from './FunnelStage'
 import type { FunnelStage as FunnelStageType, FunnelItem } from '@/lib/types/funnel'
-import { WBFeedback } from '@/lib/feedback-store'
+
+// ---------------------------------------------------------------------------
+// MSW server for server-backed tests
+// ---------------------------------------------------------------------------
+
+const server = setupServer()
+let serverStarted = false
+
+beforeEach(() => {
+  if (!serverStarted) {
+    server.listen({ onUnhandledRequest: 'bypass' })
+    serverStarted = true
+  }
+})
+
+afterEach(() => {
+  server.resetHandlers()
+})
+
+afterAll(() => {
+  if (serverStarted) {
+    server.close()
+    serverStarted = false
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,12 +58,29 @@ function makeItem(overrides: Partial<FunnelItem> = {}): FunnelItem {
   }
 }
 
-// Clean feedback store between tests
-beforeEach(() => {
-  WBFeedback.state.overrides = []
-  WBFeedback.state.tasks = []
-  WBFeedback.state.promptPatches = {}
-})
+function renderStage(props: {
+  stage: FunnelStageType
+  index: number
+  isLast: boolean
+  item?: FunnelItem | null
+  editable?: boolean
+  timing?: { at: number; dur: number } | null
+  baseTime?: number | null
+  filterRules?: Array<{ id: number; prompt: string }>
+  enrichers?: Array<{ id: number; label: string }>
+}) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <FunnelStage {...props} />
+    </QueryClientProvider>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -43,111 +88,94 @@ beforeEach(() => {
 
 describe('FunnelStage', () => {
   it('renders stage with order number and filterId', () => {
-    render(
-      <FunnelStage stage={makeStage()} index={0} isLast={false} />,
-    )
+    renderStage({ stage: makeStage(), index: 0, isLast: false })
     expect(screen.getByText(/01 · fr_01/)).toBeInTheDocument()
   })
 
   it('renders the ActionChip with the stage outcome', () => {
-    const { container } = render(
-      <FunnelStage stage={makeStage({ outcome: 'drop' })} index={0} isLast={false} />,
-    )
+    const { container } = renderStage({
+      stage: makeStage({ outcome: 'drop' }),
+      index: 0,
+      isLast: false,
+    })
     expect(container.querySelector('[data-action="drop"]')).toBeInTheDocument()
   })
 
   it('shows connecting line when not last', () => {
-    render(
-      <FunnelStage stage={makeStage()} index={0} isLast={false} />,
-    )
+    renderStage({ stage: makeStage(), index: 0, isLast: false })
     expect(screen.getByTestId('connecting-line')).toBeInTheDocument()
   })
 
   it('hides connecting line when last', () => {
-    render(
-      <FunnelStage stage={makeStage()} index={2} isLast={true} />,
-    )
+    renderStage({ stage: makeStage(), index: 2, isLast: true })
     expect(screen.queryByTestId('connecting-line')).not.toBeInTheDocument()
   })
 
   it('shows enricher badge for enricher stages', () => {
-    render(
-      <FunnelStage
-        stage={makeStage({ filterId: 'en_github', outcome: 'context' })}
-        index={0}
-        isLast={false}
-      />,
-    )
+    renderStage({
+      stage: makeStage({ filterId: 'en_github', outcome: 'context' }),
+      index: 0,
+      isLast: false,
+    })
     expect(screen.getByTestId('enricher-badge')).toBeInTheDocument()
     expect(screen.getByText(/enricher/)).toBeInTheDocument()
   })
 
   it('does not show enricher badge for filter stages', () => {
-    render(
-      <FunnelStage stage={makeStage({ filterId: 'fr_01' })} index={0} isLast={false} />,
-    )
+    renderStage({ stage: makeStage({ filterId: 'fr_01' }), index: 0, isLast: false })
     expect(screen.queryByTestId('enricher-badge')).not.toBeInTheDocument()
   })
 
   it('shows timing info when provided', () => {
-    render(
-      <FunnelStage
-        stage={makeStage()}
-        index={0}
-        isLast={false}
-        timing={{ at: 50, dur: 80 }}
-      />,
-    )
+    renderStage({
+      stage: makeStage(),
+      index: 0,
+      isLast: false,
+      timing: { at: 50, dur: 80 },
+    })
     const timingEl = screen.getByTestId('timing-info')
     expect(timingEl).toHaveTextContent('+50ms')
     expect(timingEl).toHaveTextContent('80ms')
   })
 
   it('does not show timing info when not provided', () => {
-    render(
-      <FunnelStage stage={makeStage()} index={0} isLast={false} />,
-    )
+    renderStage({ stage: makeStage(), index: 0, isLast: false })
     expect(screen.queryByTestId('timing-info')).not.toBeInTheDocument()
   })
 
   it('shows correct button when editable and item provided', () => {
-    render(
-      <FunnelStage
-        stage={makeStage()}
-        index={0}
-        isLast={false}
-        item={makeItem()}
-        editable
-      />,
-    )
+    renderStage({
+      stage: makeStage(),
+      index: 0,
+      isLast: false,
+      item: makeItem(),
+      editable: true,
+    })
     expect(screen.getByTestId('correct-button')).toBeInTheDocument()
     expect(screen.getByText('correct')).toBeInTheDocument()
   })
 
   it('does not show correct button for enricher stages even when editable', () => {
-    render(
-      <FunnelStage
-        stage={makeStage({ filterId: 'en_github', outcome: 'context' })}
-        index={0}
-        isLast={false}
-        item={makeItem()}
-        editable
-      />,
-    )
+    renderStage({
+      stage: makeStage({ filterId: 'en_github', outcome: 'context' }),
+      index: 0,
+      isLast: false,
+      item: makeItem(),
+      editable: true,
+    })
     expect(screen.queryByTestId('correct-button')).not.toBeInTheDocument()
   })
 
-  it('opens correction picker on correct click', () => {
-    render(
-      <FunnelStage
-        stage={makeStage({ outcome: 'drop' })}
-        index={0}
-        isLast={false}
-        item={makeItem()}
-        editable
-      />,
-    )
-    fireEvent.click(screen.getByTestId('correct-button'))
+  it('opens correction picker on correct click', async () => {
+    const user = userEvent.setup()
+    renderStage({
+      stage: makeStage({ outcome: 'drop' }),
+      index: 0,
+      isLast: false,
+      item: makeItem(),
+      editable: true,
+    })
+    await user.click(screen.getByTestId('correct-button'))
     expect(screen.getByTestId('correction-picker')).toBeInTheDocument()
     expect(screen.getByText('This should have been...')).toBeInTheDocument()
     // Should not show the current outcome as a choice
@@ -155,132 +183,198 @@ describe('FunnelStage', () => {
     expect(screen.getByText('Keep / include')).toBeInTheDocument()
   })
 
-  it('applies correction and shows override display', () => {
-    const item = makeItem()
-    const { rerender } = render(
-      <FunnelStage
-        stage={makeStage({ outcome: 'drop' })}
-        index={0}
-        isLast={false}
-        item={item}
-        editable
-      />,
+  it('posts a correction + tuning task and shows the receipt with a task link', async () => {
+    const posted: Record<string, unknown>[] = []
+    let correctionsData: unknown[] = []
+    let tasksData: unknown[] = []
+
+    server.use(
+      http.get('/api/auth/token', () => HttpResponse.json({ token: 't' })),
+      http.post('/api/feedback/corrections', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        posted.push(body)
+        const correction = {
+          id: 7,
+          item_id: 1,
+          filter_id: 'fr_01',
+          original_action: 'drop',
+          corrected_action: 'include',
+          item_summary: 'Test PR #42',
+          from_label: null,
+          to_label: null,
+          reason: null,
+          created_at: '2026-06-22T12:00:00Z',
+        }
+        correctionsData = [correction]
+        return HttpResponse.json(correction)
+      }),
+      http.post('/api/feedback/tasks', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        posted.push(body)
+        const task = {
+          id: 42,
+          filter_id: 'fr_01',
+          item_id: 1,
+          status: 'open',
+          proposed_prompt: body.proposed_prompt,
+          correction_ids: [7],
+          item_summary: 'Test PR #42',
+          from_outcome: 'drop',
+          to_outcome: 'include',
+          from_label: null,
+          to_label: null,
+          filter_prompt: 'test prompt',
+          kind: 'filter-tuning',
+          created_at: '2026-06-22T12:00:00Z',
+          resolved_at: null,
+        }
+        tasksData = [task]
+        return HttpResponse.json(task)
+      }),
+      http.get('/api/feedback/corrections', () => HttpResponse.json(correctionsData)),
+      http.get('/api/feedback/tasks', () => HttpResponse.json(tasksData))
     )
-    fireEvent.click(screen.getByTestId('correct-button'))
-    fireEvent.click(screen.getByText('Keep / include'))
 
-    // Re-render to pick up store change
-    rerender(
-      <FunnelStage
-        stage={makeStage({ outcome: 'drop' })}
-        index={0}
-        isLast={false}
-        item={item}
-        editable
-      />,
-    )
-
-    expect(screen.getByTestId('override-display')).toBeInTheDocument()
-    expect(screen.getByTestId('feedback-receipt')).toBeInTheDocument()
-    expect(screen.getByTestId('undo-button')).toBeInTheDocument()
-  })
-
-  it('links the feedback receipt to the created filter-tuning task', () => {
-    const item = makeItem()
-    WBFeedback.addOverride({
-      itemId: String(item.id),
-      itemSummary: item.summary,
-      filterId: 'fr_01',
-      filterPrompt: 'test prompt',
-      fromOutcome: 'drop',
-      toOutcome: 'include',
-    })
-    const taskId = WBFeedback.openTasks()[0].id
-
-    render(
-      <FunnelStage
-        stage={makeStage({ outcome: 'drop' })}
-        index={0}
-        isLast={false}
-        item={item}
-        editable
-      />,
-    )
-
-    const link = screen.getByRole('link', { name: /view the filter-tuning task/i })
-    expect(link).toHaveAttribute('href', `#/actions?tuning=${taskId}`)
-  })
-
-  it('removes override on undo click', () => {
-    const item = makeItem()
-    // Pre-populate override
-    WBFeedback.addOverride({
-      itemId: String(item.id),
-      itemSummary: item.summary,
-      filterId: 'fr_01',
-      filterPrompt: 'test prompt',
-      fromOutcome: 'drop',
-      toOutcome: 'include',
+    const user = userEvent.setup()
+    renderStage({
+      stage: makeStage({ outcome: 'drop' }),
+      index: 0,
+      isLast: false,
+      item: makeItem(),
+      editable: true,
+      filterRules: [{ id: 1, prompt: 'test prompt' }],
     })
 
-    const { rerender } = render(
-      <FunnelStage
-        stage={makeStage({ outcome: 'drop' })}
-        index={0}
-        isLast={false}
-        item={item}
-        editable
-      />,
+    // Wait for initial queries to settle
+    await waitFor(() => expect(screen.getByTestId('correct-button')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('correct-button'))
+    await user.click(screen.getByText(/keep.*include/i))
+
+    // Wait for the POST requests
+    await waitFor(() => expect(posted).toHaveLength(2))
+
+    // Verify correction POST
+    expect(posted[0]).toMatchObject({
+      item_id: 1,
+      filter_id: 'fr_01',
+      original_action: 'drop',
+      corrected_action: 'include',
+    })
+
+    // Verify task POST
+    expect(posted[1]).toMatchObject({
+      filter_id: 'fr_01',
+      item_id: 1,
+      status: 'open',
+      kind: 'filter-tuning',
+      correction_ids: [7],
+    })
+
+    // Wait for the receipt to appear
+    const link = await screen.findByRole('link', { name: /view the filter-tuning task/i })
+    expect(link).toHaveAttribute('href', '#/actions?tuning=42')
+  })
+
+  it('removes correction on undo click', async () => {
+    let deleted = false
+    server.use(
+      http.get('/api/auth/token', () => HttpResponse.json({ token: 't' })),
+      http.get('/api/feedback/corrections', ({ request }) => {
+        const url = new URL(request.url)
+        if (url.searchParams.get('item_id') === '1') {
+          return HttpResponse.json(
+            deleted
+              ? []
+              : [
+                  {
+                    id: 7,
+                    item_id: 1,
+                    filter_id: 'fr_01',
+                    original_action: 'drop',
+                    corrected_action: 'include',
+                    item_summary: 'Test PR #42',
+                    from_label: null,
+                    to_label: null,
+                    reason: null,
+                    created_at: '2026-06-22T12:00:00Z',
+                  },
+                ]
+          )
+        }
+        return HttpResponse.json([])
+      }),
+      http.get('/api/feedback/tasks', () =>
+        HttpResponse.json([
+          {
+            id: 42,
+            filter_id: 'fr_01',
+            item_id: 1,
+            status: 'open',
+            proposed_prompt: 'p',
+            correction_ids: [7],
+            created_at: '2026-06-22T12:00:00Z',
+            resolved_at: null,
+          },
+        ])
+      ),
+      http.delete('/api/feedback/corrections/7', () => {
+        deleted = true
+        return HttpResponse.json({ status: 'deleted' })
+      })
     )
 
-    expect(screen.getByTestId('undo-button')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('undo-button'))
+    const user = userEvent.setup()
+    renderStage({
+      stage: makeStage({ outcome: 'drop' }),
+      index: 0,
+      isLast: false,
+      item: makeItem(),
+      editable: true,
+      filterRules: [{ id: 1, prompt: 'test prompt' }],
+    })
 
-    rerender(
-      <FunnelStage
-        stage={makeStage({ outcome: 'drop' })}
-        index={0}
-        isLast={false}
-        item={item}
-        editable
-      />,
-    )
+    // Wait for initial corrections to load
+    await waitFor(() => expect(screen.getByTestId('undo-button')).toBeInTheDocument())
 
-    expect(screen.queryByTestId('override-display')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('undo-button'))
+
+    // Wait for the deletion to complete
+    await waitFor(() => expect(deleted).toBe(true))
+
+    // Corrections query will refetch, showing empty array
+    await waitFor(() => {
+      expect(screen.queryByTestId('override-display')).not.toBeInTheDocument()
+    })
+
     expect(screen.getByTestId('correct-button')).toBeInTheDocument()
   })
 
   it('shows context badge when stage has context', () => {
-    render(
-      <FunnelStage
-        stage={makeStage({ context: 'author: alice · files: 3' })}
-        index={0}
-        isLast={false}
-      />,
-    )
+    renderStage({
+      stage: makeStage({ context: 'author: alice · files: 3' }),
+      index: 0,
+      isLast: false,
+    })
     expect(screen.getByTestId('context-badge')).toBeInTheDocument()
     expect(screen.getByText('author: alice · files: 3')).toBeInTheDocument()
   })
 
   it('shows reason text', () => {
-    render(
-      <FunnelStage
-        stage={makeStage({ reason: 'This matches the noise pattern' })}
-        index={0}
-        isLast={false}
-      />,
-    )
+    renderStage({
+      stage: makeStage({ reason: 'This matches the noise pattern' }),
+      index: 0,
+      isLast: false,
+    })
     expect(screen.getByText('This matches the noise pattern')).toBeInTheDocument()
   })
 
   it('shows weak indicator when stage is weak', () => {
-    render(
-      <FunnelStage
-        stage={makeStage({ weak: true })}
-        index={0}
-        isLast={false}
-      />,
-    )
+    renderStage({
+      stage: makeStage({ weak: true }),
+      index: 0,
+      isLast: false,
+    })
     expect(screen.getByText(/weak · below threshold/)).toBeInTheDocument()
   })
 })

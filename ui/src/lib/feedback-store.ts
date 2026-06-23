@@ -9,6 +9,7 @@
 
 import type { FeedbackOverride, FilterTuningTask } from '@/lib/types/feedback'
 import type { StageOutcome } from '@/lib/types/funnel'
+import { refinedPrompt } from '@/lib/funnel-helpers'
 
 // ---------------------------------------------------------------------------
 // State
@@ -28,30 +29,6 @@ const STORAGE_KEY = 'wb:feedback'
 
 function uid(prefix: string): string {
   return prefix + Math.random().toString(36).slice(2, 7)
-}
-
-function verb(outcome: StageOutcome, label?: string): string {
-  const map: Record<string, string> = {
-    drop: 'dropped',
-    include: 'kept and surfaced',
-    pass: 'left untouched',
-    label: `labeled ${label || 'spam'}`,
-  }
-  return map[outcome] || outcome
-}
-
-/**
- * Compute a proposed prompt by appending a negative-example clause.
- * PRIVATE — not exported. The result is stored on FilterTuningTask.proposedPrompt.
- */
-function refinedPrompt(
-  original: string,
-  itemSummary: string,
-  toOutcome: StageOutcome,
-  toLabel?: string,
-): string {
-  const base = original.replace(/\s*$/, '').replace(/\.$/, '')
-  return `${base} — but ${verb(toOutcome, toLabel)} cases like "${itemSummary}" (you corrected this).`
 }
 
 // ---------------------------------------------------------------------------
