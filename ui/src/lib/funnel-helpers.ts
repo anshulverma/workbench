@@ -6,7 +6,7 @@ export interface TimingInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Prompt refinement helpers (moved from feedback-store.ts for Task 4)
+// Prompt refinement helpers for filter-tuning corrections
 // ---------------------------------------------------------------------------
 
 function verb(outcome: StageOutcome, label?: string): string {
