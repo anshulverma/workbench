@@ -37,6 +37,9 @@ import {
   TOOLTIP_CONTENT_STYLE,
 } from '@/lib/chart-theme'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { PipelinePanel } from '@/components/pipeline/PipelinePanel'
+import { editedGraph } from '@/lib/pipeline/graphs'
 import { ApiError } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
 import {
@@ -288,6 +291,13 @@ export function Ingestion() {
         </p>
       </div>
 
+      <Tabs defaultValue="overview">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-7">
       {/* 1 — Top-level queue stat cards (promoted from Queue Health section) */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -423,6 +433,13 @@ export function Ingestion() {
         </SectionHeader>
         <IngestionFunnel embedded />
       </section>
+        </TabsContent>
+
+        <TabsContent value="pipeline">
+          {/* swap editedGraph for the real graph from the pipeline API */}
+          <PipelinePanel graph={editedGraph} editable />
+        </TabsContent>
+      </Tabs>
 
       {/* ItemFunnelDialog — opened by clicking a LiveTail row */}
       <ItemFunnelDialog
