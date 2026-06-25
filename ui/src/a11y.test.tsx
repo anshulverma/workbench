@@ -389,8 +389,8 @@ describe('accessibility', () => {
     const options = within(listbox).getAllByRole('option')
     expect(options.length).toBe(2)
 
-    // All options are unselected (no active selection in new design)
-    expect(options[0]).toHaveAttribute('aria-selected', 'false')
+    // Master/detail auto-selects the first result; the rest are unselected.
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
     expect(options[1]).toHaveAttribute('aria-selected', 'false')
   })
 

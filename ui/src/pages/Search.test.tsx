@@ -1,4 +1,7 @@
-// Search page tests — search with dialog, type-to-search, kind filters.
+// Search page tests — two-pane master/detail. A row click SELECTS (local state,
+// no ?item= dialog) and swaps the inline detail panel; the first result
+// auto-selects on load. Both useItemsSearch (list) and useItemDetail (detail)
+// are mocked via msw.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -12,29 +15,30 @@ import { Search } from './Search'
 import { ItemDetailDialog } from '@/components/ItemDetailDialog'
 import { _resetToken } from '@/lib/api'
 
-// API-shaped fixtures (snake_case, integer id)
-const RESULT = {
+// API-shaped fixtures (snake_case, integer id). `kind` is derived from
+// source_type by the search adapter, so these must be valid ItemKinds.
+const DIFF = {
   id: 11,
   source_type: 'diff',
   summary: 'crashy item',
   status: 'pending_triage',
   priority: 'P2',
   tags: [],
-  llm_summary: 'matters',
+  llm_summary: 'diff matters',
   enriched_context: {},
   processing_log: [],
   verdict: { action: 'triage' },
   path: null,
 }
 
-const TASKS_RESULT = {
+const EMAIL = {
   id: 22,
-  source_type: 'meta_tasks',
-  summary: 'important task',
+  source_type: 'email',
+  summary: 'inbox note',
   status: 'pending_triage',
   priority: 'P1',
   tags: ['urgent'],
-  llm_summary: 'critical work',
+  llm_summary: 'email matters',
   enriched_context: {},
   processing_log: [],
   verdict: { action: 'triage' },
@@ -47,7 +51,9 @@ function baseHandlers() {
     http.get('/api/items/search', () =>
       HttpResponse.json({ q: '', results: [], total: 0 }),
     ),
-    http.get('/api/items/by-id/:id', () => HttpResponse.json(RESULT)),
+    http.get('/api/items/by-id/:id', ({ params }) =>
+      HttpResponse.json(params.id === '22' ? EMAIL : DIFF),
+    ),
   ]
 }
 
@@ -60,9 +66,7 @@ afterEach(() => {
 afterAll(() => server.close())
 
 function renderSearch() {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/search']}>
@@ -75,100 +79,96 @@ function renderSearch() {
 }
 
 describe('Search page', () => {
-  it('shows recent items before any query is typed', async () => {
-    server.use(
-      http.get('/api/items/search', () =>
-        HttpResponse.json({ q: '', results: [RESULT], total: 1 }),
-      ),
-    )
+  it('shows the loading state before results arrive', () => {
     renderSearch()
-    // No typing: the no-query default renders the recent item list.
-    expect(await screen.findByText(RESULT.summary)).toBeInTheDocument()
+    // Query is pending on first paint.
+    expect(screen.getByTestId('search-loading')).toBeInTheDocument()
   })
 
-  it('lists results and opens the dialog on row click', async () => {
+  it('auto-selects the first result and renders its detail inline', async () => {
     server.use(
       http.get('/api/items/search', () =>
-        HttpResponse.json({ q: 'cr', results: [RESULT], total: 1 }),
+        HttpResponse.json({ q: '', results: [DIFF], total: 1 }),
       ),
-      http.get('/api/items/by-id/11', () => HttpResponse.json(RESULT)),
     )
     renderSearch()
-    await userEvent.type(screen.getByLabelText('Search items'), 'cr')
-    await waitFor(() => expect(screen.getByText('crashy item')).toBeInTheDocument())
-    await userEvent.click(screen.getByText('crashy item'))
-    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
-    expect(screen.getByText('matters')).toBeInTheDocument()
+    // Detail panel resolves for the auto-selected first row (no click needed).
+    expect(await screen.findByText('diff matters')).toBeInTheDocument()
+    const row = document.getElementById('search-row-11')
+    expect(row).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('selecting a row swaps the detail inline, without opening a dialog', async () => {
+    server.use(
+      http.get('/api/items/search', () =>
+        HttpResponse.json({ q: '', results: [DIFF, EMAIL], total: 2 }),
+      ),
+    )
+    renderSearch()
+    // First result (diff) auto-selected.
+    expect(await screen.findByText('diff matters')).toBeInTheDocument()
+
+    // Click the email row → selects it and swaps the detail.
+    await userEvent.click(screen.getByText('inbox note'))
+    expect(await screen.findByText('email matters')).toBeInTheDocument()
+    expect(document.getElementById('search-row-22')).toHaveAttribute('aria-selected', 'true')
+    expect(document.getElementById('search-row-11')).toHaveAttribute('aria-selected', 'false')
+    // No modal dialog — selection is local state, not the ?item= popup.
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('filters results by kind buttons', async () => {
     server.use(
       http.get('/api/items/search', () =>
-        HttpResponse.json({ q: 'ab', results: [RESULT, TASKS_RESULT], total: 2 }),
+        HttpResponse.json({ q: '', results: [DIFF, EMAIL], total: 2 }),
       ),
     )
     renderSearch()
-    await userEvent.type(screen.getByLabelText('Search items'), 'ab')
     await waitFor(() => {
-      expect(screen.getByText('crashy item')).toBeInTheDocument()
-      expect(screen.getByText('important task')).toBeInTheDocument()
+      expect(document.getElementById('search-row-11')).toBeInTheDocument()
+      expect(document.getElementById('search-row-22')).toBeInTheDocument()
     })
 
-    // Filter by Tasks (meta_tasks)
-    await userEvent.click(screen.getByRole('button', { name: 'Tasks' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Email' }))
     await waitFor(() => {
-      expect(screen.queryByText('crashy item')).not.toBeInTheDocument()
-      expect(screen.getByText('important task')).toBeInTheDocument()
+      expect(document.getElementById('search-row-11')).toBeNull()
+      expect(document.getElementById('search-row-22')).toBeInTheDocument()
     })
   })
 
-  it('clears search with the clear button', async () => {
+  it('clears the query with the clear button', async () => {
     renderSearch()
     const input = screen.getByLabelText('Search items')
     await userEvent.type(input, 'x')
-    await waitFor(() => {
-      expect(input).toHaveValue('x')
-    })
+    await waitFor(() => expect(input).toHaveValue('x'))
 
-    const clearBtn = screen.getByLabelText('Clear')
-    await userEvent.click(clearBtn)
+    await userEvent.click(screen.getByLabelText('Clear'))
     expect(input).toHaveValue('')
   })
 
-  it('shows empty state when no results match', async () => {
-    server.use(
-      http.get('/api/items/search', () =>
-        HttpResponse.json({ q: 'xyz', results: [], total: 0 }),
-      ),
-    )
+  it('shows the empty state when no results match', async () => {
     renderSearch()
     await userEvent.type(screen.getByLabelText('Search items'), 'xyz')
-    await waitFor(() => {
-      expect(screen.getByText('// No items match your search')).toBeInTheDocument()
-    })
+    await waitFor(() =>
+      expect(screen.getByText('// No items match your search')).toBeInTheDocument(),
+    )
   })
 
   it('renders the error state', async () => {
     server.use(
       http.get('/api/items/search', () =>
-        HttpResponse.json(
-          { detail: 'Internal Server Error' },
-          { status: 500 },
-        ),
+        HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 }),
       ),
     )
     renderSearch()
     await userEvent.type(screen.getByLabelText('Search items'), 'er')
-    await waitFor(() => {
-      expect(screen.getByTestId('search-error')).toBeInTheDocument()
-    })
+    await waitFor(() => expect(screen.getByTestId('search-error')).toBeInTheDocument())
   })
 
-  it('shows kind filter buttons', () => {
+  it('shows the type-correct kind filter buttons', () => {
     renderSearch()
-    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Diffs' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Tasks' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Docs' })).toBeInTheDocument()
+    for (const name of ['All', 'Diffs', 'Email', 'Meetings', 'Chat']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument()
+    }
   })
 })
