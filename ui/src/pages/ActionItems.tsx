@@ -71,7 +71,7 @@ const PRIORITY_VARIANT: Record<string, 'p0' | 'p1' | 'p2' | 'p3'> = {
 // Same hue tokens as the Badge priority variants (ADR 0046 contrast contract).
 const PRIORITY_BORDER: Record<string, string> = {
   P0: 'border-l-[#ffb4ab]',
-  P1: 'border-l-[#f5a623]',
+  P1: 'border-l-[#ff6a2b]',
   P2: 'border-l-[#71d2ff]',
   P3: 'border-l-border',
 }
@@ -203,7 +203,7 @@ function ThroughputChartCard() {
         {!isPending && !isError && (
           <span className="flex gap-4 font-mono text-xs text-muted-foreground">
             <span>
-              <span className="font-bold text-[#f5a623]">{inTotal}</span> in
+              <span className="font-bold text-[#ff6a2b]">{inTotal}</span> in
             </span>
             <span>
               <span className="font-bold text-[#9ad08a]">{doneTotal}</span> done
@@ -222,18 +222,18 @@ function ThroughputChartCard() {
       </CardHeader>
       <CardContent>
         {isPending ? (
-          <Skeleton className="h-[132px] w-full" />
+          <Skeleton className="h-[68px] w-full" />
         ) : isError ? (
           <p className="text-sm text-muted-foreground">
             Unable to load throughput data
           </p>
         ) : (
           <MultiLineChart
-            height={132}
+            height={68}
             xLabels={xLabels}
             series={[
-              { name: 'Ingested', color: '#f5a623', data: inData },
-              { name: 'Processed', color: '#9ad08a', data: compData },
+              { name: 'Incoming actions', color: '#ff6a2b', data: inData },
+              { name: 'Completion rate', color: '#9ad08a', data: compData },
             ]}
           />
         )}

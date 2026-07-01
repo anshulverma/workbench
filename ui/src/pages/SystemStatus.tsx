@@ -46,7 +46,7 @@ import { ApiError } from '@/lib/api'
 
 const SYS_STATUS: Record<string, { color: string; label: string }> = {
   healthy: { color: '#9ad08a', label: 'operational' },
-  degraded: { color: '#f5a623', label: 'degraded' },
+  degraded: { color: '#ff6a2b', label: 'degraded' },
   unhealthy: { color: '#e5484d', label: 'down' },
   disabled: { color: '#71717a', label: 'paused' },
   planned: { color: '#71717a', label: 'planned' },
@@ -55,7 +55,7 @@ const SYS_STATUS: Record<string, { color: string; label: string }> = {
 const ROLE_TONE: Record<string, string> = {
   connector: '#71d2ff',
   service: '#b79cf7',
-  core: '#f5a623',
+  core: '#ff6a2b',
   storage: '#9ad08a',
 }
 
@@ -255,11 +255,11 @@ const LLM_STATUS: Record<string, { color: string; label: string }> = {
 const LLM_STAGE_TONE: Record<string, string> = {
   filter: '#e5484d',
   enricher: '#71d2ff',
-  triage: '#f5a623',
+  triage: '#ff6a2b',
   briefing: '#b79cf7',
   aggregate: '#9a7af0',
   extract: '#2dd4bf',
-  scoring: '#f5a623',
+  scoring: '#ff6a2b',
   memory: '#d946ef',
 }
 
@@ -502,7 +502,7 @@ function SystemDiagram({
                   />
                   {n.role === 'connector' && n.caps && n.caps.includes('out') && (
                     <span
-                      title="bidirectional"
+                      title="bidirectional — ingests and sends replies back"
                       style={{ color: '#b79cf7', display: 'flex' }}
                     >
                       <ArrowLeftRight size={10} />
@@ -1764,7 +1764,7 @@ export function SystemStatusSummary() {
                 className="size-1.5 rounded-full"
                 style={{
                   background:
-                    healthy === total ? '#9ad08a' : '#f5a623',
+                    healthy === total ? '#9ad08a' : '#ff6a2b',
                 }}
               />
               {lane}:{' '}

@@ -3,7 +3,7 @@ import { CHART_COLORS, CHART_DEFAULTS } from './chart-theme'
 
 describe('chart-theme', () => {
   it('exposes the token-driven palette', () => {
-    expect(CHART_COLORS.primary).toBe('#f5a623')
+    expect(CHART_COLORS.primary).toBe('#ff6a2b')
     expect(CHART_COLORS.tertiary).toBe('#71d2ff')
     expect(CHART_COLORS).toMatchObject({
       red: '#ffb4ab',

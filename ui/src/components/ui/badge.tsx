@@ -26,7 +26,7 @@ const badgeVariants = cva(
         // solid red border + AA-safe peach-red text; lower priorities step down
         // in urgency. Text colors stay AA against their tints.
         p0: 'border-[#ffb4ab] bg-[#93000a]/15 text-[#ffb4ab]',
-        p1: 'border-[#f5a623] bg-[#f5a623]/15 text-[#f5a623]',
+        p1: 'border-[#ff6a2b] bg-[#ff6a2b]/15 text-[#ff6a2b]',
         p2: 'border-[#71d2ff] bg-[#71d2ff]/15 text-[#71d2ff]',
         p3: 'border-border bg-[#353438]/40 text-foreground',
       },

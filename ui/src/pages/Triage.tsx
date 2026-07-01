@@ -74,11 +74,11 @@ const PRIORITY_VARIANT: Record<string, 'p0' | 'p1' | 'p2' | 'p3'> = {
 function borderClass(card: TriageCard): string {
   const prio = card.card_content?.priority
   if (prio === 'P0') return 'border-l-[#ffb4ab]'
-  if (prio === 'P1') return 'border-l-[#f5a623]'
+  if (prio === 'P1') return 'border-l-[#ff6a2b]'
   if (prio === 'P2') return 'border-l-[#71d2ff]'
   if (prio === 'P3') return 'border-l-border'
   const r = card.relevance_score ?? 0
-  if (r >= 80) return 'border-l-[#f5a623]'
+  if (r >= 80) return 'border-l-[#ff6a2b]'
   if (r >= 50) return 'border-l-[#71d2ff]'
   return 'border-l-border'
 }
@@ -316,7 +316,7 @@ function ThroughputPanel() {
           <MultiLineChart
             xLabels={xLabels}
             series={[
-              { name: 'Ingestion', color: '#f5a623', data: toData(ingestion.data) },
+              { name: 'Ingestion', color: '#ff6a2b', data: toData(ingestion.data) },
               { name: 'Triage queue', color: '#9a7af0', data: toData(triageQueue.data) },
               { name: 'Triaged', color: '#71d2ff', data: toData(triaged.data) },
             ]}
@@ -678,7 +678,7 @@ export function Triage() {
           {priorityFacets.length > 0 && (
             <section className="space-y-2">
               <h2 className="font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Priority
+                Est. Priority
               </h2>
               <ul className="space-y-1">
                 {priorityFacets.map(([prio, count]) => (

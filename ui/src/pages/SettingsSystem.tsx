@@ -105,7 +105,7 @@ export function SettingsSystem() {
           role="alert"
           className="rounded border border-destructive p-3 text-sm text-destructive"
         >
-          storage down — showing last-known component statuses
+          zep_memory connection degraded — showing last-known component statuses
         </div>
       )}
 
@@ -118,7 +118,7 @@ export function SettingsSystem() {
       </section>
 
       <section className="rounded border border-border p-3">
-        <h2 className="mb-2 font-semibold">Component health</h2>
+        <h2 className="mb-2 font-semibold">Subsystem Health</h2>
         <div className="space-y-2 text-sm">
           <div className="flex items-center gap-2">
             <span className="w-32">storage</span>
@@ -153,10 +153,10 @@ export function SettingsSystem() {
       >
         <h2 className="mb-2 flex items-center gap-2 font-semibold">
           <Lock aria-hidden="true" className="size-4 text-muted-foreground" />
-          Secrets Vault
+          Config Secrets Vault
         </h2>
         <p className="text-sm text-muted-foreground">
-          Locked — secrets are not exposed to the dashboard.
+          Locked — secrets are redacted server-side and never exposed to the dashboard.
         </p>
       </section>
     </div>

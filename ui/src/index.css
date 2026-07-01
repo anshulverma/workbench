@@ -21,13 +21,13 @@
   index.html anymore.
 
   Two-orange system (do NOT collapse to one orange):
-    primary-container    #f5a623  CTAs / active rail bar / chart-primary / focus ring  → --primary
+    primary-container    #ff6a2b  CTAs / active rail bar / chart-primary / focus ring  → --primary
     primary              #ffb59a  headings, icons, AA-safe orange text on dark         → --brand
     on-primary-container #0e0e11  near-black text on orange fills                      → --primary-foreground
 
-  Contrast contract (ADR 0046): #f5a623 passes AA as small text only on surfaces
+  Contrast contract (ADR 0046): #ff6a2b passes AA as small text only on surfaces
   ≤ #2a2a2d; on orange fills the foreground is near-black #0e0e11; on elevated /
-  popover / tooltip surfaces use body text or the lighter #ffb59a — never #f5a623
+  popover / tooltip surfaces use body text or the lighter #ffb59a — never #ff6a2b
   as text there.
 */
 
@@ -42,7 +42,7 @@
   --popover: #ffe9e3;
   --popover-foreground: #261813;
   /* Brand orange is identical across themes (ADR 0034). */
-  --primary: #f5a623;
+  --primary: #ff6a2b;
   --primary-foreground: #0e0e11;
   --secondary: #ffe9e3;
   --secondary-foreground: #261813;
@@ -55,7 +55,7 @@
   --destructive-foreground: #ffffff;
   --border: #e2bfb3;
   --input: #ffffff;
-  --ring: #f5a623;
+  --ring: #ff6a2b;
 
   /* Extra surface ladder (light) — see ADR 0033. */
   --surface-lowest: #ffffff;
@@ -80,7 +80,7 @@
   --card-foreground: #e4e1e6;
   --popover: #1f1f22;
   --popover-foreground: #e4e1e6;
-  --primary: #f5a623;
+  --primary: #ff6a2b;
   --primary-foreground: #0e0e11;
   --secondary: #1f1f22;
   --secondary-foreground: #e4e1e6;
@@ -93,7 +93,7 @@
   --destructive-foreground: #ffb4ab;
   --border: #26262C;
   --input: #0e0e11;
-  --ring: #f5a623;
+  --ring: #ff6a2b;
 
   /* Extra surface ladder (dark) — corrected from the real HTML, depth via tonal
      tiers, NO drop shadows on in-page surfaces (ADR 0033). */
@@ -188,7 +188,7 @@
      keyboard focus indicator (spec §13, ADR 0046). Components that draw their
      own ring (e.g. shadcn Button via focus-visible:ring-2) still get one; this
      is the baseline for native controls and any element lacking an explicit
-     ring. The ring is orange (--ring = #f5a623), 2px outline + 2px offset. */
+     ring. The ring is orange (--ring = #ff6a2b), 2px outline + 2px offset. */
   a,
   button,
   select,
@@ -319,7 +319,7 @@
   color: #ffffff; /* white on #93000a ≈ 8.9:1 */
 }
 .prio-P1 {
-  background-color: #f5a623; /* brand orange */
+  background-color: #ff6a2b; /* brand orange */
   color: #0e0e11; /* near-black on orange (contrast contract) ≈ 6.7:1 */
 }
 .prio-P2 {
@@ -333,7 +333,7 @@
 
 /* JsonHighlight token colors (spec §12). Re-themed from the design's
    low-contrast #003648/#5c1b00 to AA-safe tokens on the dark code surface.
-   Keys use the lighter #ffb59a (never #f5a623 as text on elevated surfaces,
+   Keys use the lighter #ffb59a (never #ff6a2b as text on elevated surfaces,
    per the §13 contrast contract); strings use tertiary cyan. */
 .tok-key {
   color: var(--brand, #ffb59a); /* #ffb59a on surface ≈ 8:1 */

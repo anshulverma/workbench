@@ -212,7 +212,7 @@ describe('Settings page — System tab content', () => {
       ),
     )
     renderSettings()
-    expect(await screen.findByText(/storage down/i)).toBeInTheDocument()
+    expect(await screen.findByText(/zep_memory connection degraded/i)).toBeInTheDocument()
   })
 
   it('renders the error state when /api/debug/config fails', async () => {
@@ -251,7 +251,7 @@ describe('Settings page — System tab content', () => {
     renderSettings()
     await screen.findByText(/include_threshold/)
     expect(screen.getByTestId('secrets-vault')).toBeInTheDocument()
-    expect(screen.getByText(/secrets are not exposed/i)).toBeInTheDocument()
+    expect(screen.getByText(/never exposed/i)).toBeInTheDocument()
     // The redacted token marker may appear, but never a real secret value.
     expect(screen.queryByText(/dev-token/)).not.toBeInTheDocument()
     expect(screen.queryByText(/api_token/)).not.toBeInTheDocument()

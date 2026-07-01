@@ -127,7 +127,7 @@ export function TriageDetail() {
       )}
 
       <section>
-        <h2 className="font-medium">Risk</h2>
+        <h2 className="font-medium">Risk Factors</h2>
         <ul className="list-disc pl-5 text-sm">
           {(risk.factors ?? []).map((f, i) => <li key={`f${i}`}>{f}</li>)}
           {(risk.watch_outs ?? []).map((w, i) => <li key={`w${i}`}>⚠ {w}</li>)}
