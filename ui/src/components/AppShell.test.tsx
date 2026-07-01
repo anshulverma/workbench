@@ -39,10 +39,10 @@ describe('AppShell', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('page-body')).toBeInTheDocument()
     // Brand mark: the two-tone "WorkBench" wordmark is split across spans
-    // (Work / B / ench), so assert via the brand button's accessible name
-    // ("WorkBench home" — present in both the top bar and the sidebar logo).
+    // (Work / B / ench), so assert via the brand link's accessible name. The
+    // logo is a NavLink to "/" (a link, not a button) in the sidebar rail.
     expect(
-      screen.getAllByRole('button', { name: /workbench home/i }).length,
+      screen.getAllByRole('link', { name: /workbench home/i }).length,
     ).toBeGreaterThanOrEqual(1)
   })
 
