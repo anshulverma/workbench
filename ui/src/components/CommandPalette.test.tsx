@@ -63,7 +63,7 @@ const handlers = [
   http.get('/api/search', () => HttpResponse.json(SEARCH_ENVELOPE)),
 ]
 const server = setupServer(...handlers)
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => {
   server.resetHandlers(...handlers)
   _resetToken()

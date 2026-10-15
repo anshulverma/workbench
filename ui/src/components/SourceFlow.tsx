@@ -18,7 +18,7 @@ import {
   Calendar,
   CircleCheckBig,
   Filter,
-  Github,
+  GitBranch,
   ListChecks,
   Mail,
   MessageCircle,
@@ -51,7 +51,8 @@ const TRAVERSAL_RANGE = 0.28
 const SPAWN_RATE = 0.022
 
 const SRC_ICONS: Record<string, LucideIcon> = {
-  github: Github,
+  // lucide-react v1 removed brand icons; GitBranch is the generic stand-in.
+  github: GitBranch,
   email: Mail,
   calendar: Calendar,
   chat: MessageCircle,
@@ -714,7 +715,7 @@ function SourceFlowInner({
           const src = data.sources[i]
           if (!src) return null
           const brk = broken.has(src.id)
-          const SrcIcon = SRC_ICONS[src.id] ?? Github
+          const SrcIcon = SRC_ICONS[src.id] ?? GitBranch
           return (
             <g
               key={src.id}

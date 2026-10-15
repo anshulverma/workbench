@@ -12,7 +12,7 @@
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
-import { parseExpression } from 'cron-parser'
+import { CronExpressionParser } from 'cron-parser'
 import { toast } from 'sonner'
 import {
   useAdapterTypes,
@@ -70,7 +70,7 @@ const CRON_PRESETS: { label: string; cron: string }[] = [
 
 function nextRunPreview(cron: string): string {
   try {
-    const next = parseExpression(cron).next().toDate()
+    const next = CronExpressionParser.parse(cron).next().toDate()
     return `Next run: ${next.toLocaleString()}`
   } catch {
     return 'Invalid cron expression'

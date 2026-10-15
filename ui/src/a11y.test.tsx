@@ -150,7 +150,7 @@ function a11yHandlers() {
 }
 
 const server = setupServer(...a11yHandlers())
-beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'warn' }))
 afterEach(() => {
   server.resetHandlers(...a11yHandlers())
   _resetToken()

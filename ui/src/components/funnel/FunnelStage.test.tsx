@@ -16,7 +16,7 @@ let serverStarted = false
 
 beforeEach(() => {
   if (!serverStarted) {
-    server.listen({ onUnhandledRequest: 'bypass' })
+    server.listen({ onUnhandledFrame: 'bypass' })
     serverStarted = true
   }
 })
